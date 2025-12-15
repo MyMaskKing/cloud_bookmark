@@ -233,24 +233,32 @@ importBrowserBtn.addEventListener('click', async () => {
     if (typeof importFromBrowserBookmarks === 'function') {
       const data = await importFromBrowserBookmarks();
       
-      // 合并到现有书签
+      // 规范化路径，合并到现有书签，清理空文件夹
+      const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+      const importedBookmarks = (data.bookmarks || []).map(b => {
+        if (!b.folder) return b;
+        return { ...b, folder: normalizeFolder(b.folder) };
+      });
+
       const existing = await storage.getBookmarks();
       const existingBookmarks = existing.bookmarks || [];
-      const existingFolders = existing.folders || [];
-      
-      // 合并书签（避免重复）
+
+      // 合并书签（避免重复 URL）
       const urlMap = new Map();
       existingBookmarks.forEach(b => urlMap.set(b.url, b));
-      
-      data.bookmarks.forEach(b => {
+      importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
           existingBookmarks.push(b);
           urlMap.set(b.url, b);
         }
       });
-      // 合并文件夹
-      const allFolders = [...new Set([...existingFolders, ...(data.folders || [])])];
-      
+
+      // 仅保留有书签引用的文件夹（清理空文件夹）
+      const usedFolders = new Set(
+        existingBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean)
+      );
+      const allFolders = [...usedFolders];
+
       await storage.saveBookmarks(existingBookmarks, allFolders);
       
       // 同步到云端
