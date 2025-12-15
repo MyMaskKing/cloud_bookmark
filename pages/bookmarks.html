@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云端书签管理</title>
+  <link rel="stylesheet" href="bookmarks.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h1>云端书签</h1>
+        <button id="addBookmarkBtn" class="btn-add" title="添加书签">+</button>
+      </div>
+
+      <nav class="sidebar-nav">
+        <div class="nav-item active" data-filter="all">
+          <span class="icon">📚</span>
+          <span>全部书签</span>
+        </div>
+        <div class="nav-item" data-filter="starred">
+          <span class="icon">⭐</span>
+          <span>收藏</span>
+        </div>
+        <div class="nav-item" data-filter="recent">
+          <span class="icon">🕒</span>
+          <span>最近添加</span>
+        </div>
+      </nav>
+
+      <div class="folders-section">
+        <div class="section-title">文件夹</div>
+        <div id="foldersList" class="folders-list">
+          <!-- 文件夹列表 -->
+        </div>
+      </div>
+
+      <div class="tags-section">
+        <div class="section-title">标签</div>
+        <div id="tagsList" class="tags-list">
+          <!-- 标签列表 -->
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="main-content">
+      <!-- 顶部工具栏 -->
+      <header class="toolbar">
+        <div class="search-box">
+          <input type="text" id="searchInput" placeholder="搜索书签...">
+        </div>
+        <div class="toolbar-actions">
+          <select id="sortSelect" class="select">
+            <option value="created-desc">最新创建</option>
+            <option value="created-asc">最早创建</option>
+            <option value="title-asc">标题 A-Z</option>
+            <option value="title-desc">标题 Z-A</option>
+            <option value="starred">收藏优先</option>
+          </select>
+          <button id="viewToggle" class="btn-icon" title="切换视图">📋</button>
+          <button id="exportBtn" class="btn-icon" title="导出">💾</button>
+          <button id="syncBtn" class="btn-icon" title="同步">🔄</button>
+        </div>
+      </header>
+
+      <!-- 书签列表 -->
+      <div class="bookmarks-container">
+        <div id="bookmarksGrid" class="bookmarks-grid view-grid">
+          <!-- 书签卡片 -->
+        </div>
+        <div id="emptyState" class="empty-state" style="display: none;">
+          <div class="empty-icon">📖</div>
+          <div class="empty-text">暂无书签</div>
+          <button class="btn btn-primary" onclick="showAddForm()">添加第一个书签</button>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- 添加/编辑书签模态框 -->
+  <div id="bookmarkModal" class="modal" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 id="modalTitle">添加书签</h2>
+        <button class="modal-close" id="closeModal">&times;</button>
+      </div>
+      <form id="bookmarkForm" class="modal-body">
+        <div class="form-group">
+          <label for="bookmarkTitle">标题 *</label>
+          <input type="text" id="bookmarkTitle" required>
+        </div>
+        <div class="form-group">
+          <label for="bookmarkUrl">URL *</label>
+          <input type="url" id="bookmarkUrl" required>
+        </div>
+        <div class="form-group">
+          <label for="bookmarkDescription">描述</label>
+          <textarea id="bookmarkDescription" rows="2"></textarea>
+        </div>
+        <div class="form-group">
+          <label for="bookmarkNotes">备注/笔记</label>
+          <textarea id="bookmarkNotes" rows="4" placeholder="记录关于这个书签的重要信息..."></textarea>
+        </div>
+        <div class="form-group">
+          <label for="bookmarkTags">标签</label>
+          <input type="text" id="bookmarkTags" placeholder="用逗号分隔多个标签">
+        </div>
+        <div class="form-group">
+          <label for="bookmarkFolder">文件夹</label>
+          <select id="bookmarkFolder">
+            <option value="">未分类</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="bookmarkStarred">
+            <span>收藏</span>
+          </label>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" id="cancelBtn">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="../utils/storage.js"></script>
+  <script src="../utils/utils.js"></script>
+  <script src="../utils/bookmarkParser.js"></script>
+  <script src="bookmarks.js"></script>
+</body>
+</html>
+

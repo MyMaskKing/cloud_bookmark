@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云端书签</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <header class="popup-header">
+      <h2>云端书签</h2>
+      <div class="sync-status" id="syncStatus">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">同步中</span>
+      </div>
+    </header>
+
+    <div class="popup-content">
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="搜索书签...">
+      </div>
+
+      <div class="quick-actions">
+        <button id="addCurrentBtn" class="action-btn">
+          <span class="icon">+</span>
+          <span>添加当前页面</span>
+        </button>
+        <button id="openFullBtn" class="action-btn">
+          <span class="icon">📚</span>
+          <span>打开书签管理</span>
+        </button>
+      </div>
+
+      <div class="recent-bookmarks" id="recentBookmarks">
+        <h3>最近添加</h3>
+        <div id="bookmarkList" class="bookmark-list">
+          <div class="empty-state">暂无书签</div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="popup-footer">
+      <button id="settingsBtn" class="footer-btn">设置</button>
+    </footer>
+  </div>
+
+  <script src="../utils/storage.js"></script>
+  <script src="../utils/utils.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
+

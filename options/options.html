@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>云端书签 - 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="container">
+    <header class="header">
+      <h1>云端书签设置</h1>
+    </header>
+
+    <main class="main">
+      <section class="section">
+        <h2>WebDAV配置</h2>
+        <form id="configForm" class="form">
+          <div class="form-group">
+            <label for="serverUrl">服务器地址</label>
+            <input type="url" id="serverUrl" placeholder="https://example.com/webdav" required>
+            <small>请输入完整的WebDAV服务器地址</small>
+          </div>
+
+          <div class="form-group">
+            <label for="username">用户名</label>
+            <input type="text" id="username" placeholder="your-username" required>
+          </div>
+
+          <div class="form-group">
+            <label for="password">密码</label>
+            <input type="password" id="password" placeholder="your-password" required>
+          </div>
+
+          <div class="form-group">
+            <label for="path">同步路径</label>
+            <input type="text" id="path" placeholder="/bookmarks/" value="/bookmarks/">
+            <small>书签文件存储路径，默认为 /bookmarks/</small>
+          </div>
+
+          <div class="form-group">
+            <label for="syncInterval">同步间隔（分钟）</label>
+            <input type="number" id="syncInterval" min="1" value="5" required>
+            <small>云端到本地的自动同步间隔，默认5分钟</small>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" id="testBtn" class="btn btn-secondary">测试连接</button>
+            <button type="submit" class="btn btn-primary">保存配置</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="section">
+        <h2>同步状态</h2>
+        <div id="syncStatus" class="sync-status">
+          <div class="status-item">
+            <span class="label">状态:</span>
+            <span id="statusText" class="value">-</span>
+          </div>
+          <div class="status-item">
+            <span class="label">最后同步:</span>
+            <span id="lastSync" class="value">-</span>
+          </div>
+          <div class="status-item" id="errorItem" style="display: none;">
+            <span class="label">错误:</span>
+            <span id="errorText" class="value error">-</span>
+          </div>
+          <div class="status-actions">
+            <button id="syncNowBtn" class="btn btn-primary">立即同步</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>数据管理</h2>
+        <div class="data-actions">
+          <button id="exportJsonBtn" class="btn btn-secondary">导出JSON</button>
+          <button id="exportHtmlBtn" class="btn btn-secondary">导出HTML</button>
+          <button id="importBtn" class="btn btn-secondary">导入书签</button>
+          <button id="importBrowserBtn" class="btn btn-secondary">从浏览器导入</button>
+          <input type="file" id="importFile" accept=".json,.html" style="display: none;">
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="../utils/storage.js"></script>
+  <script src="../utils/webdav.js"></script>
+  <script src="../utils/utils.js"></script>
+  <script src="../utils/bookmarkParser.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
+
