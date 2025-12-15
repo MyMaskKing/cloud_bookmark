@@ -1,10 +1,11 @@
 {
-  "manifest_version": 3,
+  "manifest_version": 2,
   "name": "云端书签",
   "version": "1.0.0",
   "description": "基于WebDAV的云端书签管理插件",
-  
+
   "permissions": [
+    "<all_urls>",
     "storage",
     "bookmarks",
     "tabs",
@@ -12,21 +13,20 @@
     "alarms",
     "activeTab"
   ],
-  
-  "host_permissions": [
-    "<all_urls>"
-  ],
-  
+
   "background": {
-    "service_worker": "background/background.js"
+    "scripts": [
+      "background/background.js"
+    ],
+    "persistent": false
   },
-  
-  "action": {
+
+  "browser_action": {
     "default_popup": "popup/popup.html"
   },
-  
+
   "options_page": "options/options.html",
-  
+
   "commands": {
     "add-bookmark": {
       "suggested_key": {
@@ -34,6 +34,20 @@
         "mac": "Command+Shift+B"
       },
       "description": "添加当前页面为书签"
+    }
+  },
+
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "cloud-bookmark-firefox@example.com",
+      "data_collection_permissions": {
+        "required": true,
+        "collects_browsing_data": false,
+        "collects_messages": false,
+        "collects_device_data": false,
+        "collects_location_data": false,
+        "collects_search_terms": false
+      }
     }
   }
 }
