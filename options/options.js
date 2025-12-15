@@ -8,6 +8,7 @@ const storage = new StorageManager();
 const configForm = document.getElementById('configForm');
 const testBtn = document.getElementById('testBtn');
 const syncNowBtn = document.getElementById('syncNowBtn');
+const syncUploadBtn = document.getElementById('syncUploadBtn');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
 const exportHtmlBtn = document.getElementById('exportHtmlBtn');
 const importBtn = document.getElementById('importBtn');
@@ -75,6 +76,9 @@ configForm.addEventListener('submit', async (e) => {
       action: 'configUpdated',
       config 
     });
+
+    // 保存/测试成功后，尝试拉取云端设置
+    chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' });
   } catch (error) {
     showMessage('保存失败: ' + error.message, 'error');
   }
@@ -105,6 +109,9 @@ testBtn.addEventListener('click', async () => {
     
     if (result.success) {
       showMessage('连接成功！', 'success');
+
+      // 测试成功后尝试拉取云端设置
+      chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' });
     } else {
       showMessage('连接失败: ' + result.message, 'error');
     }
@@ -138,6 +145,29 @@ syncNowBtn.addEventListener('click', async () => {
     showMessage('同步失败: ' + error.message, 'error');
     syncNowBtn.disabled = false;
     syncNowBtn.textContent = '立即同步';
+  }
+});
+
+/**
+ * 立即上传（本地 -> 云端）
+ */
+syncUploadBtn.addEventListener('click', async () => {
+  syncUploadBtn.disabled = true;
+  syncUploadBtn.textContent = '上传中...';
+  try {
+    chrome.runtime.sendMessage({ action: 'syncUpload' }, (response) => {
+      if (response && response.success) {
+        showMessage('上传成功', 'success');
+      } else {
+        showMessage('上传失败: ' + (response?.error || '未知错误'), 'error');
+      }
+      syncUploadBtn.disabled = false;
+      syncUploadBtn.textContent = '立即上传';
+    });
+  } catch (error) {
+    showMessage('上传失败: ' + error.message, 'error');
+    syncUploadBtn.disabled = false;
+    syncUploadBtn.textContent = '立即上传';
   }
 });
 
@@ -410,6 +440,7 @@ async function loadDevices() {
         });
         if (saveRes?.success) {
           showMessage('已移除设备', 'success');
+          chrome.runtime.sendMessage({ action: 'syncSettings' });
           loadDevices();
         } else {
           showMessage('移除失败: ' + (saveRes?.error || '未知错误'), 'error');

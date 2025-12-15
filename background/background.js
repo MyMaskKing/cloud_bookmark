@@ -25,6 +25,49 @@ function normalizeData(bookmarks = [], folders = []) {
   return { bookmarks: normalizedBookmarks, folders: normalizedFolders };
 }
 
+/**
+ * 同步设置到云端（非敏感）
+ */
+async function syncSettingsToCloud() {
+  const config = await storage.getConfig();
+  if (!config || !config.serverUrl) return;
+  const webdav = new WebDAVClient(config);
+  const settings = await storage.getSettings();
+  const devices = await storage.getDevices();
+  const deviceInfo = await storage.getDeviceInfo();
+  await webdav.writeSettings({
+    settings: settings || {},
+    devices: devices || [],
+    deviceInfo: deviceInfo || null
+  });
+}
+
+/**
+ * 从云端同步设置到本地（非敏感）
+ */
+async function syncSettingsFromCloud() {
+  const config = await storage.getConfig();
+  if (!config || !config.serverUrl) return;
+  const webdav = new WebDAVClient(config);
+  try {
+    const cloud = await webdav.readSettings();
+    if (cloud) {
+      if (cloud.settings) {
+        await storage.saveSettings(cloud.settings);
+      }
+      if (cloud.devices) {
+        await storage.saveDevices(cloud.devices);
+      }
+      if (cloud.deviceInfo) {
+        await storage.saveDeviceInfo(cloud.deviceInfo);
+      }
+    }
+  } catch (e) {
+    // 忽略设置读取失败，不影响书签同步
+    console.warn('同步设置失败（忽略）：', e.message);
+  }
+}
+
 // 监听插件安装
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('云端书签插件已安装');
@@ -104,6 +147,33 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'syncSettings') {
+    syncSettingsToCloud().then(() => {
+      sendResponse({ success: true });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+  
+  if (request.action === 'syncSettingsFromCloud') {
+    syncSettingsFromCloud().then(() => {
+      sendResponse({ success: true });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+
+  if (request.action === 'syncUpload') {
+    syncUpload().then(() => {
+      sendResponse({ success: true });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+  
   if (request.action === 'configUpdated') {
     setupSyncAlarm().then(() => {
       sendResponse({ success: true });
@@ -178,6 +248,9 @@ async function syncFromCloud() {
     // 合并数据（简单的以云端为准的策略，后续可以优化冲突处理）
     await storage.saveBookmarks(cleaned.bookmarks, cleaned.folders);
 
+    // 同步设置（非敏感）
+    await syncSettingsFromCloud();
+
     // 更新设备上次同步时间
     await touchCurrentDevice();
     
@@ -234,6 +307,10 @@ async function syncToCloud(bookmarks, folders) {
     const webdav = new WebDAVClient(config);
     const cleaned = normalizeData(bookmarks, folders);
     await webdav.writeBookmarks({ bookmarks: cleaned.bookmarks, folders: cleaned.folders });
+
+    // 写入设置（非敏感）
+    const settings = await storage.getSettings();
+    await webdav.writeSettings(settings || {});
     
     await touchCurrentDevice();
 
@@ -263,6 +340,16 @@ async function syncToCloud(bookmarks, folders) {
     
     throw error;
   }
+}
+
+/**
+ * 主动上传：读取本地书签与设置，上行到云端
+ */
+async function syncUpload() {
+  const data = await storage.getBookmarks();
+  const bookmarks = data.bookmarks || [];
+  const folders = data.folders || [];
+  await syncToCloud(bookmarks, folders);
 }
 
 // 导出函数供其他脚本调用
@@ -295,6 +382,8 @@ async function ensureDeviceRegistered() {
       lastSeen: info.lastSeen
     });
     await storage.saveDevices(devices);
+    // 设备列表变动，立即同步设置到云端
+    await syncSettingsToCloud();
   }
 }
 
@@ -311,6 +400,8 @@ async function touchCurrentDevice() {
     devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen, name: currentDevice.name };
     await storage.saveDevices(devices);
   }
+  // 设备信息更新后也同步设置到云端
+  await syncSettingsToCloud();
 }
 
 /**

@@ -21,6 +21,7 @@ class StorageManager {
     this.pendingChangesKey = 'pendingChanges';
     this.devicesKey = 'devices';
     this.deviceInfoKey = 'deviceInfo';
+    this.settingsKey = 'settings'; // 非敏感设置
   }
   
   /**
@@ -251,6 +252,36 @@ class StorageManager {
           reject(new Error(this.getError()));
         } else {
           resolve(info);
+        }
+      });
+    });
+  }
+
+  /**
+   * 保存非敏感设置
+   */
+  async saveSettings(settings) {
+    return new Promise((resolve, reject) => {
+      this.storage.set({ [this.settingsKey]: settings }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(settings);
+        }
+      });
+    });
+  }
+
+  /**
+   * 获取非敏感设置
+   */
+  async getSettings() {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.settingsKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(result[this.settingsKey] || {});
         }
       });
     });

@@ -10,6 +10,7 @@ let viewOptions = {
   showUrl: true,
   showIcon: true
 };
+const defaultViewOptions = { ...viewOptions };
 
 function normalizeFolderPath(path) {
   if (!path) return '';
@@ -107,6 +108,7 @@ const addFolderBtn = document.getElementById('addFolderBtn');
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadSettings(); // 先加载显示设置
   await loadBookmarks();
   await loadFolders();
   await loadTags();
@@ -894,6 +896,7 @@ function handleViewOptions() {
     checkbox.onchange = () => {
       viewOptions[opt.key] = checkbox.checked;
       renderBookmarks();
+      persistSettings();
     };
     const text = document.createElement('span');
     text.textContent = opt.label;
@@ -913,6 +916,35 @@ function handleViewOptions() {
     };
     document.addEventListener('click', closeMenu);
   }, 0);
+}
+
+/**
+ * 加载非敏感设置（本地或云端同步后的本地）
+ */
+async function loadSettings() {
+  try {
+    const settings = await storage.getSettings();
+    if (settings && settings.viewOptions) {
+      viewOptions = { ...defaultViewOptions, ...settings.viewOptions };
+    } else {
+      viewOptions = { ...defaultViewOptions };
+    }
+  } catch (e) {
+    viewOptions = { ...defaultViewOptions };
+  }
+}
+
+/**
+ * 持久化非敏感设置并通知后台同步到云端
+ */
+async function persistSettings() {
+  try {
+    const settings = { viewOptions };
+    await storage.saveSettings(settings);
+    chrome.runtime.sendMessage({ action: 'syncSettings' });
+  } catch (e) {
+    console.warn('保存设置失败', e);
+  }
 }
 
 /**

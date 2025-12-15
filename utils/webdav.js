@@ -10,6 +10,7 @@ class WebDAVClient {
     this.password = config.password;
     this.path = config.path || '/bookmarks/';
     this.fileName = 'bookmarks.json';
+    this.settingsFileName = 'settings.json';
   }
 
   /**
@@ -18,6 +19,11 @@ class WebDAVClient {
   getFilePath() {
     const path = this.path.endsWith('/') ? this.path : this.path + '/';
     return path + this.fileName;
+  }
+
+  getSettingsPath() {
+    const path = this.path.endsWith('/') ? this.path : this.path + '/';
+    return path + this.settingsFileName;
   }
 
   /**
@@ -138,6 +144,68 @@ class WebDAVClient {
       return { success: true };
     } catch (error) {
       console.error('写入书签失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 从WebDAV服务器读取设置
+   */
+  async readSettings() {
+    try {
+      await this.ensureDirectory();
+      
+      const filePath = this.getSettingsPath();
+      const response = await fetch(this.serverUrl + filePath, {
+        method: 'GET',
+        headers: {
+          'Authorization': this.getAuthHeader()
+        }
+      });
+
+      if (response.status === 404) {
+        // 文件不存在，返回空设置
+        return {};
+      }
+
+      if (!response.ok) {
+        throw new Error(`读取设置失败: HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      return data || {};
+    } catch (error) {
+      console.error('读取设置失败:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * 将设置写入WebDAV服务器
+   */
+  async writeSettings(settings) {
+    try {
+      await this.ensureDirectory();
+      
+      const filePath = this.getSettingsPath();
+      const jsonData = JSON.stringify(settings || {}, null, 2);
+      
+      const response = await fetch(this.serverUrl + filePath, {
+        method: 'PUT',
+        headers: {
+          'Authorization': this.getAuthHeader(),
+          'Content-Type': 'application/json'
+        },
+        body: jsonData
+      });
+
+      if (!response.ok) {
+        throw new Error(`写入设置失败: HTTP ${response.status}`);
+      }
+
+      return { success: true };
+    } catch (error) {
+      console.error('写入设置失败:', error);
       throw error;
     }
   }

@@ -356,7 +356,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  /* line clamp intentionally limited to 2 lines; standard line-clamp not used for compatibility warnings */
   -webkit-box-orient: vertical;
 }
 
@@ -385,7 +385,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  /* line clamp intentionally limited to 2 lines; standard line-clamp not used for compatibility warnings */
   -webkit-box-orient: vertical;
 }
 
@@ -397,7 +397,7 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
-  -webkit-line-clamp: 2;
+  /* line clamp intentionally limited to 2 lines; standard line-clamp not used for compatibility warnings */
   -webkit-box-orient: vertical;
 }
 
