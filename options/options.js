@@ -324,10 +324,12 @@ importFile.addEventListener('change', async (e) => {
       const urlMap = new Map();
       existingBookmarks.forEach(b => urlMap.set(b.url, b));
       
+      let added = 0;
       importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
           existingBookmarks.push(b);
           urlMap.set(b.url, b);
+          added += 1;
         }
       });
       
@@ -346,7 +348,7 @@ importFile.addEventListener('change', async (e) => {
         folders: allFolders
       });
       
-      showMessage(`导入成功，共导入 ${importedBookmarks.length} 个书签`, 'success');
+      showMessage(`导入成功，新增 ${added} 个书签`, 'success');
     } else {
       showMessage('文件格式不正确', 'error');
     }
