@@ -8,6 +8,7 @@ importScripts('../utils/storage.js', '../utils/webdav.js');
 const storage = new StorageManager();
 let syncInterval = 5 * 60 * 1000; // 默认5分钟
 let syncAlarmName = 'syncBookmarks';
+let currentDevice = null;
 
 // 监听插件安装
 chrome.runtime.onInstalled.addListener(async () => {
@@ -22,6 +23,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   
   // 设置初始同步任务
   await setupSyncAlarm();
+  await ensureDeviceRegistered();
 });
 
 // 监听右键菜单点击
@@ -93,6 +95,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (request.action === 'getDevices') {
+    Promise.all([storage.getDevices(), storage.getDeviceInfo()]).then(([devices, info]) => {
+      sendResponse({ devices, deviceInfo: info });
+    }).catch(error => sendResponse({ error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'saveDevices') {
+    storage.saveDevices(request.devices || []).then(() => {
+      sendResponse({ success: true });
+    }).catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
 });
 
 /**
@@ -120,6 +136,20 @@ async function syncFromCloud() {
       return;
     }
 
+    await ensureDeviceRegistered();
+
+    // 设备校验：如果当前设备不在设备列表，清除本地数据并停止同步
+    const devices = await storage.getDevices();
+    if (!devices.find(d => d.id === currentDevice.id)) {
+      await storage.clearLocalData();
+      await storage.saveSyncStatus({
+        status: 'error',
+        lastSync: Date.now(),
+        error: '当前设备未被授权，已清理本地数据'
+      });
+      return;
+    }
+
     await storage.saveSyncStatus({
       status: 'syncing',
       lastSync: Date.now(),
@@ -131,6 +161,9 @@ async function syncFromCloud() {
     
     // 合并数据（简单的以云端为准的策略，后续可以优化冲突处理）
     await storage.saveBookmarks(cloudData.bookmarks || [], cloudData.folders || []);
+
+    // 更新设备上次同步时间
+    await touchCurrentDevice();
     
     await storage.saveSyncStatus({
       status: 'success',
@@ -163,6 +196,19 @@ async function syncToCloud(bookmarks, folders) {
       throw new Error('WebDAV配置未设置');
     }
 
+    await ensureDeviceRegistered();
+    // 设备校验
+    const devices = await storage.getDevices();
+    if (!devices.find(d => d.id === currentDevice.id)) {
+      await storage.clearLocalData();
+      await storage.saveSyncStatus({
+        status: 'error',
+        lastSync: Date.now(),
+        error: '当前设备未被授权，已清理本地数据'
+      });
+      return;
+    }
+
     await storage.saveSyncStatus({
       status: 'syncing',
       lastSync: Date.now(),
@@ -172,6 +218,8 @@ async function syncToCloud(bookmarks, folders) {
     const webdav = new WebDAVClient(config);
     await webdav.writeBookmarks({ bookmarks, folders });
     
+    await touchCurrentDevice();
+
     await storage.saveSyncStatus({
       status: 'success',
       lastSync: Date.now(),
@@ -203,4 +251,62 @@ async function syncToCloud(bookmarks, folders) {
 // 导出函数供其他脚本调用
 self.syncToCloud = syncToCloud;
 self.syncFromCloud = syncFromCloud;
+
+/**
+ * 确保当前设备注册
+ */
+async function ensureDeviceRegistered() {
+  if (currentDevice) return;
+  let info = await storage.getDeviceInfo();
+  if (!info) {
+    info = {
+      id: storage.generateId(),
+      name: await getDeviceName(),
+      createdAt: Date.now(),
+      lastSeen: Date.now()
+    };
+    await storage.saveDeviceInfo(info);
+  }
+  currentDevice = info;
+
+  let devices = await storage.getDevices();
+  if (!devices.find(d => d.id === info.id)) {
+    devices.push({
+      id: info.id,
+      name: info.name,
+      createdAt: info.createdAt,
+      lastSeen: info.lastSeen
+    });
+    await storage.saveDevices(devices);
+  }
+}
+
+/**
+ * 更新当前设备lastSeen
+ */
+async function touchCurrentDevice() {
+  if (!currentDevice) return;
+  currentDevice.lastSeen = Date.now();
+  await storage.saveDeviceInfo(currentDevice);
+  const devices = await storage.getDevices();
+  const idx = devices.findIndex(d => d.id === currentDevice.id);
+  if (idx !== -1) {
+    devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen, name: currentDevice.name };
+    await storage.saveDevices(devices);
+  }
+}
+
+/**
+ * 获取设备名称
+ */
+async function getDeviceName() {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.userAgent) {
+      return navigator.userAgent.split(')')[0] || '未知设备';
+    }
+  } catch (e) {
+    // ignore
+  }
+  return '未知设备';
+}
 

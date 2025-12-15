@@ -82,6 +82,20 @@
           <input type="file" id="importFile" accept=".json,.html" style="display: none;">
         </div>
       </section>
+
+      <section class="section">
+        <h2>存储设备管理</h2>
+        <div class="device-header">
+          <div>当前设备：<span id="currentDeviceName">-</span></div>
+          <div class="device-actions">
+            <button id="refreshDevicesBtn" class="btn btn-secondary">刷新</button>
+          </div>
+        </div>
+        <div id="deviceList" class="device-list">
+          <div class="empty-state">暂无设备</div>
+        </div>
+        <small>提示：移除未知设备后，如果本机未在设备列表中，下一次同步将清空本地数据并停止同步。</small>
+      </section>
     </main>
   </div>
 

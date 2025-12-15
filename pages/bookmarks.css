@@ -92,6 +92,59 @@ body {
   border-top: 1px solid #eee;
 }
 
+/* 文件夹树 */
+.folder-tree {
+  list-style: none;
+  padding-left: 12px;
+  margin: 0;
+}
+
+.folder-node {
+  margin: 4px 0;
+}
+
+.folder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.folder-row:hover {
+  background: #f3f6fb;
+}
+
+.folder-label {
+  flex: 1;
+  font-size: 14px;
+  color: #333;
+}
+
+.folder-label.active {
+  color: #4a90e2;
+  font-weight: 600;
+}
+
+.folder-rename {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 14px;
+  color: #888;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.2s, color 0.2s;
+}
+
+.folder-rename:hover {
+  background: #e8f0fe;
+  color: #4a90e2;
+}
+
 .section-title {
   font-size: 12px;
   font-weight: 600;

@@ -3,6 +3,12 @@
  */
 
 const storage = new StorageManager();
+let viewOptions = {
+  showDescription: true,
+  showNotes: true,
+  showTags: true,
+  showUrl: true
+};
 
 // 工具函数（从utils.js导入的函数需要在这里定义或确保全局可用）
 function escapeHtml(text) {
@@ -77,6 +83,7 @@ const addBookmarkBtn = document.getElementById('addBookmarkBtn');
 const searchInput = document.getElementById('searchInput');
 const sortSelect = document.getElementById('sortSelect');
 const viewToggle = document.getElementById('viewToggle');
+const viewOptionsBtn = document.getElementById('viewOptionsBtn');
 const exportBtn = document.getElementById('exportBtn');
 const syncBtn = document.getElementById('syncBtn');
 const bookmarksGrid = document.getElementById('bookmarksGrid');
@@ -133,6 +140,7 @@ function setupEventListeners() {
     renderBookmarks();
   });
   viewToggle.addEventListener('click', toggleView);
+  viewOptionsBtn.addEventListener('click', handleViewOptions);
   exportBtn.addEventListener('click', handleExport);
   syncBtn.addEventListener('click', handleSync);
   closeModal.addEventListener('click', hideModal);
@@ -171,22 +179,103 @@ async function loadBookmarks() {
 async function loadFolders() {
   const folders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
   folders.sort();
-  
-  foldersList.innerHTML = folders.map(folder => `
-    <div class="folder-item" data-folder="${escapeHtml(folder)}">
-      <span>📁</span>
-      <span>${escapeHtml(folder)}</span>
-    </div>
-  `).join('');
-  
-  foldersList.querySelectorAll('.folder-item').forEach(item => {
-    item.addEventListener('click', () => {
-      document.querySelectorAll('.folder-item').forEach(i => i.classList.remove('active'));
-      item.classList.add('active');
-      currentFilter = 'folder:' + item.dataset.folder;
+
+  const tree = buildFolderTree(folders);
+  foldersList.innerHTML = renderFolderTree(tree.children);
+
+  // 绑定点击事件（筛选）
+  foldersList.querySelectorAll('.folder-label').forEach(label => {
+    label.addEventListener('click', () => {
+      foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
+      label.classList.add('active');
+      const folderPath = label.dataset.folder;
+      currentFilter = 'folder:' + folderPath;
       renderBookmarks();
     });
   });
+
+  // 绑定重命名/移动事件
+  foldersList.querySelectorAll('.folder-rename').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const oldPath = btn.dataset.folder;
+      const newPath = prompt('输入新路径（支持修改父级，用/分隔，例如：项目/前端/UI）', oldPath) || '';
+      const normalized = newPath.trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+      if (!normalized) return;
+      if (normalized === oldPath) return;
+      await renameFolderPath(oldPath, normalized);
+      await loadBookmarks();
+      await loadFolders();
+      await loadTags();
+    });
+  });
+}
+
+/**
+ * 构建树结构
+ */
+function buildFolderTree(folders) {
+  const root = { name: '', path: '', children: {} };
+  folders.forEach(folder => {
+    const parts = folder.split('/');
+    let node = root;
+    let currentPath = '';
+    parts.forEach(part => {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      if (!node.children[part]) {
+        node.children[part] = { name: part, path: currentPath, children: {} };
+      }
+      node = node.children[part];
+    });
+  });
+  return root;
+}
+
+/**
+ * 渲染树结构为HTML
+ */
+function renderFolderTree(children) {
+  const entries = Object.values(children);
+  if (entries.length === 0) return '';
+
+  return `
+    <ul class="folder-tree">
+      ${entries.map(child => `
+        <li class="folder-node">
+          <div class="folder-row">
+            <span class="folder-label" data-folder="${escapeHtml(child.path)}">📁 ${escapeHtml(child.name)}</span>
+            <button class="folder-rename" data-folder="${escapeHtml(child.path)}" title="重命名">✏️</button>
+          </div>
+          ${renderFolderTree(child.children)}
+        </li>
+      `).join('')}
+    </ul>
+  `;
+}
+
+/**
+ * 重命名文件夹（包含子文件夹）
+ */
+async function renameFolderPath(oldPath, newPath) {
+  if (currentBookmarks.some(b => b.folder === newPath)) {
+    const proceed = confirm('目标路径已存在同名文件夹，是否继续移动？');
+    if (!proceed) return;
+  }
+
+  currentBookmarks = currentBookmarks.map(b => {
+    if (!b.folder) return b;
+    if (b.folder === oldPath) {
+      return { ...b, folder: newPath };
+    }
+    if (b.folder.startsWith(oldPath + '/')) {
+      const suffix = b.folder.slice(oldPath.length);
+      return { ...b, folder: newPath + suffix };
+    }
+    return b;
+  });
+  currentFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
+  await storage.saveBookmarks(currentBookmarks, currentFolders);
+  await syncToCloud();
 }
 
 /**
@@ -330,13 +419,13 @@ function renderBookmarkCard(bookmark) {
         <img src="${favicon}" alt="" class="bookmark-favicon" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23999%27 d=%27M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%27/%3E%3C/svg%3E'">
         <div class="bookmark-info">
           <div class="bookmark-title">${escapeHtml(bookmark.title || '无标题')}</div>
-          <div class="bookmark-url">${escapeHtml(domain || bookmark.url)}</div>
+          ${viewOptions.showUrl ? `<div class="bookmark-url">${escapeHtml(domain || bookmark.url)}</div>` : ''}
         </div>
         <div class="bookmark-star">${bookmark.starred ? '⭐' : '☆'}</div>
       </div>
-      ${bookmark.description ? `<div class="bookmark-description">${escapeHtml(bookmark.description)}</div>` : ''}
-      ${bookmark.notes ? `<div class="bookmark-notes">📝 ${escapeHtml(bookmark.notes)}</div>` : ''}
-      ${bookmark.tags && bookmark.tags.length > 0 ? `
+      ${viewOptions.showDescription && bookmark.description ? `<div class="bookmark-description">${escapeHtml(bookmark.description)}</div>` : ''}
+      ${viewOptions.showNotes && bookmark.notes ? `<div class="bookmark-notes">📝 ${escapeHtml(bookmark.notes)}</div>` : ''}
+      ${viewOptions.showTags && bookmark.tags && bookmark.tags.length > 0 ? `
         <div class="bookmark-tags">
           ${bookmark.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
         </div>
@@ -555,6 +644,51 @@ function handleExport() {
   setTimeout(() => {
     const closeMenu = (e) => {
       if (!menu.contains(e.target) && e.target !== exportBtn) {
+        menu.remove();
+        document.removeEventListener('click', closeMenu);
+      }
+    };
+    document.addEventListener('click', closeMenu);
+  }, 0);
+}
+
+/**
+ * 视图显示选项
+ */
+function handleViewOptions() {
+  const menu = document.createElement('div');
+  menu.className = 'export-menu';
+  menu.style.cssText = 'position: fixed; top: 60px; right: 70px; background: white; border: 1px solid #ddd; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; padding: 8px; min-width: 160px;';
+
+  const options = [
+    { key: 'showUrl', label: '显示URL' },
+    { key: 'showDescription', label: '显示描述' },
+    { key: 'showNotes', label: '显示备注' },
+    { key: 'showTags', label: '显示标签' }
+  ];
+
+  options.forEach(opt => {
+    const row = document.createElement('label');
+    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 4px;cursor:pointer;';
+    const checkbox = document.createElement('input');
+    checkbox.type = 'checkbox';
+    checkbox.checked = viewOptions[opt.key];
+    checkbox.onchange = () => {
+      viewOptions[opt.key] = checkbox.checked;
+      renderBookmarks();
+    };
+    const text = document.createElement('span');
+    text.textContent = opt.label;
+    row.appendChild(checkbox);
+    row.appendChild(text);
+    menu.appendChild(row);
+  });
+
+  document.body.appendChild(menu);
+
+  setTimeout(() => {
+    const closeMenu = (e) => {
+      if (!menu.contains(e.target) && e.target !== viewOptionsBtn) {
         menu.remove();
         document.removeEventListener('click', closeMenu);
       }

@@ -19,6 +19,8 @@ class StorageManager {
     this.configKey = 'webdavConfig';
     this.syncStatusKey = 'syncStatus';
     this.pendingChangesKey = 'pendingChanges';
+    this.devicesKey = 'devices';
+    this.deviceInfoKey = 'deviceInfo';
   }
   
   /**
@@ -192,6 +194,81 @@ class StorageManager {
    */
   generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  }
+
+  /**
+   * 获取设备列表
+   */
+  async getDevices() {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.devicesKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(result[this.devicesKey] || []);
+        }
+      });
+    });
+  }
+
+  /**
+   * 保存设备列表
+   */
+  async saveDevices(devices) {
+    return new Promise((resolve, reject) => {
+      this.storage.set({ [this.devicesKey]: devices }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(devices);
+        }
+      });
+    });
+  }
+
+  /**
+   * 获取当前设备信息
+   */
+  async getDeviceInfo() {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.deviceInfoKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(result[this.deviceInfoKey] || null);
+        }
+      });
+    });
+  }
+
+  /**
+   * 保存当前设备信息
+   */
+  async saveDeviceInfo(info) {
+    return new Promise((resolve, reject) => {
+      this.storage.set({ [this.deviceInfoKey]: info }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(info);
+        }
+      });
+    });
+  }
+
+  /**
+   * 清空本地书签相关数据
+   */
+  async clearLocalData() {
+    return new Promise((resolve, reject) => {
+      this.storage.remove([this.bookmarksKey, this.pendingChangesKey], () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve();
+        }
+      });
+    });
   }
 }
 

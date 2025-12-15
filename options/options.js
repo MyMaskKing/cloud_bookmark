@@ -13,6 +13,9 @@ const exportHtmlBtn = document.getElementById('exportHtmlBtn');
 const importBtn = document.getElementById('importBtn');
 const importBrowserBtn = document.getElementById('importBrowserBtn');
 const importFile = document.getElementById('importFile');
+const deviceList = document.getElementById('deviceList');
+const currentDeviceName = document.getElementById('currentDeviceName');
+const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
 
 const serverUrlInput = document.getElementById('serverUrl');
 const usernameInput = document.getElementById('username');
@@ -29,6 +32,7 @@ const errorText = document.getElementById('errorText');
 document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
   await updateSyncStatus();
+  await loadDevices();
   
   // 定时更新同步状态
   setInterval(updateSyncStatus, 5000);
@@ -335,6 +339,65 @@ importFile.addEventListener('change', async (e) => {
   
   importFile.value = '';
 });
+
+/**
+ * 加载设备列表
+ */
+async function loadDevices() {
+  try {
+    const res = await new Promise((resolve) => {
+      chrome.runtime.sendMessage({ action: 'getDevices' }, resolve);
+    });
+    if (res?.error) throw new Error(res.error);
+    const devices = res?.devices || [];
+    const deviceInfo = res?.deviceInfo;
+    currentDeviceName.textContent = deviceInfo?.name || '未知设备';
+
+    if (!devices.length) {
+      deviceList.innerHTML = '<div class="empty-state">暂无设备</div>';
+      return;
+    }
+
+    deviceList.innerHTML = devices.map(dev => {
+      const last = dev.lastSeen ? new Date(dev.lastSeen).toLocaleString() : '-';
+      const created = dev.createdAt ? new Date(dev.createdAt).toLocaleString() : '-';
+      const isCurrent = deviceInfo && dev.id === deviceInfo.id;
+      return `
+        <div class="device-item" data-id="${dev.id}">
+          <div class="device-info">
+            <div class="device-name">${dev.name || '未命名设备'} ${isCurrent ? '(当前设备)' : ''}</div>
+            <div class="device-meta">创建：${created}</div>
+            <div class="device-meta">上次在线：${last}</div>
+          </div>
+          <div>
+            <button class="btn btn-secondary btn-small device-remove" data-id="${dev.id}" ${isCurrent ? 'disabled' : ''}>移除</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    deviceList.querySelectorAll('.device-remove').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        if (!confirm('确定移除该设备？移除后该设备将无法同步。')) return;
+        const newDevices = devices.filter(d => d.id !== id);
+        const saveRes = await new Promise((resolve) => {
+          chrome.runtime.sendMessage({ action: 'saveDevices', devices: newDevices }, resolve);
+        });
+        if (saveRes?.success) {
+          showMessage('已移除设备', 'success');
+          loadDevices();
+        } else {
+          showMessage('移除失败: ' + (saveRes?.error || '未知错误'), 'error');
+        }
+      });
+    });
+  } catch (error) {
+    showMessage('加载设备失败: ' + error.message, 'error');
+  }
+}
+
+refreshDevicesBtn.addEventListener('click', loadDevices);
 
 /**
  * 显示消息
