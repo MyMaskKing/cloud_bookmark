@@ -123,11 +123,13 @@ async function importFromBrowserBookmarks() {
         } else if (node.children) {
           // 这是一个文件夹
           const folderName = node.title || '未命名文件夹';
-          if (folderName && !folders.includes(folderName)) {
-            folders.push(folderName);
+          const newFolder = currentFolder ? `${currentFolder}/${folderName}` : folderName;
+
+          // 收集完整路径，避免在顶层再生成一个同名空文件夹
+          if (newFolder && !folders.includes(newFolder)) {
+            folders.push(newFolder);
           }
           
-          const newFolder = currentFolder ? `${currentFolder}/${folderName}` : folderName;
           processBookmarkTree(node.children, newFolder);
         }
       });

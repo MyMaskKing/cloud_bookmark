@@ -248,7 +248,6 @@ importBrowserBtn.addEventListener('click', async () => {
           urlMap.set(b.url, b);
         }
       });
-      
       // 合并文件夹
       const allFolders = [...new Set([...existingFolders, ...(data.folders || [])])];
       
@@ -301,24 +300,34 @@ importFile.addEventListener('change', async (e) => {
     }
     
     if (data.bookmarks && Array.isArray(data.bookmarks)) {
+      // 规范化并仅保留实际使用的文件夹
+      const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+      const importedBookmarks = data.bookmarks.map(b => {
+        if (!b.folder) return b;
+        return { ...b, folder: normalizeFolder(b.folder) };
+      });
+
       // 合并到现有书签
       const existing = await storage.getBookmarks();
       const existingBookmarks = existing.bookmarks || [];
-      const existingFolders = existing.folders || [];
+      const existingFolders = (existing.folders || []).map(normalizeFolder).filter(Boolean);
       
-      // 合并书签（避免重复）
+      // 合并书签（避免重复 URL）
       const urlMap = new Map();
       existingBookmarks.forEach(b => urlMap.set(b.url, b));
       
-      data.bookmarks.forEach(b => {
+      importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
           existingBookmarks.push(b);
           urlMap.set(b.url, b);
         }
       });
       
-      // 合并文件夹
-      const allFolders = [...new Set([...existingFolders, ...(data.folders || [])])];
+      // 导入时清空空文件夹：仅保留有书签引用的文件夹
+      const usedFolders = new Set(
+        existingBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean)
+      );
+      const allFolders = [...usedFolders];
       
       await storage.saveBookmarks(existingBookmarks, allFolders);
       
@@ -329,7 +338,7 @@ importFile.addEventListener('change', async (e) => {
         folders: allFolders
       });
       
-      showMessage(`导入成功，共导入 ${data.bookmarks.length} 个书签`, 'success');
+      showMessage(`导入成功，共导入 ${importedBookmarks.length} 个书签`, 'success');
     } else {
       showMessage('文件格式不正确', 'error');
     }
@@ -370,7 +379,7 @@ async function loadDevices() {
             <div class="device-meta">上次在线：${last}</div>
           </div>
           <div>
-            <button class="btn btn-secondary btn-small device-remove" data-id="${dev.id}" ${isCurrent ? 'disabled' : ''}>移除</button>
+            <button class="btn btn-secondary btn-small device-remove" data-id="${dev.id}" data-current="${isCurrent ? '1' : '0'}">移除</button>
           </div>
         </div>
       `;
@@ -379,7 +388,12 @@ async function loadDevices() {
     deviceList.querySelectorAll('.device-remove').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
+        const isCurrent = btn.dataset.current === '1';
         if (!confirm('确定移除该设备？移除后该设备将无法同步。')) return;
+        if (isCurrent) {
+          const doubleCheck = confirm('这是当前设备，移除后本机会在下一次同步清空本地数据并停止同步，确定继续？');
+          if (!doubleCheck) return;
+        }
         const newDevices = devices.filter(d => d.id !== id);
         const saveRes = await new Promise((resolve) => {
           chrome.runtime.sendMessage({ action: 'saveDevices', devices: newDevices }, resolve);

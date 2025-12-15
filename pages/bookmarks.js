@@ -7,8 +7,17 @@ let viewOptions = {
   showDescription: true,
   showNotes: true,
   showTags: true,
-  showUrl: true
+  showUrl: true,
+  showIcon: true
 };
+
+function normalizeFolderPath(path) {
+  if (!path) return '';
+  return path
+    .trim()
+    .replace(/\/+/g, '/')
+    .replace(/^\/|\/$/g, '');
+}
 
 // 工具函数（从utils.js导入的函数需要在这里定义或确保全局可用）
 function escapeHtml(text) {
@@ -94,6 +103,7 @@ const closeModal = document.getElementById('closeModal');
 const cancelBtn = document.getElementById('cancelBtn');
 const foldersList = document.getElementById('foldersList');
 const tagsList = document.getElementById('tagsList');
+const addFolderBtn = document.getElementById('addFolderBtn');
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
@@ -147,6 +157,7 @@ function setupEventListeners() {
   cancelBtn.addEventListener('click', hideModal);
   
   bookmarkForm.addEventListener('submit', handleSubmit);
+  addFolderBtn.addEventListener('click', handleAddFolder);
   
   // 导航项点击
   document.querySelectorAll('.nav-item').forEach(item => {
@@ -165,8 +176,28 @@ function setupEventListeners() {
 async function loadBookmarks() {
   try {
     const data = await storage.getBookmarks();
-    currentBookmarks = data.bookmarks || [];
-    currentFolders = data.folders || [];
+    const rawBookmarks = data.bookmarks || [];
+    // 规范化书签文件夹路径
+    currentBookmarks = rawBookmarks.map(b => {
+      if (!b.folder) return b;
+      return { ...b, folder: normalizeFolderPath(b.folder) };
+    });
+
+    // 规范化存储的文件夹列表（保留用户创建的空文件夹）
+    const storedFolders = (data.folders || []).map(p => normalizeFolderPath(p || '')).filter(Boolean);
+    const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
+    const missing = [...new Set(bookmarkFolders)].filter(f => f && !storedFolders.includes(f)).sort();
+    const merged = [...storedFolders, ...missing];
+    const dedup = [...new Set(merged)];
+    currentFolders = dedup;
+
+    // 若与存储数据不一致，回写清理结果
+    const storedKey = storedFolders.join('|');
+    const dedupKey = dedup.join('|');
+    if (storedKey !== dedupKey) {
+      await storage.saveBookmarks(currentBookmarks, currentFolders);
+    }
+
     renderBookmarks();
   } catch (error) {
     console.error('加载书签失败:', error);
@@ -177,8 +208,12 @@ async function loadBookmarks() {
  * 加载文件夹列表
  */
 async function loadFolders() {
-  const folders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
-  folders.sort();
+  const folders = [...new Set([
+    ...currentFolders,
+    ...currentBookmarks.map(b => b.folder).filter(f => f)
+  ])]
+    .map(normalizeFolderPath)
+    .filter(f => f);
 
   const tree = buildFolderTree(folders);
   foldersList.innerHTML = renderFolderTree(tree.children);
@@ -194,17 +229,45 @@ async function loadFolders() {
     });
   });
 
-  // 绑定重命名/移动事件
-  foldersList.querySelectorAll('.folder-rename').forEach(btn => {
+  // 拖拽排序
+  foldersList.querySelectorAll('.folder-row').forEach(row => {
+    row.setAttribute('draggable', 'true');
+    row.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', row.dataset.folder);
+    });
+    row.addEventListener('dragover', (e) => e.preventDefault());
+    row.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const source = e.dataTransfer.getData('text/plain');
+      const target = row.dataset.folder;
+      if (!source || !target || source === target) return;
+      reorderFolder(source, target);
+      await storage.saveBookmarks(currentBookmarks, currentFolders);
+      await syncToCloud();
+      await loadFolders();
+      await loadTags();
+    });
+  });
+
+  // 绑定文件夹操作菜单
+  foldersList.querySelectorAll('.folder-menu').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const folderPath = btn.dataset.folder;
+      openFolderMenu(btn, folderPath);
+    });
+  });
+
+  // 绑定上下移动按钮（同级排序）
+  foldersList.querySelectorAll('.folder-move').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const oldPath = btn.dataset.folder;
-      const newPath = prompt('输入新路径（支持修改父级，用/分隔，例如：项目/前端/UI）', oldPath) || '';
-      const normalized = newPath.trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
-      if (!normalized) return;
-      if (normalized === oldPath) return;
-      await renameFolderPath(oldPath, normalized);
-      await loadBookmarks();
+      const folder = btn.dataset.folder;
+      const dir = btn.dataset.dir === 'up' ? -1 : 1;
+      const moved = moveFolderSameLevel(folder, dir);
+      if (!moved) return;
+      await storage.saveBookmarks(currentBookmarks, currentFolders);
+      await syncToCloud();
       await loadFolders();
       await loadTags();
     });
@@ -242,9 +305,9 @@ function renderFolderTree(children) {
     <ul class="folder-tree">
       ${entries.map(child => `
         <li class="folder-node">
-          <div class="folder-row">
+          <div class="folder-row" data-folder="${escapeHtml(child.path)}">
             <span class="folder-label" data-folder="${escapeHtml(child.path)}">📁 ${escapeHtml(child.name)}</span>
-            <button class="folder-rename" data-folder="${escapeHtml(child.path)}" title="重命名">✏️</button>
+            <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
           </div>
           ${renderFolderTree(child.children)}
         </li>
@@ -276,6 +339,160 @@ async function renameFolderPath(oldPath, newPath) {
   currentFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
   await storage.saveBookmarks(currentBookmarks, currentFolders);
   await syncToCloud();
+}
+
+/**
+ * 新增文件夹
+ */
+async function handleAddFolder() {
+  const path = prompt('请输入文件夹路径（用/分隔，如：项目/前端/UI）') || '';
+  const normalized = normalizeFolderPath(path);
+  if (!normalized) return;
+  if (currentFolders.includes(normalized)) {
+    alert('该文件夹已存在');
+    return;
+  }
+  currentFolders.push(normalized);
+  currentFolders = [...new Set(currentFolders)];
+  await storage.saveBookmarks(currentBookmarks, currentFolders);
+  await syncToCloud();
+  await loadFolders();
+  await loadTags();
+}
+
+/**
+ * 删除文件夹（删除其下书签）
+ */
+async function deleteFolderPath(folderPath) {
+  // 删除该文件夹及子文件夹下的书签
+  currentBookmarks = currentBookmarks.filter(b => {
+    if (!b.folder) return true;
+    if (b.folder === folderPath || b.folder.startsWith(folderPath + '/')) {
+      return false; // 删除书签
+    }
+    return true;
+  });
+  // 删除文件夹记录
+  currentFolders = currentFolders.filter(f => f !== folderPath && !f.startsWith(folderPath + '/'));
+  await storage.saveBookmarks(currentBookmarks, currentFolders);
+  await syncToCloud();
+}
+
+/**
+ * 打开文件夹操作菜单
+ */
+function openFolderMenu(anchorBtn, folderPath) {
+  // 关闭已有
+  const existing = document.querySelector('.folder-menu-popup');
+  if (existing) existing.remove();
+
+  const menu = document.createElement('div');
+  menu.className = 'folder-menu-popup';
+  menu.style.cssText = 'position:absolute; background:white; border:1px solid #ddd; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:6px 0; z-index:2000; min-width:160px;';
+  menu.innerHTML = `
+    <div class="folder-menu-item" data-action="add">新增子文件夹</div>
+    <div class="folder-menu-item" data-action="rename">重命名/移动</div>
+    <div class="folder-menu-item" data-action="move-up">上移（同层级）</div>
+    <div class="folder-menu-item" data-action="move-down">下移（同层级）</div>
+    <div class="folder-menu-item danger" data-action="delete">删除文件夹（含书签）</div>
+  `;
+
+  document.body.appendChild(menu);
+  const rect = anchorBtn.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + window.scrollY + 4}px`;
+  menu.style.left = `${rect.left + window.scrollX - 40}px`;
+
+  const closeMenu = (e) => {
+    if (!menu.contains(e.target) && e.target !== anchorBtn) {
+      menu.remove();
+      document.removeEventListener('click', closeMenu);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', closeMenu), 0);
+
+  menu.querySelectorAll('.folder-menu-item').forEach(item => {
+    item.addEventListener('click', async () => {
+      const action = item.dataset.action;
+      if (action === 'add') {
+        const name = prompt('请输入子文件夹名称', '');
+        if (!name || !name.trim()) return;
+        const newPath = normalizeFolderPath(folderPath ? `${folderPath}/${name}` : name);
+        if (!newPath) return;
+        if (currentFolders.includes(newPath)) {
+          alert('该文件夹已存在');
+          return;
+        }
+        currentFolders.push(newPath);
+        currentFolders = [...new Set(currentFolders)].sort();
+        await storage.saveBookmarks(currentBookmarks, currentFolders);
+        await syncToCloud();
+        await loadFolders();
+        await loadTags();
+      } else if (action === 'rename') {
+        const newPath = prompt('输入新路径（支持修改父级，用/分隔，例如：项目/前端/UI）', folderPath) || '';
+        const normalized = normalizeFolderPath(newPath);
+        if (!normalized) return;
+        if (normalized === folderPath) return;
+        await renameFolderPath(folderPath, normalized);
+        await loadBookmarks();
+        await loadFolders();
+        await loadTags();
+      } else if (action === 'move-up' || action === 'move-down') {
+        const dir = action === 'move-up' ? -1 : 1;
+        const moved = moveFolderSameLevel(folderPath, dir);
+        if (!moved) return;
+        await storage.saveBookmarks(currentBookmarks, currentFolders);
+        await syncToCloud();
+        await loadFolders();
+        await loadTags();
+      } else if (action === 'delete') {
+        const ok = confirm(`确定删除文件夹「${folderPath}」？该文件夹及其中书签将被删除。`);
+        if (!ok) return;
+        await deleteFolderPath(folderPath);
+        await loadBookmarks();
+        await loadFolders();
+        await loadTags();
+      }
+      menu.remove();
+      document.removeEventListener('click', closeMenu);
+    });
+  });
+}
+
+/**
+ * 重排文件夹顺序（保持路径不变，仅排序）
+ */
+function reorderFolder(source, target) {
+  const srcIdx = currentFolders.indexOf(source);
+  const tgtIdx = currentFolders.indexOf(target);
+  if (srcIdx === -1 || tgtIdx === -1) return;
+  const newOrder = [...currentFolders];
+  newOrder.splice(srcIdx, 1);
+  newOrder.splice(tgtIdx, 0, source);
+  currentFolders = newOrder;
+}
+
+function moveFolderSameLevel(folderPath, direction) {
+  const parent = getParentFolder(folderPath);
+  const siblingIndices = [];
+  currentFolders.forEach((f, idx) => {
+    if (getParentFolder(f) === parent) siblingIndices.push(idx);
+  });
+  const currentIdx = currentFolders.indexOf(folderPath);
+  const pos = siblingIndices.indexOf(currentIdx);
+  if (pos === -1) return false;
+  const targetPos = pos + direction;
+  if (targetPos < 0 || targetPos >= siblingIndices.length) return false;
+  const swapIdx = siblingIndices[targetPos];
+  const newOrder = [...currentFolders];
+  [newOrder[currentIdx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[currentIdx]];
+  currentFolders = newOrder;
+  return true;
+}
+
+function getParentFolder(path) {
+  if (!path || path.indexOf('/') === -1) return '';
+  return path.slice(0, path.lastIndexOf('/'));
 }
 
 /**
@@ -416,7 +633,7 @@ function renderBookmarkCard(bookmark) {
         <button class="action-btn delete-btn" title="删除">🗑️</button>
       </div>
       <div class="bookmark-header">
-        <img src="${favicon}" alt="" class="bookmark-favicon" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23999%27 d=%27M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%27/%3E%3C/svg%3E'">
+        ${viewOptions.showIcon ? `<img src="${favicon}" alt="" class="bookmark-favicon" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23999%27 d=%27M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%27/%3E%3C/svg%3E'">` : ''}
         <div class="bookmark-info">
           <div class="bookmark-title">${escapeHtml(bookmark.title || '无标题')}</div>
           ${viewOptions.showUrl ? `<div class="bookmark-url">${escapeHtml(domain || bookmark.url)}</div>` : ''}
@@ -661,6 +878,7 @@ function handleViewOptions() {
   menu.style.cssText = 'position: fixed; top: 60px; right: 70px; background: white; border: 1px solid #ddd; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; padding: 8px; min-width: 160px;';
 
   const options = [
+    { key: 'showIcon', label: '显示图标' },
     { key: 'showUrl', label: '显示URL' },
     { key: 'showDescription', label: '显示描述' },
     { key: 'showNotes', label: '显示备注' },

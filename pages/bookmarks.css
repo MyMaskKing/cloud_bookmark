@@ -92,6 +92,17 @@ body {
   border-top: 1px solid #eee;
 }
 
+.folders-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.folder-actions {
+  display: flex;
+  gap: 6px;
+}
+
 /* 文件夹树 */
 .folder-tree {
   list-style: none;
@@ -106,9 +117,8 @@ body {
 .folder-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 6px 10px;
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.2s, color 0.2s;
@@ -122,6 +132,9 @@ body {
   flex: 1;
   font-size: 14px;
   color: #333;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .folder-label.active {
@@ -129,18 +142,18 @@ body {
   font-weight: 600;
 }
 
-.folder-rename {
+.folder-menu {
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px;
   color: #888;
-  padding: 2px 4px;
-  border-radius: 4px;
+  padding: 2px 6px;
+  border-radius: 6px;
   transition: background 0.2s, color 0.2s;
 }
 
-.folder-rename:hover {
+.folder-menu:hover {
   background: #e8f0fe;
   color: #4a90e2;
 }
@@ -167,6 +180,39 @@ body {
   cursor: pointer;
   transition: all 0.2s;
   font-size: 14px;
+}
+
+.folder-menu-popup {
+  position: absolute;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  padding: 6px 0;
+  z-index: 2000;
+  min-width: 160px;
+}
+
+.folder-menu-item {
+  padding: 8px 12px;
+  font-size: 14px;
+  color: #333;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+}
+
+.folder-menu-item:hover {
+  background: #f5f7fb;
+  color: #4a90e2;
+}
+
+.folder-menu-item.danger {
+  color: #c0392b;
+}
+
+.folder-menu-item.danger:hover {
+  background: #fdecea;
+  color: #e74c3c;
 }
 
 .folder-item:hover,

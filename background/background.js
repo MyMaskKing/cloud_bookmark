@@ -10,6 +10,21 @@ let syncInterval = 5 * 60 * 1000; // 默认5分钟
 let syncAlarmName = 'syncBookmarks';
 let currentDevice = null;
 
+function normalizeFolderPath(path) {
+  if (!path) return '';
+  return path.trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+}
+
+function normalizeData(bookmarks = [], folders = []) {
+  const normalizedBookmarks = (bookmarks || []).map(b => {
+    if (!b.folder) return b;
+    return { ...b, folder: normalizeFolderPath(b.folder) };
+  });
+  // 同步时不过度清理空文件夹，保留传入的非空文件夹
+  const normalizedFolders = [...new Set(folders.map(normalizeFolderPath).filter(Boolean))];
+  return { bookmarks: normalizedBookmarks, folders: normalizedFolders };
+}
+
 // 监听插件安装
 chrome.runtime.onInstalled.addListener(async () => {
   console.log('云端书签插件已安装');
@@ -158,9 +173,10 @@ async function syncFromCloud() {
 
     const webdav = new WebDAVClient(config);
     const cloudData = await webdav.readBookmarks();
+    const cleaned = normalizeData(cloudData.bookmarks || [], cloudData.folders || []);
     
     // 合并数据（简单的以云端为准的策略，后续可以优化冲突处理）
-    await storage.saveBookmarks(cloudData.bookmarks || [], cloudData.folders || []);
+    await storage.saveBookmarks(cleaned.bookmarks, cleaned.folders);
 
     // 更新设备上次同步时间
     await touchCurrentDevice();
@@ -216,7 +232,8 @@ async function syncToCloud(bookmarks, folders) {
     });
 
     const webdav = new WebDAVClient(config);
-    await webdav.writeBookmarks({ bookmarks, folders });
+    const cleaned = normalizeData(bookmarks, folders);
+    await webdav.writeBookmarks({ bookmarks: cleaned.bookmarks, folders: cleaned.folders });
     
     await touchCurrentDevice();
 
