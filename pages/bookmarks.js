@@ -10,7 +10,12 @@ let viewOptions = {
   showUrl: true,
   showIcon: true
 };
-const defaultViewOptions = { ...viewOptions };
+let currentView = 'grid';
+const defaultSettings = {
+  viewOptions: { ...viewOptions },
+  viewMode: 'grid'
+};
+const defaultViewOptions = { ...defaultSettings.viewOptions };
 
 function normalizeFolderPath(path) {
   if (!path) return '';
@@ -85,7 +90,6 @@ let currentBookmarks = [];
 let currentFolders = [];
 let currentFilter = 'all';
 let currentSort = 'created-desc';
-let currentView = 'grid';
 let editingBookmarkId = null;
 
 // DOM元素
@@ -825,8 +829,8 @@ function handleSearch() {
  */
 function toggleView() {
   currentView = currentView === 'grid' ? 'list' : 'grid';
-  bookmarksGrid.className = `bookmarks-grid view-${currentView}`;
-  viewToggle.textContent = currentView === 'grid' ? '📋' : '⊞';
+  applyViewMode();
+  persistSettings();
 }
 
 /**
@@ -918,6 +922,11 @@ function handleViewOptions() {
   }, 0);
 }
 
+function applyViewMode() {
+  bookmarksGrid.className = `bookmarks-grid view-${currentView}`;
+  viewToggle.textContent = currentView === 'grid' ? '📋' : '⊞';
+}
+
 /**
  * 加载非敏感设置（本地或云端同步后的本地）
  */
@@ -929,9 +938,16 @@ async function loadSettings() {
     } else {
       viewOptions = { ...defaultViewOptions };
     }
+    if (settings && settings.viewMode) {
+      currentView = settings.viewMode;
+    } else {
+      currentView = defaultSettings.viewMode;
+    }
   } catch (e) {
     viewOptions = { ...defaultViewOptions };
+    currentView = defaultSettings.viewMode;
   }
+  applyViewMode();
 }
 
 /**
@@ -939,7 +955,7 @@ async function loadSettings() {
  */
 async function persistSettings() {
   try {
-    const settings = { viewOptions };
+    const settings = { viewOptions, viewMode: currentView };
     await storage.saveSettings(settings);
     chrome.runtime.sendMessage({ action: 'syncSettings' });
   } catch (e) {
