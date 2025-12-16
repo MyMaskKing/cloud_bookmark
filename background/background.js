@@ -298,7 +298,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             if (tabs && tabs.length) {
               handleTabs(tabs);
             } else {
-              return browser.tabs.query({ active: true, lastFocusedWindow: true }).then(handleTabs);
+              return browser.tabs.query({ active: true, lastFocusedWindow: true })
+                .then(res => {
+                  if (res && res.length) return handleTabs(res);
+                  // 继续回退：不带窗口限制
+                  return browser.tabs.query({ active: true }).then(list => {
+                    if (list && list.length) return handleTabs(list);
+                    // 最后回退：取所有标签第一页
+                    return browser.tabs.query({}).then(all => handleTabs(all));
+                  });
+                });
             }
           })
           .catch(err => {
@@ -312,7 +321,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         if (tabs && tabs.length) {
           handleTabs(tabs);
         } else {
-          chrome.tabs.query({ active: true, lastFocusedWindow: true }, handleTabs);
+          chrome.tabs.query({ active: true, lastFocusedWindow: true }, (res) => {
+            if (res && res.length) return handleTabs(res);
+            chrome.tabs.query({ active: true }, (list) => {
+              if (list && list.length) return handleTabs(list);
+              chrome.tabs.query({}, handleTabs);
+            });
+          });
         }
       });
       return true;

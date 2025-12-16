@@ -515,12 +515,15 @@ searchInput.addEventListener('input', debounce(async (e) => {
  * 添加当前页面
  */
 addCurrentBtn.addEventListener('click', async () => {
+  pushOpLog('addCurrent: start');
   const tab = await getActiveTabSafe();
   if (tab && tab.url) {
+    pushOpLog(`addCurrent: got tab url=${tab.url}`);
     chrome.tabs.create({
       url: chrome.runtime.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`)
     });
   } else {
+    pushOpLog('addCurrent: failed to get active tab');
     alert('无法获取当前页面，请在支持的浏览器/标签页中重试');
   }
 });
@@ -542,6 +545,24 @@ async function getActiveTabSafe() {
     if (tab) return tab;
   } catch (e) {
     console.warn('tabs.query(lastFocusedWindow) 失败:', e?.message || e);
+  }
+
+  // 回退：仅 active，不限定窗口（兼容部分移动版 Firefox）
+  try {
+    const tabs = await queryTabsCompat({ active: true });
+    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    if (tab) return tab;
+  } catch (e) {
+    console.warn('tabs.query(active:true) 失败:', e?.message || e);
+  }
+
+  // 回退：所有标签中第一个（兼容部分移动版 Firefox）
+  try {
+    const tabs = await queryTabsCompat({});
+    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    if (tab) return tab;
+  } catch (e) {
+    console.warn('tabs.query({}) 失败:', e?.message || e);
   }
 
   // 回退：让后台获取（兼容部分移动版/Firefox）
