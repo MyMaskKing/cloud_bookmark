@@ -110,6 +110,33 @@ const cancelBtn = document.getElementById('cancelBtn');
 const foldersList = document.getElementById('foldersList');
 const tagsList = document.getElementById('tagsList');
 const addFolderBtn = document.getElementById('addFolderBtn');
+const sidebar = document.querySelector('.sidebar');
+const sidebarOverlay = document.getElementById('sidebarOverlay');
+const sidebarToggle = document.getElementById('sidebarToggle');
+
+function openSidebarMobile() {
+  if (sidebar) sidebar.classList.add('open');
+  if (sidebarOverlay) sidebarOverlay.style.display = 'block';
+}
+
+function closeSidebarMobile() {
+  if (sidebar) sidebar.classList.remove('open');
+  if (sidebarOverlay) sidebarOverlay.style.display = 'none';
+}
+
+function toggleSidebarMobile() {
+  if (sidebar && sidebar.classList.contains('open')) {
+    closeSidebarMobile();
+  } else {
+    openSidebarMobile();
+  }
+}
+
+function closeSidebarIfMobile() {
+  if (window.innerWidth <= 768) {
+    closeSidebarMobile();
+  }
+}
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
@@ -121,6 +148,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadTags();
   setupEventListeners();
   checkUrlParams();
+
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 768) {
+      closeSidebarMobile();
+    }
+  });
   
   // 监听消息更新
   chrome.runtime.onMessage.addListener((request) => {
@@ -168,6 +201,15 @@ function setupEventListeners() {
   
   bookmarkForm.addEventListener('submit', handleSubmit);
   addFolderBtn.addEventListener('click', handleAddFolder);
+
+  // 空状态按钮兜底绑定（避免 inline 失效时无响应）
+  const emptyAddBtn = document.querySelector('.empty-state .btn-primary');
+  if (emptyAddBtn) {
+    emptyAddBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      showAddForm();
+    });
+  }
   
   // 场景切换按钮
   const sceneSwitchBtn = document.getElementById('sceneSwitchBtn');
@@ -193,8 +235,20 @@ function setupEventListeners() {
       item.classList.add('active');
       currentFilter = item.dataset.filter;
       renderBookmarks();
+      closeSidebarIfMobile();
     });
   });
+
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleSidebarMobile();
+    });
+  }
+
+  if (sidebarOverlay) {
+    sidebarOverlay.addEventListener('click', () => closeSidebarMobile());
+  }
 }
 
 /**
@@ -363,6 +417,7 @@ async function loadFolders() {
       const folderPath = label.dataset.folder;
       currentFilter = 'folder:' + folderPath;
       renderBookmarks();
+      closeSidebarIfMobile();
     });
   });
 
@@ -659,6 +714,7 @@ async function loadTags() {
       item.classList.add('active');
       currentFilter = 'tag:' + item.dataset.tag;
       renderBookmarks();
+      closeSidebarIfMobile();
     });
   });
 }
@@ -1201,4 +1257,5 @@ async function syncToCloud() {
 
 // 全局函数供HTML调用
 window.showAddForm = showAddForm;
+
 
