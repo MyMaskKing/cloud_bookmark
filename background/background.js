@@ -96,6 +96,14 @@ chrome.runtime.onInstalled.addListener(async () => {
   await ensureDeviceRegistered();
 });
 
+// 监听浏览器启动（保证每次启动都注册设备与定时任务）
+chrome.runtime.onStartup.addListener(async () => {
+  await setupSyncAlarm();
+  await ensureDeviceRegistered();
+  // 尝试同步一次设置，保证设备列表/当前场景及时更新
+  await syncSettingsFromCloud().catch(() => {});
+});
+
 // 监听右键菜单点击
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'addBookmark') {
@@ -478,6 +486,12 @@ async function ensureDeviceRegistered() {
       lastSeen: Date.now()
     };
     await storage.saveDeviceInfo(info);
+  } else {
+    // 如果名称缺失，补一个
+    if (!info.name) {
+      info.name = await getDeviceName();
+      await storage.saveDeviceInfo(info);
+    }
   }
   currentDevice = info;
 
@@ -517,6 +531,16 @@ async function touchCurrentDevice() {
  */
 async function getDeviceName() {
   try {
+    // 优先使用 platformInfo（更可靠）
+    if (chrome?.runtime?.getPlatformInfo) {
+      const platform = await new Promise(resolve => chrome.runtime.getPlatformInfo(resolve));
+      const parts = [];
+      if (platform?.os) parts.push(platform.os);
+      if (platform?.arch) parts.push(platform.arch);
+      if (platform?.nacl_arch && platform?.nacl_arch !== platform.arch) parts.push(platform.nacl_arch);
+      if (parts.length) return parts.join(' / ');
+    }
+    // 回退：navigator.userAgent
     if (typeof navigator !== 'undefined' && navigator.userAgent) {
       return navigator.userAgent.split(')')[0] || '未知设备';
     }
