@@ -165,6 +165,7 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
       item.addEventListener('click', () => {
         const url = item.dataset.url;
         chrome.tabs.create({ url });
+        window.close();
       });
     });
     return;
@@ -216,6 +217,7 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
         e.stopPropagation();
         const url = item.dataset.url;
         chrome.tabs.create({ url });
+        window.close();
       });
     });
   }
@@ -339,12 +341,17 @@ searchInput.addEventListener('input', debounce(async (e) => {
  * 添加当前页面
  */
 addCurrentBtn.addEventListener('click', async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let tab = null;
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    tab = Array.isArray(tabs) ? tabs[0] : null;
+  } catch (e) {
+    console.error('获取当前标签页失败:', e);
+  }
   if (tab) {
     chrome.tabs.create({
       url: chrome.runtime.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`)
     });
-    window.close();
   }
 });
 
@@ -355,7 +362,6 @@ openFullBtn.addEventListener('click', () => {
   chrome.tabs.create({
     url: chrome.runtime.getURL('pages/bookmarks.html')
   });
-  window.close();
 });
 
 /**
@@ -363,7 +369,6 @@ openFullBtn.addEventListener('click', () => {
  */
 settingsBtn.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
-  window.close();
 });
 
 /**

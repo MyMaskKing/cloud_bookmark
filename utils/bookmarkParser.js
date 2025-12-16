@@ -102,6 +102,8 @@ async function importFromBrowserBookmarks() {
   return new Promise((resolve, reject) => {
     const bookmarks = [];
     const folders = [];
+    const isMobile = /android|iphone|ipad|mobile/i.test(navigator.userAgent || '');
+    const isFirefoxMobile = isMobile && /firefox/i.test(navigator.userAgent || '');
     
     function processBookmarkTree(nodes, currentFolder = '') {
       if (!nodes) return;
@@ -151,6 +153,16 @@ async function importFromBrowserBookmarks() {
         resolve({ bookmarks, folders });
       }).catch(reject);
     } else {
+      // 移动端 Firefox 不提供 bookmarks API，改为友好返回
+      if (isFirefoxMobile) {
+        resolve({
+          bookmarks: [],
+          folders: [],
+          unsupported: true,
+          reason: '移动端 Firefox 不支持书签 API，请使用桌面浏览器或导入 HTML 文件'
+        });
+        return;
+      }
       reject(new Error('浏览器书签API不可用'));
     }
   });

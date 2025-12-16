@@ -262,6 +262,10 @@ importBrowserBtn.addEventListener('click', async () => {
   try {
     if (typeof importFromBrowserBookmarks === 'function') {
       const data = await importFromBrowserBookmarks();
+      if (data.unsupported) {
+        showMessage(data.reason || '当前浏览器不支持书签 API，请改用 HTML 导入或桌面浏览器', 'error');
+        return;
+      }
       
       // 规范化路径，合并到现有书签，清理空文件夹
       const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
