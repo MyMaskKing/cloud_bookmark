@@ -522,6 +522,8 @@ addCurrentBtn.addEventListener('click', async () => {
     chrome.tabs.create({
       url: chrome.runtime.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`)
     });
+    // 操作完成后关闭弹窗
+    window.close();
   } else {
     pushOpLog('addCurrent: failed to get active tab');
     alert('无法获取当前页面，请在支持的浏览器/标签页中重试');
@@ -609,6 +611,8 @@ openFullBtn.addEventListener('click', () => {
   chrome.tabs.create({
     url: chrome.runtime.getURL('pages/bookmarks.html')
   });
+  // 操作完成后关闭弹窗
+  window.close();
 });
 
 /**
@@ -616,6 +620,8 @@ openFullBtn.addEventListener('click', () => {
  */
 settingsBtn.addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
+  // 操作完成后关闭弹窗
+  window.close();
 });
 
 /**
@@ -689,6 +695,8 @@ exportLogBtn.addEventListener('click', async () => {
     a.download = `cloud-bookmark-log-${Date.now()}.log`;
     a.click();
     URL.revokeObjectURL(url);
+    // 操作完成后关闭弹窗
+    window.close();
   } catch (error) {
     console.error('导出日志失败:', error);
     alert('导出日志失败：' + error.message);
