@@ -54,6 +54,10 @@ body {
   margin-bottom: 20px;
 }
 
+.checkbox-row input[type="checkbox"] {
+  margin-right: 8px;
+}
+
 .form-group label {
   display: block;
   margin-bottom: 8px;

@@ -49,8 +49,12 @@ const bookmarkList = document.getElementById('bookmarkList');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const MAX_BOOKMARKS_DISPLAY = 100;
-const expandedFolders = new Set(['']); // 根默认展开
+let expandedFolders = new Set(['']); // 根默认展开
 let lastRenderedBookmarks = [];
+let popupSettings = {
+  expandFirstLevel: false
+};
+let shouldApplyDefaultExpand = true;
 const runtimeErrors = [];
 const consoleLogs = [];
 const opLogs = [];
@@ -107,6 +111,8 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+  await loadPopupSettings();
+  await loadFolderState();
   await loadBookmarksForPopup();
   await updateSyncStatus();
   
@@ -134,6 +140,12 @@ async function loadBookmarksForPopup() {
       .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
       .slice(0, MAX_BOOKMARKS_DISPLAY);
     
+    // 默认展开第一层（仅在没有本地折叠状态时）
+    if (shouldApplyDefaultExpand && popupSettings.expandFirstLevel) {
+      const first = getFirstLevelFolders(sorted);
+      first.forEach(p => expandedFolders.add(p));
+    }
+
     lastRenderedBookmarks = sorted;
     renderBookmarks(sorted, { searchMode: false });
   } catch (error) {
@@ -173,7 +185,7 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
 
   // 初次加载时默认展开第一层文件夹
   if (expandedFolders.size === 1 && expandedFolders.has('')) {
-    getFirstLevelFolders(bookmarks).forEach(p => expandedFolders.add(p));
+    // 已迁移到 loadBookmarksForPopup 中按设置控制
   }
 
   const tree = buildFolderTree(bookmarks);
@@ -188,6 +200,7 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
       } else {
         expandedFolders.add(path);
       }
+      saveFolderState();
       bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
       bindFolderEvents();
     });
@@ -204,6 +217,7 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
         } else {
           expandedFolders.add(path);
         }
+        saveFolderState();
         bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
         bindFolderEvents();
         bindBookmarkClick();
@@ -237,6 +251,62 @@ function getFirstLevelFolders(bookmarks) {
     if (top) set.add(top);
   });
   return Array.from(set.values()).map(name => name);
+}
+
+async function loadPopupSettings() {
+  try {
+    const settings = await storage.getSettings();
+    popupSettings = {
+      expandFirstLevel: !!(settings && settings.popup && settings.popup.expandFirstLevel)
+    };
+  } catch (e) {
+    console.warn('加载弹窗设置失败，使用默认值', e?.message || e);
+    popupSettings = { expandFirstLevel: false };
+  }
+}
+
+async function loadFolderState() {
+  try {
+    const result = await new Promise(resolve => {
+      chrome.storage.local.get(['popupFolderState'], resolve);
+    });
+    const state = result && result.popupFolderState;
+
+    // 如果上次记录的设置值与当前设置不同，则认为用户刚修改了设置，重置展开状态
+    if (state && typeof state.lastExpandFirstLevel === 'boolean' &&
+        state.lastExpandFirstLevel !== popupSettings.expandFirstLevel) {
+      expandedFolders = new Set(['']);
+      shouldApplyDefaultExpand = true; // 按新的设置重新应用默认展开规则
+      return;
+    }
+
+    if (state && Array.isArray(state.expanded) && state.expanded.length) {
+      expandedFolders = new Set(state.expanded);
+      if (!expandedFolders.has('')) expandedFolders.add(''); // 保证根存在
+      // 如果只有根节点，等同于“没有自定义折叠”，仍允许按设置自动展开第一层
+      if (expandedFolders.size === 1) {
+        shouldApplyDefaultExpand = true;
+      } else {
+        shouldApplyDefaultExpand = false;
+      }
+    } else {
+      expandedFolders = new Set(['']);
+      shouldApplyDefaultExpand = true;
+    }
+  } catch (e) {
+    expandedFolders = new Set(['']);
+    shouldApplyDefaultExpand = true;
+  }
+}
+
+function saveFolderState() {
+  const expanded = Array.from(expandedFolders);
+  chrome.storage.local.set({
+    popupFolderState: {
+      expanded,
+      lastExpandFirstLevel: popupSettings.expandFirstLevel
+    }
+  }, () => {});
 }
 
 function buildFolderTree(bookmarks) {
@@ -341,19 +411,71 @@ searchInput.addEventListener('input', debounce(async (e) => {
  * 添加当前页面
  */
 addCurrentBtn.addEventListener('click', async () => {
-  let tab = null;
-  try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    tab = Array.isArray(tabs) ? tabs[0] : null;
-  } catch (e) {
-    console.error('获取当前标签页失败:', e);
-  }
-  if (tab) {
+  const tab = await getActiveTabSafe();
+  if (tab && tab.url) {
     chrome.tabs.create({
       url: chrome.runtime.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`)
     });
+  } else {
+    alert('无法获取当前页面，请在支持的浏览器/标签页中重试');
   }
 });
+
+async function getActiveTabSafe() {
+  // 优先使用 Promise 风格的 browser.tabs（Firefox 原生）
+  try {
+    const tabs = await queryTabsCompat({ active: true, currentWindow: true });
+    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    if (tab) return tab;
+  } catch (e) {
+    console.warn('tabs.query(currentWindow) 失败:', e?.message || e);
+  }
+
+  // 回退：lastFocusedWindow
+  try {
+    const tabs = await queryTabsCompat({ active: true, lastFocusedWindow: true });
+    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    if (tab) return tab;
+  } catch (e) {
+    console.warn('tabs.query(lastFocusedWindow) 失败:', e?.message || e);
+  }
+
+  // 回退：让后台获取（兼容部分移动版/Firefox）
+  try {
+    const resp = await new Promise(resolve => {
+      chrome.runtime.sendMessage({ action: 'getActiveTab' }, resolve);
+    });
+    if (resp && resp.tab) return resp.tab;
+  } catch (e) {
+    console.warn('后台获取标签页失败:', e?.message || e);
+  }
+  return null;
+}
+
+async function queryTabsCompat(query) {
+  // Firefox: browser.tabs.query 返回 Promise，适合 await
+  if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
+    return await browser.tabs.query(query);
+  }
+  // Chrome: 使用 callback 包装成 Promise
+  if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
+    return await new Promise((resolve, reject) => {
+      try {
+        chrome.tabs.query(query, (tabs) => {
+          const err = chrome.runtime && chrome.runtime.lastError;
+          if (err) {
+            reject(new Error(err.message));
+          } else {
+            resolve(tabs || []);
+          }
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+  }
+  throw new Error('tabs API 不可用');
+}
 
 /**
  * 打开完整界面

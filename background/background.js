@@ -194,6 +194,47 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     }).catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
+
+  if (request.action === 'getActiveTab') {
+    try {
+      const handleTabs = (tabs) => {
+        const tab = Array.isArray(tabs) ? tabs[0] : null;
+        if (tab) {
+          sendResponse({ tab: { id: tab.id, url: tab.url, title: tab.title } });
+        } else {
+          sendResponse({ tab: null, error: 'no-active-tab' });
+        }
+      };
+
+      if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
+        browser.tabs.query({ active: true, currentWindow: true })
+          .then(tabs => {
+            if (tabs && tabs.length) {
+              handleTabs(tabs);
+            } else {
+              return browser.tabs.query({ active: true, lastFocusedWindow: true }).then(handleTabs);
+            }
+          })
+          .catch(err => {
+            sendResponse({ tab: null, error: err.message || 'query-failed' });
+          });
+        return true;
+      }
+
+      // chrome 回退：callback 形式
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs && tabs.length) {
+          handleTabs(tabs);
+        } else {
+          chrome.tabs.query({ active: true, lastFocusedWindow: true }, handleTabs);
+        }
+      });
+      return true;
+    } catch (error) {
+      sendResponse({ tab: null, error: error.message || 'query-failed' });
+    }
+    return true;
+  }
 });
 
 /**

@@ -17,6 +17,7 @@ const importFile = document.getElementById('importFile');
 const deviceList = document.getElementById('deviceList');
 const currentDeviceName = document.getElementById('currentDeviceName');
 const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
+const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 
 const serverUrlInput = document.getElementById('serverUrl');
 const usernameInput = document.getElementById('username');
@@ -34,6 +35,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
   await updateSyncStatus();
   await loadDevices();
+  await loadUiSettings();
   
   // 定时更新同步状态
   setInterval(updateSyncStatus, 5000);
@@ -308,6 +310,36 @@ importBrowserBtn.addEventListener('click', async () => {
     }
   } catch (error) {
     showMessage('导入失败: ' + error.message, 'error');
+  }
+});
+
+/**
+ * 界面设置 - 弹窗默认展开第一层
+ */
+async function loadUiSettings() {
+  const settings = await storage.getSettings();
+  const popup = (settings && settings.popup) || {};
+  expandFirstLevelCheckbox.checked = !!popup.expandFirstLevel;
+}
+
+expandFirstLevelCheckbox.addEventListener('change', async () => {
+  try {
+    const settings = await storage.getSettings();
+    const popup = (settings && settings.popup) || {};
+    popup.expandFirstLevel = expandFirstLevelCheckbox.checked;
+    const newSettings = { ...(settings || {}), popup };
+    await storage.saveSettings(newSettings);
+    // 重置弹窗文件夹展开状态，下次按新设置重新计算
+    chrome.storage.local.set({
+      popupFolderState: {
+        expanded: [''],
+        lastExpandFirstLevel: !!popup.expandFirstLevel
+      }
+    });
+    showMessage('界面设置已保存（已同步至云端）', 'success');
+    chrome.runtime.sendMessage({ action: 'syncSettings' });
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
   }
 });
 
