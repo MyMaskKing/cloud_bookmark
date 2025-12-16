@@ -1,4 +1,47 @@
 /**
+ * 确保当前设备已在云端设备列表（先拉取，再判定）
+ * 若缺失则添加并写回云端；若已存在则仅刷新 lastSeen
+ */
+async function ensureDeviceInCloud() {
+  await ensureDeviceRegistered();
+  await syncSettingsFromCloud(); // 拉最新设备列表
+  let devices = await storage.getDevices();
+  const now = Date.now();
+
+  if (!devices || devices.length === 0) {
+    devices = [{
+      id: currentDevice.id,
+      name: currentDevice.name,
+      createdAt: currentDevice.createdAt || now,
+      lastSeen: now
+    }];
+    await storage.saveDevices(devices);
+    await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
+    await syncSettingsToCloud();
+    return;
+  }
+
+  const idx = devices.findIndex(d => d.id === currentDevice.id);
+  if (idx === -1) {
+    // 不存在则注册
+    devices.push({
+      id: currentDevice.id,
+      name: currentDevice.name,
+      createdAt: currentDevice.createdAt || now,
+      lastSeen: now
+    });
+    await storage.saveDevices(devices);
+    await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
+    await syncSettingsToCloud();
+  } else {
+    // 存在则刷新 lastSeen
+    devices[idx] = { ...devices[idx], lastSeen: now, name: currentDevice.name };
+    await storage.saveDevices(devices);
+    await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
+    await syncSettingsToCloud();
+  }
+}
+/**
  * 后台服务脚本
  * 处理同步、定时任务等后台逻辑
  */
@@ -152,6 +195,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return true;
   }
+
+  if (request.action === 'registerDevice') {
+    ensureDeviceInCloud().then(() => sendResponse({ success: true }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
   
   if (request.action === 'getSyncStatus') {
     storage.getSyncStatus().then(status => {
@@ -301,16 +350,34 @@ async function syncFromCloud(sceneId = null) {
 
     await ensureDeviceRegistered();
 
-    // 设备校验：如果当前设备不在设备列表，清除本地数据并停止同步
-    const devices = await storage.getDevices();
-    if (!devices.find(d => d.id === currentDevice.id)) {
-      await storage.clearLocalData();
+    // 先拉取云端设置，获取最新设备列表
+    await syncSettingsFromCloud();
+
+    // 设备校验：严格模式，云端缺少当前设备则清理并停止
+    let devices = await storage.getDevices();
+    if (!devices || devices.length === 0) {
+      // 云端空列表视为缺设备，清理并停
+      await storage.clearAllData();
       await storage.saveSyncStatus({
         status: 'error',
         lastSync: Date.now(),
-        error: '当前设备未被授权，已清理本地数据'
+        error: '当前设备未被授权，已清理本地数据并停止同步'
       });
       return;
+    }
+    if (!devices.find(d => d.id === currentDevice.id)) {
+      // 再次拉取确认，避免误判
+      await syncSettingsFromCloud();
+      devices = await storage.getDevices();
+      if (!devices.find(d => d.id === currentDevice.id)) {
+        await storage.clearAllData();
+        await storage.saveSyncStatus({
+          status: 'error',
+          lastSync: Date.now(),
+          error: '当前设备未被授权，已清理本地数据并停止同步'
+        });
+        return;
+      }
     }
 
     await storage.saveSyncStatus({
@@ -382,16 +449,15 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
     }
 
     await ensureDeviceRegistered();
-    // 设备校验
-    const devices = await storage.getDevices();
-    if (!devices.find(d => d.id === currentDevice.id)) {
-      await storage.clearLocalData();
-      await storage.saveSyncStatus({
-        status: 'error',
-        lastSync: Date.now(),
-        error: '当前设备未被授权，已清理本地数据'
-      });
-      return;
+    // 上行同步只检查授权，不自动补注册
+    let devices = await storage.getDevices();
+    if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
+      // 再拉取一次云端设置确认
+      await syncSettingsFromCloud();
+      devices = await storage.getDevices();
+      if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
+        throw new Error('当前设备未被授权，请在设置页重新测试连接以注册设备');
+      }
     }
 
     await storage.saveSyncStatus({

@@ -79,6 +79,14 @@ configForm.addEventListener('submit', async (e) => {
   };
   
   try {
+    // 先测试连接，失败则中断保存
+    const tester = new WebDAVClient(config);
+    const result = await tester.testConnection();
+    if (!result.success) {
+      showMessage('连接失败: ' + result.message, 'error');
+      return;
+    }
+
     await storage.saveConfig(config);
     showMessage('配置已保存', 'success');
     
@@ -88,8 +96,10 @@ configForm.addEventListener('submit', async (e) => {
       config 
     });
 
-    // 保存/测试成功后，尝试拉取云端设置
-    chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' });
+    // 保存成功后，先拉取云端设置，再注册设备
+    chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' }, () => {
+      chrome.runtime.sendMessage({ action: 'registerDevice' });
+    });
   } catch (error) {
     showMessage('保存失败: ' + error.message, 'error');
   }
@@ -122,7 +132,10 @@ testBtn.addEventListener('click', async () => {
       showMessage('连接成功！', 'success');
 
       // 测试成功后尝试拉取云端设置
-      chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' });
+      chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' }, () => {
+        // 并注册当前设备到云端
+        chrome.runtime.sendMessage({ action: 'registerDevice' });
+      });
     } else {
       showMessage('连接失败: ' + result.message, 'error');
     }

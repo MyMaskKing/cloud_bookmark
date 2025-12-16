@@ -326,6 +326,32 @@ class StorageManager {
   }
 
   /**
+   * 清空本地所有数据（包括配置/设备/设置/场景）
+   */
+  async clearAllData() {
+    const keys = [
+      this.bookmarksKey,
+      this.pendingChangesKey,
+      this.configKey,
+      this.devicesKey,
+      this.deviceInfoKey,
+      this.settingsKey,
+      this.scenesKey,
+      this.currentSceneKey,
+      this.syncStatusKey
+    ];
+    return new Promise((resolve, reject) => {
+      this.storage.remove(keys, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  /**
    * 获取场景列表
    */
   async getScenes() {
