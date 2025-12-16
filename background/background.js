@@ -368,23 +368,12 @@ async function syncFromCloud(sceneId = null) {
     // 先拉取云端设置，获取最新设备列表
     await syncSettingsFromCloud();
 
-    // 设备校验：严格模式，云端缺少当前设备则清理并停止
-    let devices = await storage.getDevices();
-    if (!devices || devices.length === 0) {
-      // 云端空列表视为缺设备，清理并停
-      await storage.clearAllData();
-      await storage.saveSyncStatus({
-        status: 'error',
-        lastSync: Date.now(),
-        error: '当前设备未被授权，已清理本地数据并停止同步'
-      });
-      return;
-    }
-    if (!devices.find(d => d.id === currentDevice.id)) {
-      // 再次拉取确认，避免误判
-      await syncSettingsFromCloud();
-      devices = await storage.getDevices();
-      if (!devices.find(d => d.id === currentDevice.id)) {
+    // 设备校验：严格模式，云端缺少当前设备则清理并停止；
+    // 但对于“未知设备”一律跳过校验，避免在无法识别设备信息时误报。
+    if (!isUnknownDevice(currentDevice)) {
+      let devices = await storage.getDevices();
+      if (!devices || devices.length === 0) {
+        // 云端空列表视为缺设备，清理并停
         await storage.clearAllData();
         await storage.saveSyncStatus({
           status: 'error',
@@ -392,6 +381,20 @@ async function syncFromCloud(sceneId = null) {
           error: '当前设备未被授权，已清理本地数据并停止同步'
         });
         return;
+      }
+      if (!devices.find(d => d.id === currentDevice.id)) {
+        // 再次拉取确认，避免误判
+        await syncSettingsFromCloud();
+        devices = await storage.getDevices();
+        if (!devices.find(d => d.id === currentDevice.id)) {
+          await storage.clearAllData();
+          await storage.saveSyncStatus({
+            status: 'error',
+            lastSync: Date.now(),
+            error: '当前设备未被授权，已清理本地数据并停止同步'
+          });
+          return;
+        }
       }
     }
 
@@ -464,14 +467,16 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
     }
 
     await ensureDeviceRegistered();
-    // 上行同步只检查授权，不自动补注册
-    let devices = await storage.getDevices();
-    if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
-      // 再拉取一次云端设置确认
-      await syncSettingsFromCloud();
-      devices = await storage.getDevices();
+    // 上行同步只在可识别设备时检查授权；“未知设备”跳过严格校验，避免误报。
+    if (!isUnknownDevice(currentDevice)) {
+      let devices = await storage.getDevices();
       if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
-        throw new Error('当前设备未被授权，请在设置页重新测试连接以注册设备');
+        // 再拉取一次云端设置确认
+        await syncSettingsFromCloud();
+        devices = await storage.getDevices();
+        if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
+          throw new Error('当前设备未被授权，请在设置页重新测试连接以注册设备');
+        }
       }
     }
 
@@ -629,5 +634,14 @@ async function getDeviceName() {
     // ignore
   }
   return '未知设备';
+}
+
+/**
+ * 判断是否为“未知设备”——在这种情况下跳过严格授权校验，避免误报
+ */
+function isUnknownDevice(device) {
+  if (!device) return true;
+  const name = (device.name || '').trim();
+  return !name || name === '未知设备';
 }
 
