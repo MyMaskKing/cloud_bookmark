@@ -243,14 +243,35 @@ async function loadScenes() {
           const sceneId = item.dataset.id;
           if (sceneId !== currentSceneId) {
             await storage.saveCurrentScene(sceneId);
-            chrome.runtime.sendMessage({ action: 'syncSettings' });
-            // 如果本地该场景无数据，再从云端同步
+            currentSceneId = sceneId; // 立即更新，避免后续读取旧值
+            // 先看本地是否已有该场景数据
             const localData = await storage.getBookmarks(sceneId);
             const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
             if (!hasLocal) {
-              await new Promise(resolve => {
-                chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
-              });
+              try {
+                await new Promise(resolve => {
+                  chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
+                });
+              } catch (e) {
+                // 忽略单次同步失败，继续后续逻辑
+              }
+              const afterSync = await storage.getBookmarks(sceneId);
+              const hasAfter = (afterSync.bookmarks && afterSync.bookmarks.length) || (afterSync.folders && afterSync.folders.length);
+              if (!hasAfter) {
+                // 云端也没有，创建一个空文件以便后续同步
+                try {
+                  await new Promise(resolve => {
+                    chrome.runtime.sendMessage({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId }, resolve);
+                  });
+                } catch (e) {
+                  // 忽略，等待用户后续添加书签再同步
+                }
+              }
+              // 只有走过云端时再同步设置到云端，避免本地已有数据也访问云端
+              chrome.runtime.sendMessage({ action: 'syncSettings' });
+            } else {
+              // 本地已有数据，无需访问云端，可选同步设置
+              // chrome.runtime.sendMessage({ action: 'syncSettings' });
             }
             await loadCurrentScene();
             await loadScenes();
@@ -315,7 +336,24 @@ async function loadFolders() {
     .filter(f => f);
 
   const tree = buildFolderTree(folders);
-  foldersList.innerHTML = renderFolderTree(tree.children);
+
+  // 只有当前场景下存在“未分类”书签时，才显示一个虚拟的“未分类”入口
+  const uncategorizedCount = currentBookmarks.filter(b => !b.folder).length;
+  let html = '';
+  if (uncategorizedCount > 0) {
+    html += `
+      <ul class="folder-tree">
+        <li class="folder-node">
+          <div class="folder-row" data-folder="">
+            <span class="folder-label" data-folder="">📁 未分类 (${uncategorizedCount})</span>
+          </div>
+        </li>
+      </ul>
+    `;
+  }
+
+  html += renderFolderTree(tree.children);
+  foldersList.innerHTML = html;
 
   // 绑定点击事件（筛选）
   foldersList.querySelectorAll('.folder-label').forEach(label => {
@@ -638,7 +676,13 @@ function renderBookmarks() {
     filtered = filtered.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 20);
   } else if (currentFilter.startsWith('folder:')) {
     const folder = currentFilter.replace('folder:', '');
-    filtered = filtered.filter(b => b.folder === folder);
+    if (folder) {
+      // 正常文件夹：匹配指定路径
+      filtered = filtered.filter(b => b.folder === folder);
+    } else {
+      // 特殊情况：未分类入口，筛选没有folder字段的书签
+      filtered = filtered.filter(b => !b.folder);
+    }
   } else if (currentFilter.startsWith('tag:')) {
     const tag = currentFilter.replace('tag:', '');
     filtered = filtered.filter(b => b.tags && b.tags.includes(tag));

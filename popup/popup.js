@@ -179,14 +179,35 @@ async function loadScenes() {
         const currentId = await storage.getCurrentScene(); // 获取当前场景进行比较
         if (sceneId !== currentId) {
           await storage.saveCurrentScene(sceneId);
-          chrome.runtime.sendMessage({ action: 'syncSettings' });
-          // 如果本地该场景无数据，再从云端同步
+          currentSceneId = sceneId; // 立即更新本地状态，避免后续逻辑读取旧值
+          // 先看本地是否已有该场景数据
           const localData = await storage.getBookmarks(sceneId);
           const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
           if (!hasLocal) {
-            await new Promise(resolve => {
-              chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
-            });
+            try {
+              await new Promise(resolve => {
+                chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
+              });
+            } catch (e) {
+              // 忽略单次同步失败，继续后续逻辑
+            }
+            const afterSync = await storage.getBookmarks(sceneId);
+            const hasAfter = (afterSync.bookmarks && afterSync.bookmarks.length) || (afterSync.folders && afterSync.folders.length);
+            if (!hasAfter) {
+              // 云端也没有，创建一个空文件以便后续同步
+              try {
+                await new Promise(resolve => {
+                  chrome.runtime.sendMessage({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId }, resolve);
+                });
+              } catch (e) {
+                // 忽略，等待用户后续添加书签再同步
+              }
+            }
+            // 只有走过云端时再同步设置到云端，避免本地已有数据也访问云端
+            chrome.runtime.sendMessage({ action: 'syncSettings' });
+          } else {
+            // 本地已有数据，无需访问云端，可选同步设置
+            // chrome.runtime.sendMessage({ action: 'syncSettings' });
           }
           await loadCurrentScene();
           await loadScenes();

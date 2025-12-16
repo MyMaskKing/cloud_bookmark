@@ -88,7 +88,7 @@ configForm.addEventListener('submit', async (e) => {
     }
 
     await storage.saveConfig(config);
-    showMessage('配置已保存', 'success');
+    showMessage('配置已保存，正在同步数据…', 'success');
     
     // 通知后台更新同步任务
     chrome.runtime.sendMessage({ 
@@ -96,9 +96,14 @@ configForm.addEventListener('submit', async (e) => {
       config 
     });
 
-    // 保存成功后，先拉取云端设置，再注册设备
-    chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' }, () => {
+    // 保存成功后，先拉取云端设置，再注册设备，并同步当前场景数据到本地
+    chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' }, async () => {
       chrome.runtime.sendMessage({ action: 'registerDevice' });
+      const currentSceneId = await storage.getCurrentScene();
+      chrome.runtime.sendMessage({ action: 'sync', sceneId: currentSceneId }, () => {
+        loadScenes();
+        updateSyncStatus();
+      });
     });
   } catch (error) {
     showMessage('保存失败: ' + error.message, 'error');
@@ -129,13 +134,7 @@ testBtn.addEventListener('click', async () => {
     const result = await webdav.testConnection();
     
     if (result.success) {
-      showMessage('连接成功！', 'success');
-
-      // 测试成功后尝试拉取云端设置
-      chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' }, () => {
-        // 并注册当前设备到云端
-        chrome.runtime.sendMessage({ action: 'registerDevice' });
-      });
+      showMessage('连接成功', 'success');
     } else {
       showMessage('连接失败: ' + result.message, 'error');
     }
@@ -643,6 +642,7 @@ async function loadScenes() {
         <div class="scene-item ${isCurrent ? 'current' : ''}" data-id="${scene.id}">
           <div class="scene-info">
             <span class="scene-name">${scene.name || scene.id}</span>
+            <span class="scene-id">ID: ${scene.id}</span>
             ${isCurrent ? '<span class="scene-badge">当前</span>' : ''}
             ${isDefault ? '<span class="scene-badge default">默认</span>' : ''}
           </div>
@@ -667,14 +667,34 @@ async function loadScenes() {
         if (action === 'switch') {
           await storage.saveCurrentScene(sceneId);
           showMessage(`已切换到"${scene.name}"场景`, 'success');
-          chrome.runtime.sendMessage({ action: 'syncSettings' });
-          // 如果本地该场景无数据，再从云端同步
+          // 先看本地是否已有该场景数据
           const localData = await storage.getBookmarks(sceneId);
           const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
           if (!hasLocal) {
-            await new Promise(resolve => {
-              chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
-            });
+            try {
+              await new Promise(resolve => {
+                chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
+              });
+            } catch (e) {
+              // 忽略单次同步失败，继续后续逻辑
+            }
+            const afterSync = await storage.getBookmarks(sceneId);
+            const hasAfter = (afterSync.bookmarks && afterSync.bookmarks.length) || (afterSync.folders && afterSync.folders.length);
+            if (!hasAfter) {
+              // 云端也没有，创建一个空文件以便后续同步
+              try {
+                await new Promise(resolve => {
+                  chrome.runtime.sendMessage({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId }, resolve);
+                });
+              } catch (e) {
+                // 忽略，等待用户后续添加书签再同步
+              }
+            }
+            // 只有走过云端时再同步设置到云端，避免本地已有数据也访问云端
+            chrome.runtime.sendMessage({ action: 'syncSettings' });
+          } else {
+            // 本地已有数据，无需访问云端，可选同步设置
+            // chrome.runtime.sendMessage({ action: 'syncSettings' });
           }
           await loadScenes();
         } else if (action === 'rename') {
@@ -722,22 +742,109 @@ async function loadScenes() {
 }
 
 /**
+ * 弹出创建场景对话框（名称+ID）
+ * @returns {Promise<{name: string, id: string} | null>}
+ */
+function showCreateSceneDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    `;
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      background: #fff;
+      border-radius: 8px;
+      padding: 20px;
+      width: 360px;
+      max-width: 90%;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      font-size: 14px;
+    `;
+    dialog.innerHTML = `
+      <h3 style="margin: 0 0 12px; font-size: 16px;">创建场景</h3>
+      <div style="margin-bottom: 12px;">
+        <label style="display:block; margin-bottom:6px;">场景名称</label>
+        <input id="sceneNameInput" type="text" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;" placeholder="请输入场景名称">
+      </div>
+      <div style="margin-bottom: 16px;">
+        <label style="display:block; margin-bottom:6px;">场景ID（唯一，仅字母/数字/下划线）</label>
+        <input id="sceneIdInput" type="text" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;" placeholder="例如：work_01">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button id="sceneCancelBtn" class="btn btn-secondary" style="min-width:70px;">取消</button>
+        <button id="sceneOkBtn" class="btn btn-primary" style="min-width:70px;">确定</button>
+      </div>
+    `;
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const nameInput = dialog.querySelector('#sceneNameInput');
+    const idInput = dialog.querySelector('#sceneIdInput');
+    const cancelBtn = dialog.querySelector('#sceneCancelBtn');
+    const okBtn = dialog.querySelector('#sceneOkBtn');
+
+    const cleanup = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKeyDown);
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        cleanup();
+        resolve(null);
+      } else if (e.key === 'Enter') {
+        okBtn.click();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    cancelBtn.onclick = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    okBtn.onclick = () => {
+      const name = nameInput.value.trim();
+      const idRaw = idInput.value.trim();
+      if (!name) {
+        alert('场景名称不能为空');
+        return;
+      }
+      if (!idRaw) {
+        alert('场景ID不能为空');
+        return;
+      }
+      if (!/^[a-zA-Z0-9_]+$/.test(idRaw)) {
+        alert('场景ID 只能包含字母、数字和下划线');
+        return;
+      }
+      cleanup();
+      resolve({ name, id: idRaw });
+    };
+
+    nameInput.focus();
+  });
+}
+
+/**
  * 添加场景
  */
 addSceneBtn.addEventListener('click', async () => {
-  const name = prompt('请输入场景名称：');
-  if (!name || !name.trim()) return;
-  
-  // 生成场景ID（基于名称，转换为小写，替换空格为下划线）
-  let sceneId = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
-  if (!sceneId) {
-    sceneId = 'scene_' + Date.now().toString(36);
-  }
-  
-  // 检查ID是否已存在
+  const result = await showCreateSceneDialog();
+  if (!result) return;
+  const { name, id: sceneId } = result;
+
   const scenes = await storage.getScenes();
   if (scenes.find(s => s.id === sceneId)) {
-    sceneId = sceneId + '_' + Date.now().toString(36);
+    alert('场景ID已存在，请换一个');
+    return;
   }
   
   try {
