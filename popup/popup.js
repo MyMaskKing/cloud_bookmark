@@ -51,6 +51,59 @@ const statusText = document.getElementById('statusText');
 const MAX_BOOKMARKS_DISPLAY = 100;
 const expandedFolders = new Set(['']); // 根默认展开
 let lastRenderedBookmarks = [];
+const runtimeErrors = [];
+const consoleLogs = [];
+const opLogs = [];
+
+function pushOpLog(message) {
+  opLogs.push({ t: new Date().toISOString(), m: message });
+  if (opLogs.length > 200) opLogs.shift();
+}
+
+function pushRuntimeError(payload) {
+  if (runtimeErrors.length > 50) runtimeErrors.shift();
+  runtimeErrors.push({ ...payload, timestamp: new Date().toISOString() });
+}
+
+window.addEventListener('error', (event) => {
+  pushRuntimeError({
+    type: 'error',
+    message: event.message,
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+    stack: event.error?.stack
+  });
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+  pushRuntimeError({
+    type: 'unhandledrejection',
+    message: event.reason?.message || String(event.reason),
+    stack: event.reason?.stack
+  });
+});
+
+// 捕获控制台日志
+['log', 'info', 'warn', 'error'].forEach(level => {
+  const original = console[level];
+  console[level] = (...args) => {
+    try {
+      consoleLogs.push({
+        t: new Date().toISOString(),
+        level,
+        msg: args.map(a => {
+          try { return typeof a === 'string' ? a : JSON.stringify(a); }
+          catch { return String(a); }
+        }).join(' ')
+      });
+      if (consoleLogs.length > 300) consoleLogs.shift();
+    } catch (e) {
+      // ignore capture failure
+    }
+    original.apply(console, args);
+  };
+});
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
@@ -73,6 +126,7 @@ async function loadBookmarksForPopup() {
   try {
     const data = await storage.getBookmarks();
     const bookmarks = data.bookmarks || [];
+    pushOpLog(`loadBookmarks success, total=${bookmarks.length}`);
     
     // 按更新/创建时间排序，默认展示最新的
     const sorted = bookmarks
@@ -84,6 +138,7 @@ async function loadBookmarksForPopup() {
     renderBookmarks(sorted, { searchMode: false });
   } catch (error) {
     console.error('加载书签失败:', error);
+    pushOpLog(`loadBookmarks failed: ${error.message}`);
   }
 }
 
@@ -327,6 +382,13 @@ exportLogBtn.addEventListener('click', async () => {
     ]);
 
     const manifest = chrome.runtime.getManifest ? chrome.runtime.getManifest() : {};
+    const alarms = await new Promise(resolve => {
+      if (chrome.alarms && chrome.alarms.getAll) {
+        chrome.alarms.getAll(resolve);
+      } else {
+        resolve([]);
+      }
+    });
     const maskConfig = (cfg) => {
       if (!cfg) return null;
       const masked = { ...cfg };
@@ -340,10 +402,19 @@ exportLogBtn.addEventListener('click', async () => {
       generatedAt: new Date().toISOString(),
       extensionVersion: manifest.version || 'unknown',
       manifestVersion: manifest.manifest_version || 'unknown',
-      userAgent: navigator.userAgent,
+      runtime: {
+        userAgent: navigator.userAgent,
+        platform: navigator.platform,
+        language: navigator.language,
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      },
       syncStatus,
       pendingChangesCount: pendingChanges.length,
       pendingChanges,
+      alarms,
+      runtimeErrors,
+      consoleLogs,
+      opLogs,
       bookmarksSummary: {
         total: (bookmarkData.bookmarks || []).length,
         folders: (bookmarkData.folders || []).length
@@ -358,11 +429,12 @@ exportLogBtn.addEventListener('click', async () => {
       config: maskConfig(config)
     };
 
-    const blob = new Blob([JSON.stringify(log, null, 2)], { type: 'application/json' });
+    const text = serializeLogToText(log);
+    const blob = new Blob([text], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cloud-bookmark-log-${Date.now()}.json`;
+    a.download = `cloud-bookmark-log-${Date.now()}.log`;
     a.click();
     URL.revokeObjectURL(url);
   } catch (error) {
@@ -370,4 +442,51 @@ exportLogBtn.addEventListener('click', async () => {
     alert('导出日志失败：' + error.message);
   }
 });
+
+function serializeLogToText(log) {
+  const lines = [];
+  const push = (s = '') => lines.push(s);
+  push('=== Cloud Bookmark Log ===');
+  push(`generatedAt: ${log.generatedAt}`);
+  push(`version: ${log.extensionVersion} (manifest v${log.manifestVersion})`);
+  push(`ua: ${log.runtime.userAgent}`);
+  push(`platform: ${log.runtime.platform}, lang: ${log.runtime.language}, tz: ${log.runtime.timeZone}`);
+  push('');
+  push('[Sync Status]');
+  push(JSON.stringify(log.syncStatus, null, 2));
+  push('');
+  push(`[Pending Changes] count=${log.pendingChangesCount}`);
+  push(JSON.stringify(log.pendingChanges, null, 2));
+  push('');
+  push('[Alarms]');
+  push(JSON.stringify(log.alarms, null, 2));
+  push('');
+  push(`[Bookmarks] total=${log.bookmarksSummary.total}, folders=${log.bookmarksSummary.folders}`);
+  push('Recent:');
+  push(JSON.stringify(log.recentBookmarks, null, 2));
+  push('');
+  push('[Devices]');
+  push(JSON.stringify({ devices: log.devices, deviceInfo: log.deviceInfo }, null, 2));
+  push('');
+  push('[Settings]');
+  push(JSON.stringify(log.settings, null, 2));
+  push('');
+  push('[Config masked]');
+  push(JSON.stringify(log.config, null, 2));
+  push('');
+  push('[Operation Logs]');
+  log.opLogs.forEach(entry => push(`${entry.t} [op] ${entry.m}`));
+  push('');
+  push('[Console Logs]');
+  log.consoleLogs.forEach(entry => push(`${entry.t} [${entry.level}] ${entry.msg}`));
+  push('');
+  push('[Runtime Errors]');
+  log.runtimeErrors.forEach(err => {
+    push(`${err.timestamp} [${err.type}] ${err.message}`);
+    if (err.filename) push(`  at ${err.filename}:${err.lineno}:${err.colno}`);
+    if (err.stack) push(`  stack: ${err.stack}`);
+  });
+  push('');
+  return lines.join('\n');
+}
 
