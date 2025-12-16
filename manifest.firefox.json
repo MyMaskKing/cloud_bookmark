@@ -18,7 +18,8 @@
     ]
   },
   "browser_action": {
-    "default_popup": "popup/popup.html"
+    "default_popup": "popup/popup.html",
+    "default_title": "云端书签"
   },
   "options_page": "options/options.html",
   "commands": {
@@ -33,15 +34,9 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "cloud-bookmark-firefox@example.com",
-      "strict_min_version": "57.0",
+      "strict_min_version": "140.0",
       "data_collection_permissions": {
-        "required": ["bookmarks"],
-        "bookmarks": false,
-        "collects_browsing_data": false,
-        "collects_messages": false,
-        "collects_device_data": true,
-        "collects_location_data": false,
-        "collects_search_terms": false
+        "required": ["none"]
       }
     }
   }
