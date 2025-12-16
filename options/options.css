@@ -203,6 +203,91 @@ body {
   color: #666;
 }
 
+.scene-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.scene-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.scene-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px;
+  border: 1px solid #eee;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.scene-item.current {
+  border-color: #4a90e2;
+  background: #f0f7ff;
+}
+
+.scene-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.scene-name {
+  font-weight: 600;
+  color: #333;
+  font-size: 14px;
+}
+
+.scene-badge {
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  background: #e9ecef;
+  color: #666;
+}
+
+.scene-badge.default {
+  background: #4a90e2;
+  color: white;
+}
+
+.scene-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.scene-action-btn {
+  padding: 4px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 12px;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.scene-action-btn:hover {
+  background: #f8f9fa;
+  border-color: #ccc;
+}
+
+.scene-action-btn.danger {
+  color: #e74c3c;
+  border-color: #e74c3c;
+}
+
+.scene-action-btn.danger:hover {
+  background: #fee;
+}
+
 .message {
   padding: 12px;
   border-radius: 6px;
@@ -219,5 +304,120 @@ body {
   background: #f8d7da;
   color: #721c24;
   border: 1px solid #f5c6cb;
+}
+
+/* 场景选择对话框 */
+.scene-select-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.scene-select-dialog {
+  background: white;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 400px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  max-height: 80vh;
+}
+
+.scene-select-header {
+  padding: 20px;
+  border-bottom: 1px solid #eee;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.scene-select-header h3 {
+  font-size: 18px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.scene-select-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #999;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.scene-select-close:hover {
+  background: #f5f5f5;
+}
+
+.scene-select-body {
+  padding: 20px;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.scene-select-hint {
+  margin-bottom: 16px;
+  color: #666;
+  font-size: 14px;
+}
+
+.scene-select-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scene-select-item {
+  padding: 12px 16px;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: white;
+}
+
+.scene-select-item:hover {
+  border-color: #4a90e2;
+  background: #f8f9ff;
+}
+
+.scene-select-item.selected {
+  border-color: #4a90e2;
+  background: #f0f7ff;
+}
+
+.scene-select-item-name {
+  font-weight: 500;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.scene-select-item-id {
+  font-size: 12px;
+  color: #999;
+}
+
+.scene-select-footer {
+  padding: 16px 20px;
+  border-top: 1px solid #eee;
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
 }
 

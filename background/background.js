@@ -35,10 +35,14 @@ async function syncSettingsToCloud() {
   const settings = await storage.getSettings();
   const devices = await storage.getDevices();
   const deviceInfo = await storage.getDeviceInfo();
+  const scenes = await storage.getScenes();
+  const currentScene = await storage.getCurrentScene();
   await webdav.writeSettings({
     settings: settings || {},
     devices: devices || [],
-    deviceInfo: deviceInfo || null
+    deviceInfo: deviceInfo || null,
+    scenes: scenes || [],
+    currentScene: currentScene || null
   });
 }
 
@@ -60,6 +64,14 @@ async function syncSettingsFromCloud() {
       }
       if (cloud.deviceInfo) {
         await storage.saveDeviceInfo(cloud.deviceInfo);
+      }
+      // 同步场景列表
+      if (cloud.scenes && Array.isArray(cloud.scenes) && cloud.scenes.length > 0) {
+        await storage.saveScenes(cloud.scenes);
+      }
+      // 同步当前场景
+      if (cloud.currentScene) {
+        await storage.saveCurrentScene(cloud.currentScene);
       }
     }
   } catch (e) {
@@ -116,7 +128,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 // 监听来自popup或pages的消息
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
-    syncFromCloud().then(() => {
+    syncFromCloud(request.sceneId).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -125,7 +137,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'syncToCloud') {
-    syncToCloud(request.bookmarks, request.folders).then(() => {
+    syncToCloud(request.bookmarks, request.folders, request.sceneId).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -195,6 +207,23 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'deleteSceneBookmarks') {
+    storage.getConfig().then(async (config) => {
+      if (!config || !config.serverUrl) {
+        sendResponse({ success: false, error: 'WebDAV配置未设置' });
+        return;
+      }
+      try {
+        const webdav = new WebDAVClient(config);
+        await webdav.deleteSceneBookmarks(request.sceneId);
+        sendResponse({ success: true });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    });
+    return true;
+  }
+
   if (request.action === 'getActiveTab') {
     try {
       const handleTabs = (tabs) => {
@@ -254,7 +283,7 @@ async function setupSyncAlarm() {
 /**
  * 从云端同步到本地
  */
-async function syncFromCloud() {
+async function syncFromCloud(sceneId = null) {
   try {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
@@ -282,15 +311,30 @@ async function syncFromCloud() {
       error: null
     });
 
+    // 先同步设置（包含场景列表）
+    await syncSettingsFromCloud();
+
+    // 获取目标场景
+    const currentSceneId = sceneId || await storage.getCurrentScene();
+    
     const webdav = new WebDAVClient(config);
-    const cloudData = await webdav.readBookmarks();
+    // 只同步当前场景的书签文件
+    const cloudData = await webdav.readBookmarks(currentSceneId);
     const cleaned = normalizeData(cloudData.bookmarks || [], cloudData.folders || []);
     
-    // 合并数据（简单的以云端为准的策略，后续可以优化冲突处理）
-    await storage.saveBookmarks(cleaned.bookmarks, cleaned.folders);
-
-    // 同步设置（非敏感）
-    await syncSettingsFromCloud();
+    // 获取所有本地书签，合并当前场景的数据
+    const allBookmarks = await storage.getBookmarks();
+    const otherSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== currentSceneId);
+    const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
+    
+    // 合并文件夹（所有场景的文件夹）
+    const allFolders = [...new Set([
+      ...(allBookmarks.folders || []),
+      ...cleaned.folders
+    ])];
+    
+    // 保存合并后的数据
+    await storage.saveBookmarks(mergedBookmarks, allFolders);
 
     // 更新设备上次同步时间
     await touchCurrentDevice();
@@ -318,8 +362,11 @@ async function syncFromCloud() {
 
 /**
  * 同步本地变更到云端
+ * @param {Array} bookmarks - 书签数组
+ * @param {Array} folders - 文件夹数组
+ * @param {String} sceneId - 场景ID（可选，如果不提供则从书签中推断或使用当前场景）
  */
-async function syncToCloud(bookmarks, folders) {
+async function syncToCloud(bookmarks, folders, sceneId = null) {
   try {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
@@ -345,13 +392,31 @@ async function syncToCloud(bookmarks, folders) {
       error: null
     });
 
+    // 确定要同步的场景ID
+    let targetSceneId = sceneId;
+    if (!targetSceneId && bookmarks && bookmarks.length > 0) {
+      // 从书签中推断场景（取第一个书签的场景）
+      targetSceneId = bookmarks[0].scene;
+    }
+    if (!targetSceneId) {
+      // 如果还是没有，使用当前场景
+      targetSceneId = await storage.getCurrentScene();
+    }
+    
     const webdav = new WebDAVClient(config);
     const cleaned = normalizeData(bookmarks, folders);
-    await webdav.writeBookmarks({ bookmarks: cleaned.bookmarks, folders: cleaned.folders });
+    
+    // 只同步指定场景的书签到对应的文件
+    const sceneBookmarks = cleaned.bookmarks.filter(b => b.scene === targetSceneId);
+    const sceneFolders = [...new Set(sceneBookmarks.map(b => b.folder).filter(Boolean))];
+    
+    await webdav.writeBookmarks(
+      { bookmarks: sceneBookmarks, folders: sceneFolders },
+      targetSceneId
+    );
 
-    // 写入设置（非敏感）
-    const settings = await storage.getSettings();
-    await webdav.writeSettings(settings || {});
+    // 写入设置（包含场景列表和当前场景）
+    await syncSettingsToCloud();
     
     await touchCurrentDevice();
 
@@ -387,10 +452,12 @@ async function syncToCloud(bookmarks, folders) {
  * 主动上传：读取本地书签与设置，上行到云端
  */
 async function syncUpload() {
-  const data = await storage.getBookmarks();
+  // 获取当前场景的书签
+  const currentSceneId = await storage.getCurrentScene();
+  const data = await storage.getBookmarks(currentSceneId);
   const bookmarks = data.bookmarks || [];
   const folders = data.folders || [];
-  await syncToCloud(bookmarks, folders);
+  await syncToCloud(bookmarks, folders, currentSceneId);
 }
 
 // 导出函数供其他脚本调用

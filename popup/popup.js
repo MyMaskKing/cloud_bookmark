@@ -48,7 +48,11 @@ const exportLogBtn = document.getElementById('exportLogBtn');
 const bookmarkList = document.getElementById('bookmarkList');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
+const sceneSwitchBtn = document.getElementById('sceneSwitchBtn');
+const currentSceneNameEl = document.getElementById('currentSceneName');
+const sceneMenu = document.getElementById('sceneMenu');
 const MAX_BOOKMARKS_DISPLAY = 100;
+let currentSceneId = null;
 let expandedFolders = new Set(['']); // 根默认展开
 let lastRenderedBookmarks = [];
 let popupSettings = {
@@ -113,16 +117,93 @@ window.addEventListener('unhandledrejection', (event) => {
 document.addEventListener('DOMContentLoaded', async () => {
   await loadPopupSettings();
   await loadFolderState();
+  await loadCurrentScene();
+  await loadScenes();
   await loadBookmarksForPopup();
   await updateSyncStatus();
   
   // 监听消息更新
   chrome.runtime.onMessage.addListener((request) => {
-    if (request.action === 'bookmarksUpdated') {
+    if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
+      loadCurrentScene();
       loadBookmarksForPopup();
       updateSyncStatus();
     }
   });
+  
+  // 点击外部关闭场景菜单
+  document.addEventListener('click', (e) => {
+    if (!sceneSwitchBtn.contains(e.target) && !sceneMenu.contains(e.target)) {
+      sceneMenu.style.display = 'none';
+    }
+  });
+});
+
+/**
+ * 加载当前场景
+ */
+async function loadCurrentScene() {
+  try {
+    currentSceneId = await storage.getCurrentScene();
+    const scenes = await storage.getScenes();
+    const currentScene = scenes.find(s => s.id === currentSceneId);
+    currentSceneNameEl.textContent = currentScene ? currentScene.name : '未知';
+  } catch (error) {
+    console.error('加载当前场景失败:', error);
+    currentSceneId = 'home';
+    currentSceneNameEl.textContent = '家庭';
+  }
+}
+
+/**
+ * 加载场景列表
+ */
+async function loadScenes() {
+  try {
+    const scenes = await storage.getScenes();
+    // 使用全局变量currentSceneId，不要重新获取
+    
+    sceneMenu.innerHTML = scenes.map(scene => {
+      const isCurrent = scene.id === currentSceneId;
+      return `
+        <div class="scene-menu-item ${isCurrent ? 'current' : ''}" data-id="${scene.id}">
+          ${scene.name || scene.id}
+        </div>
+      `;
+    }).join('');
+    
+    // 绑定点击事件
+    sceneMenu.querySelectorAll('.scene-menu-item').forEach(item => {
+      item.addEventListener('click', async () => {
+        const sceneId = item.dataset.id;
+        const currentId = await storage.getCurrentScene(); // 获取当前场景进行比较
+        if (sceneId !== currentId) {
+          await storage.saveCurrentScene(sceneId);
+          chrome.runtime.sendMessage({ action: 'syncSettings' });
+          // 如果本地该场景无数据，再从云端同步
+          const localData = await storage.getBookmarks(sceneId);
+          const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
+          if (!hasLocal) {
+            await new Promise(resolve => {
+              chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
+            });
+          }
+          await loadCurrentScene();
+          await loadScenes();
+          await loadBookmarksForPopup();
+        }
+        sceneMenu.style.display = 'none';
+      });
+    });
+  } catch (error) {
+    console.error('加载场景列表失败:', error);
+  }
+}
+
+// 场景切换按钮点击事件
+sceneSwitchBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  sceneMenu.style.display = sceneMenu.style.display === 'none' ? 'block' : 'none';
 });
 
 /**
@@ -130,9 +211,10 @@ document.addEventListener('DOMContentLoaded', async () => {
  */
 async function loadBookmarksForPopup() {
   try {
-    const data = await storage.getBookmarks();
+    // 按当前场景过滤书签
+    const data = await storage.getBookmarks(currentSceneId);
     const bookmarks = data.bookmarks || [];
-    pushOpLog(`loadBookmarks success, total=${bookmarks.length}`);
+    pushOpLog(`loadBookmarks success, scene=${currentSceneId}, total=${bookmarks.length}`);
     
     // 按更新/创建时间排序，默认展示最新的
     const sorted = bookmarks
@@ -398,7 +480,8 @@ searchInput.addEventListener('input', debounce(async (e) => {
   }
   
   try {
-    const data = await storage.getBookmarks();
+    // 按当前场景过滤书签
+    const data = await storage.getBookmarks(currentSceneId);
     const bookmarks = data.bookmarks || [];
     const filtered = searchBookmarks(bookmarks, query);
     renderBookmarks(filtered.slice(0, 50), { searchMode: true });

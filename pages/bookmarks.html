@@ -54,6 +54,15 @@
     <main class="main-content">
       <!-- 顶部工具栏 -->
       <header class="toolbar">
+        <div class="scene-switcher">
+          <button id="sceneSwitchBtn" class="scene-switch-btn" title="切换场景">
+            <span class="scene-name">家庭</span>
+            <span class="scene-arrow">▼</span>
+          </button>
+          <div id="sceneMenu" class="scene-menu" style="display: none;">
+            <!-- 场景列表将动态生成 -->
+          </div>
+        </div>
         <div class="search-box">
           <input type="text" id="searchInput" placeholder="搜索书签...">
         </div>

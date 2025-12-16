@@ -85,6 +85,18 @@
       </section>
 
       <section class="section">
+        <h2>场景管理</h2>
+        <div class="scene-header">
+          <div>当前场景：<span id="currentSceneName">-</span></div>
+          <button id="addSceneBtn" class="btn btn-primary">添加场景</button>
+        </div>
+        <div id="sceneList" class="scene-list">
+          <div class="empty-state">加载中...</div>
+        </div>
+        <small>提示：不同场景的书签完全隔离，每个场景的书签存储在独立的文件中（{sceneId}_bookmarks.json）。</small>
+      </section>
+
+      <section class="section">
         <h2>界面设置</h2>
         <div class="form-group checkbox-row">
           <label>
@@ -109,6 +121,26 @@
         <small>提示：移除未知设备后，如果本机未在设备列表中，下一次同步将清空本地数据并停止同步。</small>
       </section>
     </main>
+  </div>
+
+  <!-- 场景选择对话框 -->
+  <div id="sceneSelectModal" class="scene-select-modal" style="display: none;">
+    <div class="scene-select-dialog">
+      <div class="scene-select-header">
+        <h3>选择导入场景</h3>
+        <button class="scene-select-close" id="sceneSelectClose">&times;</button>
+      </div>
+      <div class="scene-select-body">
+        <p class="scene-select-hint">请选择要导入书签的场景：</p>
+        <div id="sceneSelectList" class="scene-select-list">
+          <!-- 场景列表将动态生成 -->
+        </div>
+      </div>
+      <div class="scene-select-footer">
+        <button id="sceneSelectCancel" class="btn btn-secondary">取消</button>
+        <button id="sceneSelectConfirm" class="btn btn-primary">确定</button>
+      </div>
+    </div>
   </div>
 
   <script src="../utils/storage.js"></script>

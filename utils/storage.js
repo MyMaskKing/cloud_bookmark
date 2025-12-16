@@ -22,6 +22,8 @@ class StorageManager {
     this.devicesKey = 'devices';
     this.deviceInfoKey = 'deviceInfo';
     this.settingsKey = 'settings'; // 非敏感设置
+    this.scenesKey = 'scenes'; // 场景列表
+    this.currentSceneKey = 'currentScene'; // 当前选中场景
   }
   
   /**
@@ -40,8 +42,16 @@ class StorageManager {
 
   /**
    * 保存书签数据到本地
+   * @param {Array} bookmarks - 书签数组（应包含scene字段）
+   * @param {Array} folders - 文件夹数组
+   * @param {String} sceneId - 场景ID（可选，用于兼容旧数据）
    */
-  async saveBookmarks(bookmarks, folders) {
+  async saveBookmarks(bookmarks, folders, sceneId = null) {
+    // 如果提供了sceneId，为所有书签添加scene字段
+    if (sceneId && bookmarks) {
+      bookmarks = bookmarks.map(b => ({ ...b, scene: b.scene || sceneId }));
+    }
+    
     const data = {
       bookmarks: bookmarks || [],
       folders: folders || [],
@@ -61,15 +71,28 @@ class StorageManager {
 
   /**
    * 从本地读取书签数据
+   * @param {String} sceneId - 场景ID（可选，如果提供则只返回该场景的书签）
    */
-  async getBookmarks() {
+  async getBookmarks(sceneId = null) {
     return new Promise((resolve, reject) => {
       this.storage.get([this.bookmarksKey], (result) => {
         if (this.hasError()) {
           reject(new Error(this.getError()));
         } else {
           const data = result[this.bookmarksKey] || { bookmarks: [], folders: [] };
-          resolve(data);
+          
+          // 如果指定了场景ID，过滤书签和文件夹
+          if (sceneId) {
+            const filteredBookmarks = (data.bookmarks || []).filter(b => b.scene === sceneId);
+            const filteredFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
+            resolve({
+              bookmarks: filteredBookmarks,
+              folders: filteredFolders,
+              lastSync: data.lastSync
+            });
+          } else {
+            resolve(data);
+          }
         }
       });
     });
@@ -300,6 +323,133 @@ class StorageManager {
         }
       });
     });
+  }
+
+  /**
+   * 获取场景列表
+   */
+  async getScenes() {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.scenesKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          const scenes = result[this.scenesKey];
+          // 如果没有场景，初始化默认场景
+          if (!scenes || !Array.isArray(scenes) || scenes.length === 0) {
+            const defaultScenes = [
+              { id: 'home', name: '家庭', isDefault: true, createdAt: Date.now(), updatedAt: Date.now() },
+              { id: 'work', name: '公司', isDefault: true, createdAt: Date.now(), updatedAt: Date.now() }
+            ];
+            this.saveScenes(defaultScenes).then(() => resolve(defaultScenes)).catch(reject);
+          } else {
+            resolve(scenes);
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * 保存场景列表
+   */
+  async saveScenes(scenes) {
+    return new Promise((resolve, reject) => {
+      this.storage.set({ [this.scenesKey]: scenes }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(scenes);
+        }
+      });
+    });
+  }
+
+  /**
+   * 获取当前选中场景
+   */
+  async getCurrentScene() {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.currentSceneKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          const currentScene = result[this.currentSceneKey];
+          // 如果没有当前场景，默认使用第一个场景
+          if (!currentScene) {
+            this.getScenes().then(scenes => {
+              const defaultScene = scenes[0]?.id || 'home';
+              this.saveCurrentScene(defaultScene).then(() => resolve(defaultScene)).catch(reject);
+            }).catch(reject);
+          } else {
+            resolve(currentScene);
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * 保存当前选中场景
+   */
+  async saveCurrentScene(sceneId) {
+    return new Promise((resolve, reject) => {
+      this.storage.set({ [this.currentSceneKey]: sceneId }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(sceneId);
+        }
+      });
+    });
+  }
+
+  /**
+   * 添加场景
+   */
+  async addScene(scene) {
+    const scenes = await this.getScenes();
+    // 检查ID是否已存在
+    if (scenes.find(s => s.id === scene.id)) {
+      throw new Error('场景ID已存在');
+    }
+    scenes.push({
+      ...scene,
+      createdAt: scene.createdAt || Date.now(),
+      updatedAt: Date.now()
+    });
+    return await this.saveScenes(scenes);
+  }
+
+  /**
+   * 更新场景
+   */
+  async updateScene(sceneId, updates) {
+    const scenes = await this.getScenes();
+    const index = scenes.findIndex(s => s.id === sceneId);
+    if (index === -1) {
+      throw new Error('场景不存在');
+    }
+    scenes[index] = {
+      ...scenes[index],
+      ...updates,
+      updatedAt: Date.now()
+    };
+    return await this.saveScenes(scenes);
+  }
+
+  /**
+   * 删除场景
+   */
+  async deleteScene(sceneId) {
+    const scenes = await this.getScenes();
+    // 检查是否是默认场景
+    const scene = scenes.find(s => s.id === sceneId);
+    if (scene && scene.isDefault) {
+      throw new Error('默认场景不能删除');
+    }
+    const filtered = scenes.filter(s => s.id !== sceneId);
+    return await this.saveScenes(filtered);
   }
 }
 

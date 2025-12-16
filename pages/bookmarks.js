@@ -91,6 +91,7 @@ let currentFolders = [];
 let currentFilter = 'all';
 let currentSort = 'created-desc';
 let editingBookmarkId = null;
+let currentSceneId = null;
 
 // DOM元素
 const addBookmarkBtn = document.getElementById('addBookmarkBtn');
@@ -113,6 +114,8 @@ const addFolderBtn = document.getElementById('addFolderBtn');
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings(); // 先加载显示设置
+  await loadCurrentScene();
+  await loadScenes();
   await loadBookmarks();
   await loadFolders();
   await loadTags();
@@ -121,7 +124,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // 监听消息更新
   chrome.runtime.onMessage.addListener((request) => {
-    if (request.action === 'bookmarksUpdated') {
+    if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
+      loadCurrentScene();
       loadBookmarks();
       loadFolders();
       loadTags();
@@ -165,6 +169,23 @@ function setupEventListeners() {
   bookmarkForm.addEventListener('submit', handleSubmit);
   addFolderBtn.addEventListener('click', handleAddFolder);
   
+  // 场景切换按钮
+  const sceneSwitchBtn = document.getElementById('sceneSwitchBtn');
+  const sceneMenu = document.getElementById('sceneMenu');
+  if (sceneSwitchBtn && sceneMenu) {
+    sceneSwitchBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      sceneMenu.style.display = sceneMenu.style.display === 'none' ? 'block' : 'none';
+    });
+    
+    // 点击外部关闭场景菜单
+    document.addEventListener('click', (e) => {
+      if (sceneSwitchBtn && sceneMenu && !sceneSwitchBtn.contains(e.target) && !sceneMenu.contains(e.target)) {
+        sceneMenu.style.display = 'none';
+      }
+    });
+  }
+  
   // 导航项点击
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', () => {
@@ -177,11 +198,83 @@ function setupEventListeners() {
 }
 
 /**
+ * 加载当前场景
+ */
+async function loadCurrentScene() {
+  try {
+    currentSceneId = await storage.getCurrentScene();
+  } catch (error) {
+    console.error('加载当前场景失败:', error);
+    currentSceneId = 'home';
+  }
+}
+
+/**
+ * 加载场景列表（用于场景切换菜单）
+ */
+async function loadScenes() {
+  try {
+    const scenes = await storage.getScenes();
+    // 更新场景切换按钮显示
+    const sceneBtn = document.getElementById('sceneSwitchBtn');
+    const sceneMenuEl = document.getElementById('sceneMenu');
+    if (sceneBtn) {
+      const currentScene = scenes.find(s => s.id === currentSceneId);
+      const sceneNameEl = sceneBtn.querySelector('.scene-name');
+      if (sceneNameEl) {
+        sceneNameEl.textContent = currentScene ? currentScene.name : '未知';
+      }
+    }
+    
+    // 更新场景菜单
+    if (sceneMenuEl) {
+      sceneMenuEl.innerHTML = scenes.map(scene => {
+        const isCurrent = scene.id === currentSceneId;
+        return `
+          <div class="scene-menu-item ${isCurrent ? 'current' : ''}" data-id="${scene.id}">
+            ${scene.name || scene.id}
+          </div>
+        `;
+      }).join('');
+      
+      // 绑定点击事件
+      sceneMenuEl.querySelectorAll('.scene-menu-item').forEach(item => {
+        item.addEventListener('click', async () => {
+          const sceneId = item.dataset.id;
+          if (sceneId !== currentSceneId) {
+            await storage.saveCurrentScene(sceneId);
+            chrome.runtime.sendMessage({ action: 'syncSettings' });
+            // 如果本地该场景无数据，再从云端同步
+            const localData = await storage.getBookmarks(sceneId);
+            const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
+            if (!hasLocal) {
+              await new Promise(resolve => {
+                chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
+              });
+            }
+            await loadCurrentScene();
+            await loadScenes();
+            await loadBookmarks();
+            await loadFolders();
+            await loadTags();
+            chrome.runtime.sendMessage({ action: 'sceneChanged' });
+          }
+          sceneMenuEl.style.display = 'none';
+        });
+      });
+    }
+  } catch (error) {
+    console.error('加载场景列表失败:', error);
+  }
+}
+
+/**
  * 加载书签
  */
 async function loadBookmarks() {
   try {
-    const data = await storage.getBookmarks();
+    // 按当前场景过滤书签
+    const data = await storage.getBookmarks(currentSceneId);
     const rawBookmarks = data.bookmarks || [];
     // 规范化书签文件夹路径
     currentBookmarks = rawBookmarks.map(b => {
@@ -732,6 +825,7 @@ async function handleSubmit(e) {
     folder: document.getElementById('bookmarkFolder').value.trim() || undefined,
     starred: document.getElementById('bookmarkStarred').checked,
     favicon: getFaviconUrl(document.getElementById('bookmarkUrl').value),
+    scene: currentSceneId || 'home', // 添加场景字段
     updatedAt: Date.now()
   };
   
@@ -752,6 +846,7 @@ async function handleSubmit(e) {
       if (index !== -1) {
         bookmark.id = editingBookmarkId;
         bookmark.createdAt = currentBookmarks[index].createdAt;
+        bookmark.scene = currentBookmarks[index].scene || currentSceneId || 'home'; // 保留原有场景
         currentBookmarks[index] = bookmark;
       }
     } else {
@@ -763,7 +858,7 @@ async function handleSubmit(e) {
     
     await storage.saveBookmarks(currentBookmarks, currentFolders);
     
-    // 同步到云端
+    // 同步到云端（同步当前场景的书签）
     await syncToCloud();
     
     await loadBookmarks();
@@ -968,7 +1063,8 @@ async function persistSettings() {
  */
 async function exportAsJson() {
   try {
-    const data = await storage.getBookmarks();
+    // 只导出当前场景的书签
+    const data = await storage.getBookmarks(currentSceneId);
     const jsonData = JSON.stringify(data, null, 2);
     
     const blob = new Blob([jsonData], { type: 'application/json' });
@@ -990,7 +1086,8 @@ async function exportAsJson() {
  */
 async function exportAsHtml() {
   try {
-    const data = await storage.getBookmarks();
+    // 只导出当前场景的书签
+    const data = await storage.getBookmarks(currentSceneId);
     const bookmarks = data.bookmarks || [];
     
     if (typeof exportToHtml === 'function') {
@@ -1045,10 +1142,13 @@ async function handleSync() {
  */
 async function syncToCloud() {
   try {
+    // currentBookmarks已经是当前场景的书签，直接同步
+    // 确保传递当前场景ID，让后台同步到正确的场景文件
     chrome.runtime.sendMessage({
       action: 'syncToCloud',
       bookmarks: currentBookmarks,
-      folders: currentFolders
+      folders: currentFolders,
+      sceneId: currentSceneId // 明确指定当前场景ID
     });
   } catch (error) {
     console.error('同步到云端失败:', error);

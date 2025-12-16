@@ -10,9 +10,20 @@
   <div class="popup-container">
     <header class="popup-header">
       <h2>云端书签</h2>
-      <div class="sync-status" id="syncStatus">
-        <span class="status-dot" id="statusDot"></span>
-        <span id="statusText">同步中</span>
+      <div class="header-right">
+        <div class="scene-switcher">
+          <button id="sceneSwitchBtn" class="scene-switch-btn" title="切换场景">
+            <span id="currentSceneName">家庭</span>
+            <span class="scene-arrow">▼</span>
+          </button>
+          <div id="sceneMenu" class="scene-menu" style="display: none;">
+            <!-- 场景列表将动态生成 -->
+          </div>
+        </div>
+        <div class="sync-status" id="syncStatus">
+          <span class="status-dot" id="statusDot"></span>
+          <span id="statusText">同步中</span>
+        </div>
       </div>
     </header>
 

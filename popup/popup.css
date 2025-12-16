@@ -26,6 +26,73 @@ body {
   align-items: center;
 }
 
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.scene-switcher {
+  position: relative;
+}
+
+.scene-switch-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 12px;
+  color: #666;
+  transition: all 0.2s;
+}
+
+.scene-switch-btn:hover {
+  background: #f8f9fa;
+  border-color: #4a90e2;
+}
+
+.scene-arrow {
+  font-size: 10px;
+  color: #999;
+}
+
+.scene-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  min-width: 120px;
+  z-index: 1000;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.scene-menu-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #333;
+  transition: background 0.2s;
+}
+
+.scene-menu-item:hover {
+  background: #f8f9fa;
+}
+
+.scene-menu-item.current {
+  background: #f0f7ff;
+  color: #4a90e2;
+  font-weight: 500;
+}
+
 .popup-header h2 {
   font-size: 18px;
   font-weight: 600;

@@ -18,6 +18,14 @@ const deviceList = document.getElementById('deviceList');
 const currentDeviceName = document.getElementById('currentDeviceName');
 const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
+const sceneList = document.getElementById('sceneList');
+const currentSceneName = document.getElementById('currentSceneName');
+const addSceneBtn = document.getElementById('addSceneBtn');
+const sceneSelectModal = document.getElementById('sceneSelectModal');
+const sceneSelectList = document.getElementById('sceneSelectList');
+const sceneSelectClose = document.getElementById('sceneSelectClose');
+const sceneSelectCancel = document.getElementById('sceneSelectCancel');
+const sceneSelectConfirm = document.getElementById('sceneSelectConfirm');
 
 const serverUrlInput = document.getElementById('serverUrl');
 const usernameInput = document.getElementById('username');
@@ -36,6 +44,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await updateSyncStatus();
   await loadDevices();
   await loadUiSettings();
+  await loadScenes();
   
   // 定时更新同步状态
   setInterval(updateSyncStatus, 5000);
@@ -208,7 +217,9 @@ async function updateSyncStatus() {
  */
 exportJsonBtn.addEventListener('click', async () => {
   try {
-    const data = await storage.getBookmarks();
+    // 只导出当前场景的书签
+    const currentSceneId = await storage.getCurrentScene();
+    const data = await storage.getBookmarks(currentSceneId);
     const jsonData = JSON.stringify(data, null, 2);
     
     const blob = new Blob([jsonData], { type: 'application/json' });
@@ -230,7 +241,9 @@ exportJsonBtn.addEventListener('click', async () => {
  */
 exportHtmlBtn.addEventListener('click', async () => {
   try {
-    const data = await storage.getBookmarks();
+    // 只导出当前场景的书签
+    const currentSceneId = await storage.getCurrentScene();
+    const data = await storage.getBookmarks(currentSceneId);
     const bookmarks = data.bookmarks || [];
     
     if (typeof exportToHtml === 'function') {
@@ -262,6 +275,13 @@ importBrowserBtn.addEventListener('click', async () => {
   }
   
   try {
+    // 选择导入场景
+    const targetSceneId = await showSceneSelectDialog();
+    if (!targetSceneId) {
+      // 用户取消了选择
+      return;
+    }
+    
     if (typeof importFromBrowserBookmarks === 'function') {
       const data = await importFromBrowserBookmarks();
       if (data.unsupported) {
@@ -271,40 +291,52 @@ importBrowserBtn.addEventListener('click', async () => {
       
       // 规范化路径，合并到现有书签，清理空文件夹
       const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
-      const importedBookmarks = (data.bookmarks || []).map(b => {
-        if (!b.folder) return b;
-        return { ...b, folder: normalizeFolder(b.folder) };
-      });
+      const importedBookmarks = (data.bookmarks || []).map(b => ({
+        ...b,
+        folder: b.folder ? normalizeFolder(b.folder) : undefined,
+        scene: targetSceneId // 设置场景
+      }));
 
-      const existing = await storage.getBookmarks();
-      const existingBookmarks = existing.bookmarks || [];
-
-      // 合并书签（避免重复 URL）
+      // 获取所有书签（包括其他场景）
+      const allBookmarks = await storage.getBookmarks();
+      const otherSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== targetSceneId);
+      
+      // 合并书签（避免重复 URL，仅在同一场景内检测）
+      const sceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene === targetSceneId);
       const urlMap = new Map();
-      existingBookmarks.forEach(b => urlMap.set(b.url, b));
+      sceneBookmarks.forEach(b => urlMap.set(b.url, b));
+      
+      let added = 0;
       importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
-          existingBookmarks.push(b);
+          sceneBookmarks.push(b);
           urlMap.set(b.url, b);
+          added += 1;
         }
       });
-
+      
+      // 合并所有场景的书签
+      const mergedBookmarks = [...otherSceneBookmarks, ...sceneBookmarks];
+      
       // 仅保留有书签引用的文件夹（清理空文件夹）
       const usedFolders = new Set(
-        existingBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean)
+        mergedBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean)
       );
       const allFolders = [...usedFolders];
 
-      await storage.saveBookmarks(existingBookmarks, allFolders);
+      await storage.saveBookmarks(mergedBookmarks, allFolders);
       
-      // 同步到云端
+      // 同步到云端（同步到选择的场景）
       chrome.runtime.sendMessage({ 
         action: 'syncToCloud', 
-        bookmarks: existingBookmarks,
-        folders: allFolders
+        bookmarks: sceneBookmarks,
+        folders: [...new Set(sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean))],
+        sceneId: targetSceneId // 明确指定场景ID
       });
       
-      showMessage(`导入成功，共导入 ${data.bookmarks.length} 个书签`, 'success');
+      const scenes = await storage.getScenes();
+      const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
+      showMessage(`导入成功，新增 ${added} 个书签到"${sceneName}"场景`, 'success');
     } else {
       showMessage('浏览器书签导入功能未加载', 'error');
     }
@@ -344,6 +376,77 @@ expandFirstLevelCheckbox.addEventListener('change', async () => {
 });
 
 /**
+ * 显示场景选择对话框
+ * @returns {Promise<String|null>} 返回选中的场景ID，取消返回null
+ */
+function showSceneSelectDialog() {
+  return new Promise(async (resolve) => {
+    try {
+      const scenes = await storage.getScenes();
+      const currentSceneId = await storage.getCurrentScene();
+      
+      // 渲染场景列表
+      sceneSelectList.innerHTML = scenes.map(scene => {
+        const isCurrent = scene.id === currentSceneId;
+        return `
+          <div class="scene-select-item ${isCurrent ? 'selected' : ''}" data-id="${scene.id}">
+            <div class="scene-select-item-name">${scene.name || scene.id}</div>
+            <div class="scene-select-item-id">ID: ${scene.id}</div>
+          </div>
+        `;
+      }).join('');
+      
+      // 绑定点击事件
+      let selectedSceneId = currentSceneId;
+      sceneSelectList.querySelectorAll('.scene-select-item').forEach(item => {
+        item.addEventListener('click', () => {
+          sceneSelectList.querySelectorAll('.scene-select-item').forEach(i => i.classList.remove('selected'));
+          item.classList.add('selected');
+          selectedSceneId = item.dataset.id;
+        });
+      });
+      
+      // 显示对话框
+      sceneSelectModal.style.display = 'flex';
+      
+      // 关闭对话框的处理函数
+      const closeDialog = (result) => {
+        sceneSelectModal.style.display = 'none';
+        resolve(result);
+      };
+      
+      // 绑定关闭事件（只绑定一次）
+      const handleClose = () => closeDialog(null);
+      const handleConfirm = () => closeDialog(selectedSceneId);
+      
+      sceneSelectClose.onclick = handleClose;
+      sceneSelectCancel.onclick = handleClose;
+      sceneSelectConfirm.onclick = handleConfirm;
+      
+      // 点击背景关闭
+      sceneSelectModal.onclick = (e) => {
+        if (e.target === sceneSelectModal) {
+          handleClose();
+        }
+      };
+      
+      // ESC键关闭
+      const handleEsc = (e) => {
+        if (e.key === 'Escape') {
+          handleClose();
+          document.removeEventListener('keydown', handleEsc);
+        }
+      };
+      document.addEventListener('keydown', handleEsc);
+      
+    } catch (error) {
+      console.error('显示场景选择对话框失败:', error);
+      resolve(null);
+    }
+  });
+}
+
+/**
  * 导入书签
  */
 importBtn.addEventListener('click', () => {
@@ -374,47 +477,62 @@ importFile.addEventListener('change', async (e) => {
     }
     
     if (data.bookmarks && Array.isArray(data.bookmarks)) {
+      // 选择导入场景
+      const targetSceneId = await showSceneSelectDialog();
+      if (!targetSceneId) {
+        // 用户取消了选择
+        importFile.value = '';
+        return;
+      }
+      
       // 规范化并仅保留实际使用的文件夹
       const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
-      const importedBookmarks = data.bookmarks.map(b => {
-        if (!b.folder) return b;
-        return { ...b, folder: normalizeFolder(b.folder) };
-      });
+      const importedBookmarks = data.bookmarks.map(b => ({
+        ...b,
+        folder: b.folder ? normalizeFolder(b.folder) : undefined,
+        scene: targetSceneId // 设置场景
+      }));
 
-      // 合并到现有书签
-      const existing = await storage.getBookmarks();
-      const existingBookmarks = existing.bookmarks || [];
-      const existingFolders = (existing.folders || []).map(normalizeFolder).filter(Boolean);
+      // 获取所有书签（包括其他场景）
+      const allBookmarks = await storage.getBookmarks();
+      const otherSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== targetSceneId);
       
-      // 合并书签（避免重复 URL）
+      // 合并书签（避免重复 URL，仅在同一场景内检测）
+      const sceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene === targetSceneId);
       const urlMap = new Map();
-      existingBookmarks.forEach(b => urlMap.set(b.url, b));
+      sceneBookmarks.forEach(b => urlMap.set(b.url, b));
       
       let added = 0;
       importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
-          existingBookmarks.push(b);
+          sceneBookmarks.push(b);
           urlMap.set(b.url, b);
           added += 1;
         }
       });
       
+      // 合并所有场景的书签
+      const mergedBookmarks = [...otherSceneBookmarks, ...sceneBookmarks];
+      
       // 导入时清空空文件夹：仅保留有书签引用的文件夹
       const usedFolders = new Set(
-        existingBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean)
+        mergedBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean)
       );
       const allFolders = [...usedFolders];
       
-      await storage.saveBookmarks(existingBookmarks, allFolders);
+      await storage.saveBookmarks(mergedBookmarks, allFolders);
       
-      // 同步到云端
+      // 同步到云端（同步到选择的场景）
       chrome.runtime.sendMessage({ 
         action: 'syncToCloud', 
-        bookmarks: existingBookmarks,
-        folders: allFolders
+        bookmarks: sceneBookmarks,
+        folders: [...new Set(sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean))],
+        sceneId: targetSceneId // 明确指定场景ID
       });
       
-      showMessage(`导入成功，新增 ${added} 个书签`, 'success');
+      const scenes = await storage.getScenes();
+      const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
+      showMessage(`导入成功，新增 ${added} 个书签到"${sceneName}"场景`, 'success');
     } else {
       showMessage('文件格式不正确', 'error');
     }
@@ -489,6 +607,139 @@ async function loadDevices() {
 }
 
 refreshDevicesBtn.addEventListener('click', loadDevices);
+
+/**
+ * 加载场景列表
+ */
+async function loadScenes() {
+  try {
+    const scenes = await storage.getScenes();
+    const currentSceneId = await storage.getCurrentScene();
+    const currentScene = scenes.find(s => s.id === currentSceneId);
+    currentSceneName.textContent = currentScene ? currentScene.name : '-';
+
+    if (!scenes.length) {
+      sceneList.innerHTML = '<div class="empty-state">暂无场景</div>';
+      return;
+    }
+
+    sceneList.innerHTML = scenes.map(scene => {
+      const isCurrent = scene.id === currentSceneId;
+      const isDefault = scene.isDefault;
+      return `
+        <div class="scene-item ${isCurrent ? 'current' : ''}" data-id="${scene.id}">
+          <div class="scene-info">
+            <span class="scene-name">${scene.name || scene.id}</span>
+            ${isCurrent ? '<span class="scene-badge">当前</span>' : ''}
+            ${isDefault ? '<span class="scene-badge default">默认</span>' : ''}
+          </div>
+          <div class="scene-actions">
+            ${!isDefault ? `
+              <button class="scene-action-btn" data-action="rename" data-id="${scene.id}">重命名</button>
+              <button class="scene-action-btn" data-action="delete" data-id="${scene.id}">删除</button>
+            ` : '<span style="color: #999; font-size: 12px;">默认场景不可编辑</span>'}
+            ${!isCurrent ? `<button class="scene-action-btn" data-action="switch" data-id="${scene.id}">切换</button>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    // 绑定事件
+    sceneList.querySelectorAll('.scene-action-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const action = btn.dataset.action;
+        const sceneId = btn.dataset.id;
+        const scene = scenes.find(s => s.id === sceneId);
+        
+        if (action === 'switch') {
+          await storage.saveCurrentScene(sceneId);
+          showMessage(`已切换到"${scene.name}"场景`, 'success');
+          chrome.runtime.sendMessage({ action: 'syncSettings' });
+          // 如果本地该场景无数据，再从云端同步
+          const localData = await storage.getBookmarks(sceneId);
+          const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
+          if (!hasLocal) {
+            await new Promise(resolve => {
+              chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
+            });
+          }
+          await loadScenes();
+        } else if (action === 'rename') {
+          const newName = prompt(`重命名场景"${scene.name}"：`, scene.name);
+          if (newName && newName.trim() && newName !== scene.name) {
+            try {
+              await storage.updateScene(sceneId, { name: newName.trim() });
+              showMessage('场景已重命名', 'success');
+              chrome.runtime.sendMessage({ action: 'syncSettings' });
+              await loadScenes();
+            } catch (e) {
+              showMessage('重命名失败: ' + e.message, 'error');
+            }
+          }
+        } else if (action === 'delete') {
+          if (!confirm(`确定删除场景"${scene.name}"？\n\n删除后该场景下的所有书签将被删除，此操作不可恢复。`)) {
+            return;
+          }
+          const confirmDelete = confirm('再次确认：删除场景将同时删除云端和本地的所有相关书签，确定继续？');
+          if (!confirmDelete) return;
+          
+          try {
+            // 删除场景
+            await storage.deleteScene(sceneId);
+            // 删除本地该场景的书签
+            const allBookmarks = await storage.getBookmarks();
+            const filteredBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== sceneId);
+            const filteredFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
+            await storage.saveBookmarks(filteredBookmarks, filteredFolders);
+            // 通知后台删除云端文件
+            chrome.runtime.sendMessage({ action: 'deleteSceneBookmarks', sceneId });
+            showMessage('场景已删除', 'success');
+            chrome.runtime.sendMessage({ action: 'syncSettings' });
+            await loadScenes();
+          } catch (e) {
+            showMessage('删除失败: ' + e.message, 'error');
+          }
+        }
+      });
+    });
+  } catch (error) {
+    showMessage('加载场景失败: ' + error.message, 'error');
+    sceneList.innerHTML = '<div class="empty-state">加载失败</div>';
+  }
+}
+
+/**
+ * 添加场景
+ */
+addSceneBtn.addEventListener('click', async () => {
+  const name = prompt('请输入场景名称：');
+  if (!name || !name.trim()) return;
+  
+  // 生成场景ID（基于名称，转换为小写，替换空格为下划线）
+  let sceneId = name.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  if (!sceneId) {
+    sceneId = 'scene_' + Date.now().toString(36);
+  }
+  
+  // 检查ID是否已存在
+  const scenes = await storage.getScenes();
+  if (scenes.find(s => s.id === sceneId)) {
+    sceneId = sceneId + '_' + Date.now().toString(36);
+  }
+  
+  try {
+    await storage.addScene({
+      id: sceneId,
+      name: name.trim(),
+      isDefault: false
+    });
+    showMessage('场景已添加', 'success');
+    chrome.runtime.sendMessage({ action: 'syncSettings' });
+    await loadScenes();
+  } catch (e) {
+    showMessage('添加失败: ' + e.message, 'error');
+  }
+});
 
 /**
  * 显示消息
