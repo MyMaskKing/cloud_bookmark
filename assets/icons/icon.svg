@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4a90e2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#357abd;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="bookmarkGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#ffffff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#e8f4f8;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- 背景圆形 -->
+  <circle cx="64" cy="64" r="60" fill="url(#bgGradient)"/>
+  
+  <!-- 云朵背景（半透明） -->
+  <g opacity="0.2">
+    <ellipse cx="35" cy="35" rx="18" ry="12" fill="white"/>
+    <ellipse cx="50" cy="35" rx="15" ry="10" fill="white"/>
+    <ellipse cx="42" cy="28" rx="12" ry="8" fill="white"/>
+  </g>
+  
+  <!-- 书签主体 -->
+  <g transform="translate(64, 64)">
+    <!-- 书签形状 -->
+    <path d="M -18 -28 L 18 -28 L 18 28 L 0 18 L -18 28 Z" 
+          fill="url(#bookmarkGradient)" 
+          stroke="#357abd" 
+          stroke-width="2.5"
+          stroke-linejoin="round"/>
+    
+    <!-- 书签上的星星/收藏标记 -->
+    <path d="M 0 -12 L 2 -6 L 8 -6 L 3 -2 L 5 4 L 0 0 L -5 4 L -3 -2 L -8 -6 L -2 -6 Z" 
+          fill="#ffd700" 
+          stroke="#ffaa00" 
+          stroke-width="0.5"/>
+    
+    <!-- 书签上的线条装饰 -->
+    <line x1="-10" y1="0" x2="10" y2="0" stroke="#357abd" stroke-width="1.5" opacity="0.3"/>
+    <line x1="-8" y1="8" x2="8" y2="8" stroke="#357abd" stroke-width="1.5" opacity="0.3"/>
+  </g>
+</svg>
