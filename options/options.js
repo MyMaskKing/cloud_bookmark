@@ -729,7 +729,7 @@ async function loadDevices() {
       chrome.runtime.sendMessage({ action: 'getDevices' }, resolve);
     });
     if (res?.error) throw new Error(res.error);
-    const devices = res?.devices || [];
+    let devices = res?.devices || [];
     const deviceInfo = res?.deviceInfo;
     currentDeviceName.textContent = deviceInfo?.name || '未知设备';
     currentDeviceId.textContent = deviceInfo?.id || '-';
@@ -738,6 +738,13 @@ async function loadDevices() {
       deviceList.innerHTML = '<div class="empty-state">暂无设备</div>';
       return;
     }
+
+    // 按创建时间倒序排列（最新的在前）
+    devices = devices.sort((a, b) => {
+      const timeA = a.createdAt || 0;
+      const timeB = b.createdAt || 0;
+      return timeB - timeA;
+    });
 
     deviceList.innerHTML = devices.map(dev => {
       const last = dev.lastSeen ? new Date(dev.lastSeen).toLocaleString() : '-';
