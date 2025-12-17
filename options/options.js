@@ -107,13 +107,25 @@ configForm.addEventListener('submit', async (e) => {
 
     // 保存成功后，先拉取云端设置，再注册设备，并同步当前场景数据到本地
     chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' }, async () => {
-      chrome.runtime.sendMessage({ action: 'registerDevice' });
+      // 等待设备注册完成
+      await new Promise((resolve) => {
+        chrome.runtime.sendMessage({ action: 'registerDevice' }, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('设备注册失败:', chrome.runtime.lastError);
+          } else if (response && !response.success) {
+            console.error('设备注册失败:', response.error);
+          }
+          resolve(response);
+        });
+      });
       const currentSceneId = await storage.getCurrentScene();
       chrome.runtime.sendMessage({ action: 'sync', sceneId: currentSceneId }, () => {
         // 刷新设置页面显示云端同步的最新数据
         loadScenes();
         loadDevices();
         loadUiSettings();
+        loadDeviceDetectionSetting();
+        loadFloatingBallSetting();
         updateSyncStatus();
       });
     });

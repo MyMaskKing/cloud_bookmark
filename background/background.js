@@ -1,44 +1,67 @@
 /**
  * 确保当前设备已在云端设备列表（先拉取，再判定）
  * 若缺失则添加并写回云端；若已存在则仅刷新 lastSeen
+ * 仅在 WebDAV 连接正常时执行
  */
 async function ensureDeviceInCloud() {
-  await ensureDeviceRegistered();
-  await syncSettingsFromCloud(); // 拉最新设备列表
-  let devices = await storage.getDevices();
-  const now = Date.now();
-
-  if (!devices || devices.length === 0) {
-    devices = [{
-      id: currentDevice.id,
-      name: currentDevice.name,
-      createdAt: currentDevice.createdAt || now,
-      lastSeen: now
-    }];
-    await storage.saveDevices(devices);
-    await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
-    await syncSettingsToCloud();
+  // 先检查 WebDAV 配置是否存在
+  const config = await storage.getConfig();
+  if (!config || !config.serverUrl) {
+    console.log('WebDAV配置未设置，跳过设备注册');
     return;
   }
 
+  // 确保本地设备信息已初始化（deviceInfo 是本地生成的，不会被云端覆盖）
+  await ensureDeviceRegistered();
+  
+  // 确保 currentDevice 已设置
+  if (!currentDevice) {
+    currentDevice = await storage.getDeviceInfo();
+  }
+  
+  if (!currentDevice || !currentDevice.id) {
+    console.error('当前设备信息未初始化，无法注册到云端');
+    return;
+  }
+
+  // 从云端拉取最新的设备列表（不覆盖本地的 deviceInfo）
+  await syncSettingsFromCloud();
+  
+  // 获取云端的设备列表
+  let devices = await storage.getDevices() || [];
+  const now = Date.now();
+
+  // 检查当前设备是否在列表中
   const idx = devices.findIndex(d => d.id === currentDevice.id);
+  
   if (idx === -1) {
-    // 不存在则注册
+    // 当前设备不在列表中，添加到列表
+    console.log('当前设备不在云端列表中，添加到列表:', currentDevice.id);
     devices.push({
       id: currentDevice.id,
       name: currentDevice.name,
       createdAt: currentDevice.createdAt || now,
       lastSeen: now
     });
-    await storage.saveDevices(devices);
-    await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
-    await syncSettingsToCloud();
   } else {
-    // 存在则刷新 lastSeen
+    // 当前设备已在列表中，仅刷新 lastSeen 和 name
+    console.log('当前设备已在云端列表中，更新 lastSeen:', currentDevice.id);
     devices[idx] = { ...devices[idx], lastSeen: now, name: currentDevice.name };
-    await storage.saveDevices(devices);
-    await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
+  }
+
+  // 更新本地设备信息（仅更新 lastSeen）
+  await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
+  
+  // 保存更新后的设备列表到本地
+  await storage.saveDevices(devices);
+  
+  // 同步设备列表到云端
+  try {
     await syncSettingsToCloud();
+    console.log('设备列表已同步到云端，当前设备ID:', currentDevice.id);
+  } catch (error) {
+    console.error('同步设备列表到云端失败:', error);
+    throw error;
   }
 }
 /**
@@ -104,9 +127,8 @@ async function syncSettingsFromCloud() {
       if (cloud.devices) {
         await storage.saveDevices(cloud.devices);
       }
-      if (cloud.deviceInfo) {
-        await storage.saveDeviceInfo(cloud.deviceInfo);
-      }
+      // 注意：deviceInfo 是每个设备本地的信息，不应该从云端覆盖
+      // 每个设备的 deviceInfo 由本地生成和维护
       // 同步场景列表
       if (cloud.scenes && Array.isArray(cloud.scenes) && cloud.scenes.length > 0) {
         await storage.saveScenes(cloud.scenes);
@@ -443,15 +465,17 @@ async function syncFromCloud(sceneId = null) {
     const localSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene === currentSceneId);
     const otherSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== currentSceneId);
     
-    // 如果本地有书签且云端也有数据，需要归档本地书签（仅归档未在"本地_"开头的文件夹中的书签）
-    if (localSceneBookmarks.length > 0 && cleaned.bookmarks.length > 0) {
+    // 检查该场景是否已同步过
+    const isSceneSynced = await storage.isSceneSynced(currentSceneId);
+    
+    if (!isSceneSynced && localSceneBookmarks.length > 0 && cleaned.bookmarks.length > 0) {
+      // 首次同步：如果本地有书签且云端也有数据，需要归档本地书签
       const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // 如 20240115
       const archiveFolder = `本地_${timestamp}`;
       
       // 检查哪些本地书签需要归档（不在"本地_"开头的文件夹中的）
       const bookmarksToArchive = localSceneBookmarks.filter(b => {
         const folder = b.folder || '';
-        // 检查是否在任何"本地_xxx"文件夹中
         return !folder.startsWith('本地_') && !folder.match(/^本地_\d{8}/);
       });
       
@@ -461,7 +485,7 @@ async function syncFromCloud(sceneId = null) {
         return folder.startsWith('本地_') || folder.match(/^本地_\d{8}/);
       });
       
-      // 将需要归档的书签归档到"本地"文件夹
+      // 将需要归档的书签归档到"本地_时间戳"文件夹
       const archivedBookmarks = bookmarksToArchive.map(b => ({
         ...b,
         folder: b.folder ? `${archiveFolder}/${b.folder}` : archiveFolder
@@ -477,7 +501,6 @@ async function syncFromCloud(sceneId = null) {
       const archiveFolders = new Set();
       archivedBookmarks.forEach(b => {
         if (b.folder) {
-          // 提取归档文件夹下的所有子文件夹路径
           const parts = b.folder.split('/');
           for (let i = 1; i <= parts.length; i++) {
             archiveFolders.add(parts.slice(0, i).join('/'));
@@ -496,7 +519,6 @@ async function syncFromCloud(sceneId = null) {
       
       // 同步合并后的数据到云端
       const sceneFolders = allFolders.filter(f => {
-        // 只同步当前场景相关的文件夹
         return mergedSceneBookmarks.some(b => {
           const bFolder = b.folder || '';
           return bFolder === f || (bFolder.startsWith(f + '/'));
@@ -504,16 +526,16 @@ async function syncFromCloud(sceneId = null) {
       });
       await syncToCloud(mergedSceneBookmarks, sceneFolders, currentSceneId);
     } else {
-      // 没有本地书签或没有云端数据，直接合并
+      // 定时同步或首次同步无冲突：云端数据直接覆盖本地当前场景
       const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
       
-      // 合并文件夹（所有场景的文件夹）
+      // 合并文件夹
       const allFolders = [...new Set([
         ...(allBookmarks.folders || []),
         ...cleaned.folders
       ])];
       
-      // 保存合并后的数据
+      // 保存数据（云端覆盖本地）
       await storage.saveBookmarks(mergedBookmarks, allFolders);
     }
 
@@ -681,19 +703,9 @@ async function ensureDeviceRegistered() {
     }
   }
   currentDevice = info;
-
-  let devices = await storage.getDevices();
-  if (!devices.find(d => d.id === info.id)) {
-    devices.push({
-      id: info.id,
-      name: info.name,
-      createdAt: info.createdAt,
-      lastSeen: info.lastSeen
-    });
-    await storage.saveDevices(devices);
-    // 设备列表变动，立即同步设置到云端
-    await syncSettingsToCloud();
-  }
+  
+  // 注意：不在这里添加设备到列表，由 ensureDeviceInCloud() 统一处理
+  // 这样可以确保先从云端拉取最新列表，避免覆盖云端已有的设备
 }
 
 /**
