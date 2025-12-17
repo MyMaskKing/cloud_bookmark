@@ -1445,33 +1445,34 @@ async function batchMoveBookmarks() {
   
   // 显示文件夹选择对话框
   const targetFolder = await showFolderSelectDialog();
-  if (targetFolder === null) return; // 用户取消
+  if (targetFolder === null) return; // 用户取消（null 表示取消，空字符串表示"未分类"）
   
   try {
     const bookmarksToMove = currentBookmarks.filter(b => selectedBookmarkIds.has(b.id));
     
-    // 更新书签的文件夹
+    // 更新书签的文件夹（与单个编辑逻辑一致：空字符串转为 undefined）
+    const normalizedTargetFolder = targetFolder.trim() ? normalizeFolderPath(targetFolder) : undefined;
     bookmarksToMove.forEach(bookmark => {
-      bookmark.folder = targetFolder || undefined;
+      bookmark.folder = normalizedTargetFolder;
       bookmark.updatedAt = Date.now();
     });
+    
+    // 更新 currentFolders：从所有书签中提取文件夹（与 loadBookmarks 逻辑一致）
+    const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
+    const allFolders = [...new Set(bookmarkFolders)].sort();
+    currentFolders = allFolders;
     
     // 保存到本地
     await storage.saveBookmarks(currentBookmarks, currentFolders);
     
-    // 同步到云端
-    const currentSceneId = await storage.getCurrentScene();
-    chrome.runtime.sendMessage({
-      action: 'syncToCloud',
-      bookmarks: currentBookmarks.filter(b => b.scene === currentSceneId),
-      folders: currentFolders,
-      sceneId: currentSceneId
-    });
+    // 同步到云端（与单个编辑逻辑一致：使用 syncToCloud）
+    await syncToCloud();
     
     // 退出批量模式并刷新
     toggleBatchMode();
     await loadBookmarks();
     await loadFolders();
+    await loadTags();
     renderBookmarks();
     
     alert(`已成功移动 ${bookmarksToMove.length} 个书签`);
@@ -1507,8 +1508,12 @@ function showFolderSelectDialog() {
       font-size: 14px;
     `;
     
+    // 与单个编辑时的 loadFolderOptions 逻辑一致：从书签中提取文件夹
+    const folders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
+    folders.sort();
+    
     const folderOptions = ['<option value="">未分类</option>'];
-    currentFolders.forEach(folder => {
+    folders.forEach(folder => {
       folderOptions.push(`<option value="${escapeHtml(folder)}">${escapeHtml(folder)}</option>`);
     });
     
@@ -1550,9 +1555,10 @@ function showFolderSelectDialog() {
     };
 
     okBtn.onclick = () => {
-      const folder = folderSelect.value.trim() || null;
+      // 与单个编辑逻辑一致：空字符串表示"未分类"，返回空字符串而不是 null
+      const folder = folderSelect.value.trim();
       cleanup();
-      resolve(folder);
+      resolve(folder); // 空字符串表示"未分类"，null 表示取消
     };
 
     folderSelect.focus();
