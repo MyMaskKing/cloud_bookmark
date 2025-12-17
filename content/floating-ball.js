@@ -50,12 +50,20 @@
   let floatingBall = null;
   let isDragging = false;
   let dragOffset = { x: 0, y: 0 };
+  let touchStartTime = 0;
+  let touchStartPos = { x: 0, y: 0 };
+  let hasMoved = false; // 标记是否实际移动了
   
   // 初始化悬浮球
   async function initFloatingBall() {
+    console.log('[悬浮球] initFloatingBall 开始');
+    
     // 检查是否启用悬浮球
     const settings = await getSettings();
+    console.log('[悬浮球] 设置:', settings?.floatingBall);
+    
     if (!settings || !settings.floatingBall || !settings.floatingBall.enabled) {
+      console.log('[悬浮球] 悬浮球未启用，移除现有实例');
       if (floatingBall) {
         floatingBall.remove();
         floatingBall = null;
@@ -64,7 +72,12 @@
     }
     
     // 如果已存在，不重复创建
-    if (floatingBall) return;
+    if (floatingBall) {
+      console.log('[悬浮球] 已存在，跳过创建');
+      return;
+    }
+    
+    console.log('[悬浮球] 开始创建悬浮球元素');
     
     // 创建悬浮球
     floatingBall = document.createElement('div');
@@ -101,8 +114,12 @@
     
     // 添加事件监听
     floatingBall.addEventListener('mousedown', startDrag);
-    floatingBall.addEventListener('touchstart', startDrag, { passive: false });
+    floatingBall.addEventListener('touchstart', handleTouchStart, { passive: false });
+    floatingBall.addEventListener('touchmove', handleTouchMove, { passive: false });
+    floatingBall.addEventListener('touchend', handleTouchEnd, { passive: false });
     floatingBall.addEventListener('click', handleClick);
+    
+    console.log('[悬浮球] 初始化完成，事件监听已绑定');
     
     // 添加悬停效果
     floatingBall.addEventListener('mouseenter', () => {
@@ -135,6 +152,14 @@
     dragOffset.x = clientX - rect.left - rect.width / 2;
     dragOffset.y = clientY - rect.top - rect.height / 2;
     
+    // 记录初始位置（用于检测是否移动，仅对鼠标事件）
+    if (!e.touches) {
+      // 鼠标事件：记录初始位置
+      touchStartPos.x = clientX;
+      touchStartPos.y = clientY;
+      hasMoved = false;
+    }
+    
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('touchmove', onDrag, { passive: false });
     document.addEventListener('mouseup', stopDrag);
@@ -151,6 +176,17 @@
     
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    
+    // 检测是否移动（仅对鼠标事件）
+    if (!e.touches) {
+      const distance = Math.sqrt(
+        Math.pow(clientX - touchStartPos.x, 2) + 
+        Math.pow(clientY - touchStartPos.y, 2)
+      );
+      if (distance > 5) { // 鼠标移动超过5px认为是在拖动
+        hasMoved = true;
+      }
+    }
     
     let x = clientX - dragOffset.x - floatingBall.offsetWidth / 2;
     let y = clientY - dragOffset.y - floatingBall.offsetHeight / 2;
@@ -171,6 +207,7 @@
   function stopDrag(e) {
     if (!isDragging) return;
     isDragging = false;
+    hasMoved = false;
     
     document.removeEventListener('mousemove', onDrag);
     document.removeEventListener('touchmove', onDrag);
@@ -185,29 +222,123 @@
       x: rect.left,
       y: rect.top
     });
+    
+    // 重置触摸状态
+    touchStartTime = 0;
   }
   
   // 处理点击
   function handleClick(e) {
+    console.log('[悬浮球] handleClick 被调用, isDragging:', isDragging, 'hasMoved:', hasMoved);
+    
     // 如果刚刚拖动过，不触发点击
-    if (isDragging) {
-      setTimeout(() => { isDragging = false; }, 100);
+    if (isDragging || hasMoved) {
+      console.log('[悬浮球] 检测到拖动状态，忽略点击');
       return;
     }
     
     e.preventDefault();
     e.stopPropagation();
     
+    console.log('[悬浮球] 开始发送 openPopup 消息');
+    
     // 打开书签弹窗（在新窗口中打开popup页面）
     sendMessageCompat({ action: 'openPopup' }).then(response => {
+      console.log('[悬浮球] openPopup 响应:', response);
       if (!response || !response.success) {
+        console.log('[悬浮球] openPopup 失败，尝试打开完整页面');
         // 如果无法打开popup，尝试打开完整页面
-        sendMessageCompat({ action: 'openBookmarksPage' });
+        return sendMessageCompat({ action: 'openBookmarksPage' });
       }
-    }).catch(() => {
+    }).catch((error) => {
+      console.error('[悬浮球] openPopup 异常:', error);
       // 如果打开弹窗失败，尝试打开完整页面
-      sendMessageCompat({ action: 'openBookmarksPage' }).catch(() => {});
+      sendMessageCompat({ action: 'openBookmarksPage' }).then(() => {
+        console.log('[悬浮球] openBookmarksPage 成功');
+      }).catch((err) => {
+        console.error('[悬浮球] openBookmarksPage 也失败:', err);
+      });
     });
+  }
+  
+  // 处理触摸开始（移动端专用）
+  function handleTouchStart(e) {
+    touchStartTime = Date.now();
+    hasMoved = false;
+    isDragging = false;
+    const touch = e.touches[0];
+    touchStartPos.x = touch.clientX;
+    touchStartPos.y = touch.clientY;
+    
+    // 记录初始位置用于拖动（但不立即开始拖动）
+    const rect = floatingBall.getBoundingClientRect();
+    dragOffset.x = touch.clientX - rect.left - rect.width / 2;
+    dragOffset.y = touch.clientY - rect.top - rect.height / 2;
+  }
+  
+  // 处理触摸移动
+  function handleTouchMove(e) {
+    if (!touchStartTime) return;
+    
+    const touch = e.touches[0];
+    const distance = Math.sqrt(
+      Math.pow(touch.clientX - touchStartPos.x, 2) + 
+      Math.pow(touch.clientY - touchStartPos.y, 2)
+    );
+    
+    // 如果移动距离超过阈值（10px），认为是拖动
+    if (distance > 10 && !isDragging) {
+      hasMoved = true;
+      isDragging = true;
+      e.preventDefault();
+      e.stopPropagation();
+      
+      // 开始拖动
+      floatingBall.style.transition = 'none';
+      floatingBall.style.transform = '';
+      
+      document.addEventListener('touchmove', onDrag, { passive: false });
+      document.addEventListener('touchend', stopDrag);
+    }
+    
+    // 如果已经在拖动，继续拖动
+    if (isDragging) {
+      onDrag(e);
+    }
+  }
+  
+  // 处理触摸结束
+  function handleTouchEnd(e) {
+    const touchEndTime = Date.now();
+    const touch = e.changedTouches[0];
+    const touchEndPos = { x: touch.clientX, y: touch.clientY };
+    
+    // 计算时间和距离
+    const timeDiff = touchEndTime - touchStartTime;
+    const distance = Math.sqrt(
+      Math.pow(touchEndPos.x - touchStartPos.x, 2) + 
+      Math.pow(touchEndPos.y - touchStartPos.y, 2)
+    );
+    
+    console.log('[悬浮球] touchEnd, timeDiff:', timeDiff, 'distance:', distance, 'isDragging:', isDragging, 'hasMoved:', hasMoved);
+    
+    // 如果正在拖动，停止拖动
+    if (isDragging) {
+      stopDrag(e);
+      return;
+    }
+    
+    // 如果没有移动且时间很短，认为是点击
+    if (!hasMoved && timeDiff < 300 && distance < 10) {
+      console.log('[悬浮球] 识别为点击，调用 handleClick');
+      e.preventDefault();
+      e.stopPropagation();
+      handleClick(e);
+    }
+    
+    // 重置状态
+    touchStartTime = 0;
+    hasMoved = false;
   }
   
   // 兼容的 storage API

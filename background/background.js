@@ -147,23 +147,40 @@ async function syncSettingsFromCloud() {
   }
 }
 
-// 兼容的 API 对象
+// 兼容的 API 对象（部分 API 在移动端可能不存在，例如 Firefox Android 不支持 contextMenus/commands）
 const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
-const contextMenusAPI = typeof browser !== 'undefined' ? browser.contextMenus : chrome.contextMenus;
+const contextMenusAPI = (typeof browser !== 'undefined' ? browser.contextMenus : chrome.contextMenus) || null;
 const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
-const commandsAPI = typeof browser !== 'undefined' ? browser.commands : chrome.commands;
+const commandsAPI = (typeof browser !== 'undefined' ? browser.commands : chrome.commands) || null;
 const alarmsAPI = typeof browser !== 'undefined' ? browser.alarms : chrome.alarms;
 
 // 监听插件安装
 runtimeAPI.onInstalled.addListener(async () => {
   console.log('云端书签插件已安装');
   
-  // 创建右键菜单
-  contextMenusAPI.create({
-    id: 'addBookmark',
-    title: '添加到云端书签',
-    contexts: ['page', 'link']
-  });
+  // 创建右键菜单（某些环境如 Firefox Android 不支持 contextMenus，需判断）
+  // 检查 contextMenus API 是否真的可用（不仅仅是存在）
+  if (contextMenusAPI && typeof contextMenusAPI.create === 'function') {
+    try {
+      // 先检查是否支持（某些平台 API 存在但不可用）
+      if (typeof browser !== 'undefined' && browser.contextMenus) {
+        await browser.contextMenus.create({
+          id: 'addBookmark',
+          title: '添加到云端书签',
+          contexts: ['page', 'link']
+        });
+      } else if (chrome.contextMenus && typeof chrome.contextMenus.create === 'function') {
+        chrome.contextMenus.create({
+          id: 'addBookmark',
+          title: '添加到云端书签',
+          contexts: ['page', 'link']
+        });
+      }
+    } catch (e) {
+      // 静默失败，某些平台不支持 contextMenus（如 Firefox Android）
+      console.warn('创建右键菜单失败（可能当前平台不支持 contextMenus）:', e?.message || e);
+    }
+  }
   
   // 设置初始同步任务
   await setupSyncAlarm();
@@ -178,28 +195,72 @@ runtimeAPI.onStartup.addListener(async () => {
   await syncSettingsFromCloud().catch(() => {});
 });
 
-// 监听右键菜单点击
-contextMenusAPI.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === 'addBookmark') {
-    // 打开添加书签页面
-    tabsAPI.create({
-      url: runtimeAPI.getURL('pages/bookmarks.html?action=add&url=' + encodeURIComponent(info.linkUrl || tab.url))
+// 监听右键菜单点击（仅在支持 contextMenus 的平台生效）
+if (contextMenusAPI && contextMenusAPI.onClicked && typeof contextMenusAPI.onClicked.addListener === 'function') {
+  try {
+    contextMenusAPI.onClicked.addListener(async (info, tab) => {
+      if (info.menuItemId === 'addBookmark') {
+        try {
+          // 验证 tab 是否存在且有效
+          const targetUrl = info.linkUrl || (tab && tab.url ? tab.url : '');
+          if (!targetUrl) {
+            console.error('[后台] 无法获取目标URL');
+            return;
+          }
+          
+          // 打开添加书签页面
+          if (typeof browser !== 'undefined' && browser.tabs) {
+            await tabsAPI.create({
+              url: runtimeAPI.getURL('pages/bookmarks.html?action=add&url=' + encodeURIComponent(targetUrl))
+            });
+          } else {
+            tabsAPI.create({
+              url: runtimeAPI.getURL('pages/bookmarks.html?action=add&url=' + encodeURIComponent(targetUrl))
+            });
+          }
+        } catch (error) {
+          console.error('[后台] 打开书签页面失败:', error);
+        }
+      }
     });
+  } catch (e) {
+    // 某些平台不支持 contextMenus.onClicked，静默失败
+    console.warn('注册右键菜单监听失败（可能当前平台不支持）:', e?.message || e);
   }
-});
+}
 
-// 监听快捷键命令
-commandsAPI.onCommand.addListener(async (command) => {
-  if (command === 'add-bookmark') {
-    const tabs = await tabsAPI.query({ active: true, currentWindow: true });
-    const tab = Array.isArray(tabs) ? tabs[0] : tabs;
-    if (tab) {
-      tabsAPI.create({
-        url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}`)
-      });
-    }
+// 监听快捷键命令（某些平台如移动端可能不支持 commands，需要判断）
+if (commandsAPI && commandsAPI.onCommand && typeof commandsAPI.onCommand.addListener === 'function') {
+  try {
+    commandsAPI.onCommand.addListener(async (command) => {
+      if (command === 'add-bookmark') {
+        try {
+          const tabs = await tabsAPI.query({ active: true, currentWindow: true });
+          const tab = Array.isArray(tabs) ? tabs[0] : tabs;
+          // 验证 tab 和 tab.url 是否有效
+          if (tab && tab.url && typeof tab.id !== 'undefined' && tab.id !== null && !isNaN(tab.id)) {
+            if (typeof browser !== 'undefined' && browser.tabs) {
+              await tabsAPI.create({
+                url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}`)
+              });
+            } else {
+              tabsAPI.create({
+                url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}`)
+              });
+            }
+          } else {
+            console.error('[后台] 无法获取有效的活动标签页');
+          }
+        } catch (error) {
+          console.error('[后台] 快捷键添加书签失败:', error);
+        }
+      }
+    });
+  } catch (e) {
+    // 某些平台不支持 commands，静默失败
+    console.warn('注册快捷键监听失败（可能当前平台不支持）:', e?.message || e);
   }
-});
+}
 
 // 监听定时任务
 alarmsAPI.onAlarm.addListener(async (alarm) => {
@@ -249,9 +310,29 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'openPopup') {
+    console.log('[后台] 收到 openPopup 请求');
     // 打开弹窗（在新窗口中打开popup页面）
-    const windowsAPI = typeof browser !== 'undefined' ? browser.windows : chrome.windows;
+    // 注意：某些平台如 Firefox Android 可能不支持 windows API 或 type: 'popup'
+    const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
     const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+    const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+    
+    console.log('[后台] windowsAPI 存在:', !!windowsAPI, 'tabsAPI 存在:', !!tabsAPI);
+    
+    // 如果 windows API 不存在或不支持，直接回退到打开标签页
+    if (!windowsAPI || !windowsAPI.create) {
+      console.log('[后台] windows API 不存在，使用 tabs.create 打开标签页');
+      tabsAPI.create({
+        url: runtimeAPI.getURL('popup/popup.html')
+      }).then(() => {
+        console.log('[后台] tabs.create 成功');
+        sendResponse({ success: true });
+      }).catch(error => {
+        console.error('[后台] tabs.create 失败:', error);
+        sendResponse({ success: false, error: error.message });
+      });
+      return true;
+    }
     
     if (typeof browser !== 'undefined' && browser.windows) {
       // Firefox: 使用 Promise
@@ -263,7 +344,14 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
       }).then(window => {
         sendResponse({ success: true, windowId: window?.id });
       }).catch(error => {
-        sendResponse({ success: false, error: error.message });
+        // 如果 popup 类型失败，回退到普通标签页
+        tabsAPI.create({
+          url: runtimeAPI.getURL('popup/popup.html')
+        }).then(() => {
+          sendResponse({ success: true });
+        }).catch(err => {
+          sendResponse({ success: false, error: err.message || error.message });
+        });
       });
     } else {
       // Chrome: 使用回调
@@ -273,13 +361,23 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         width: 400,
         height: 600
       }, (window) => {
-        sendResponse({ success: true, windowId: window?.id });
+        if (chrome.runtime.lastError) {
+          // 如果 popup 类型失败，回退到普通标签页
+          tabsAPI.create({
+            url: runtimeAPI.getURL('popup/popup.html')
+          }, () => {
+            sendResponse({ success: true });
+          });
+        } else {
+          sendResponse({ success: true, windowId: window?.id });
+        }
       });
     }
     return true;
   }
   
   if (request.action === 'openBookmarksPage') {
+    console.log('[后台] 收到 openBookmarksPage 请求');
     // 打开完整书签管理页面
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
@@ -289,8 +387,10 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
       tabsAPI.create({
         url: runtimeAPI.getURL('pages/bookmarks.html')
       }).then(() => {
+        console.log('[后台] openBookmarksPage 成功');
         sendResponse({ success: true });
       }).catch(error => {
+        console.error('[后台] openBookmarksPage 失败:', error);
         sendResponse({ success: false, error: error.message });
       });
     } else {
@@ -298,6 +398,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
       tabsAPI.create({
         url: runtimeAPI.getURL('pages/bookmarks.html')
       });
+      console.log('[后台] openBookmarksPage 成功 (Chrome)');
       sendResponse({ success: true });
     }
     return true;
@@ -372,8 +473,9 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     try {
       const handleTabs = (tabs) => {
         const tab = Array.isArray(tabs) ? tabs[0] : null;
-        if (tab) {
-          sendResponse({ tab: { id: tab.id, url: tab.url, title: tab.title } });
+        // 验证 tab 和 tab.id 是否有效（tab.id 必须是有效数字）
+        if (tab && typeof tab.id !== 'undefined' && tab.id !== null && !isNaN(tab.id) && tab.id >= 0) {
+          sendResponse({ tab: { id: tab.id, url: tab.url || '', title: tab.title || '' } });
         } else {
           sendResponse({ tab: null, error: 'no-active-tab' });
         }
@@ -393,12 +495,16 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
                   return tabsAPI.query({ active: true }).then(list => {
                     if (list && list.length) return handleTabs(list);
                     // 最后回退：取所有标签第一页
-                    return tabsAPI.query({}).then(all => handleTabs(all));
+                    return tabsAPI.query({}).then(all => {
+                      if (all && all.length) return handleTabs(all);
+                      sendResponse({ tab: null, error: 'no-active-tab' });
+                    });
                   });
                 });
             }
           })
           .catch(err => {
+            console.error('[后台] getActiveTab 查询失败:', err);
             sendResponse({ tab: null, error: err.message || 'query-failed' });
           });
         return true;
@@ -406,20 +512,41 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
 
       // Chrome 回退：callback 形式
       tabsAPI.query({ active: true, currentWindow: true }, (tabs) => {
+        if (chrome.runtime.lastError) {
+          console.error('[后台] getActiveTab 查询失败:', chrome.runtime.lastError);
+          sendResponse({ tab: null, error: chrome.runtime.lastError.message || 'query-failed' });
+          return;
+        }
         if (tabs && tabs.length) {
           handleTabs(tabs);
         } else {
           tabsAPI.query({ active: true, lastFocusedWindow: true }, (res) => {
+            if (chrome.runtime.lastError) {
+              sendResponse({ tab: null, error: chrome.runtime.lastError.message || 'query-failed' });
+              return;
+            }
             if (res && res.length) return handleTabs(res);
             tabsAPI.query({ active: true }, (list) => {
+              if (chrome.runtime.lastError) {
+                sendResponse({ tab: null, error: chrome.runtime.lastError.message || 'query-failed' });
+                return;
+              }
               if (list && list.length) return handleTabs(list);
-              tabsAPI.query({}, handleTabs);
+              tabsAPI.query({}, (all) => {
+                if (chrome.runtime.lastError) {
+                  sendResponse({ tab: null, error: chrome.runtime.lastError.message || 'query-failed' });
+                  return;
+                }
+                if (all && all.length) return handleTabs(all);
+                sendResponse({ tab: null, error: 'no-active-tab' });
+              });
             });
           });
         }
       });
       return true;
     } catch (error) {
+      console.error('[后台] getActiveTab 异常:', error);
       sendResponse({ tab: null, error: error.message || 'query-failed' });
     }
     return true;
