@@ -585,50 +585,61 @@ addCurrentBtn.addEventListener('click', async () => {
   }
 });
 
+function isExtensionUrl(url) {
+  return typeof url === 'string' && (
+    url.startsWith('chrome-extension://') ||
+    url.startsWith('moz-extension://') ||
+    url.startsWith('edge-extension://')
+  );
+}
+
 async function getActiveTabSafe() {
-  // 优先使用 Promise 风格的 browser.tabs（Firefox 原生）
+  // 1. 优先让后台计算当前活动标签页，避免拿到扩展窗口本身
+  try {
+    const resp = await sendMessageCompat({ action: 'getActiveTab' });
+    if (resp && resp.tab && resp.tab.url && !isExtensionUrl(resp.tab.url)) {
+      return resp.tab;
+    }
+  } catch (e) {
+    console.warn('后台获取标签页失败:', e?.message || e);
+  }
+
+  // 2. 本地回退：currentWindow
   try {
     const tabs = await queryTabsCompat({ active: true, currentWindow: true });
     const tab = Array.isArray(tabs) ? tabs[0] : null;
-    if (tab) return tab;
+    if (tab && tab.url && !isExtensionUrl(tab.url)) return tab;
   } catch (e) {
     console.warn('tabs.query(currentWindow) 失败:', e?.message || e);
   }
 
-  // 回退：lastFocusedWindow
+  // 3. lastFocusedWindow
   try {
     const tabs = await queryTabsCompat({ active: true, lastFocusedWindow: true });
     const tab = Array.isArray(tabs) ? tabs[0] : null;
-    if (tab) return tab;
+    if (tab && tab.url && !isExtensionUrl(tab.url)) return tab;
   } catch (e) {
     console.warn('tabs.query(lastFocusedWindow) 失败:', e?.message || e);
   }
 
-  // 回退：仅 active，不限定窗口（兼容部分移动版 Firefox）
+  // 4. 仅 active，不限定窗口
   try {
     const tabs = await queryTabsCompat({ active: true });
-    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    const tab = (Array.isArray(tabs) ? tabs : []).find(t => t.url && !isExtensionUrl(t.url));
     if (tab) return tab;
   } catch (e) {
     console.warn('tabs.query(active:true) 失败:', e?.message || e);
   }
 
-  // 回退：所有标签中第一个（兼容部分移动版 Firefox）
+  // 5. 所有标签中第一个非扩展页
   try {
     const tabs = await queryTabsCompat({});
-    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    const tab = (Array.isArray(tabs) ? tabs : []).find(t => t.url && !isExtensionUrl(t.url));
     if (tab) return tab;
   } catch (e) {
     console.warn('tabs.query({}) 失败:', e?.message || e);
   }
 
-  // 回退：让后台获取（兼容部分移动版/Firefox）
-  try {
-    const resp = await sendMessageCompat({ action: 'getActiveTab' });
-    if (resp && resp.tab) return resp.tab;
-  } catch (e) {
-    console.warn('后台获取标签页失败:', e?.message || e);
-  }
   return null;
 }
 

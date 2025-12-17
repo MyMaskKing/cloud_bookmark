@@ -14,6 +14,8 @@
   ],
   "background": {
     "scripts": [
+      "utils/storage.js",
+      "utils/webdav.js",
       "background/background.js"
     ]
   },
@@ -34,6 +36,13 @@
     }
   },
   "options_page": "options/options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/floating-ball.js"],
+      "run_at": "document_idle"
+    }
+  ],
   "commands": {
     "add-bookmark": {
       "suggested_key": {

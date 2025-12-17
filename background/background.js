@@ -64,12 +64,18 @@ async function ensureDeviceInCloud() {
     throw error;
   }
 }
+
 /**
  * 后台服务脚本
  * 处理同步、定时任务等后台逻辑
+ *
+ * Chrome MV3: 作为 service_worker 运行，此时可以使用 importScripts 引入依赖。
+ * Firefox MV2: 通过 manifest.firefox.json 的 background.scripts 数组加载依赖，
+ *              在这类环境中没有 importScripts，因此需要做保护性判断。
  */
-
-importScripts('../utils/storage.js', '../utils/webdav.js');
+if (typeof importScripts === 'function') {
+  importScripts('../utils/storage.js', '../utils/webdav.js');
+}
 
 const storage = new StorageManager();
 let syncInterval = 5 * 60 * 1000; // 默认5分钟

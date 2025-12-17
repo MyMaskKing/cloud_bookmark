@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "云端书签",
-  "version": "1.0.1",
+  "version": "1.0.0",
   "description": "基于WebDAV的云端书签管理插件",
   
   "permissions": [
@@ -38,6 +38,14 @@
   },
   
   "options_page": "options/options.html",
+  
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/floating-ball.js"],
+      "run_at": "document_idle"
+    }
+  ],
   
   "commands": {
     "add-bookmark": {
