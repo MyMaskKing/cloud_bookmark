@@ -113,6 +113,7 @@ const foldersList = document.getElementById('foldersList');
 const tagsList = document.getElementById('tagsList');
 const addFolderBtn = document.getElementById('addFolderBtn');
 const sidebar = document.querySelector('.sidebar');
+const sidebarResizer = document.getElementById('sidebarResizer');
 const sidebarOverlay = document.getElementById('sidebarOverlay');
 const sidebarToggle = document.getElementById('sidebarToggle');
 const batchModeBtn = document.getElementById('batchModeBtn');
@@ -147,6 +148,58 @@ function closeSidebarIfMobile() {
   }
 }
 
+// 侧边栏宽度拖拽调整（桌面端）
+let isResizingSidebar = false;
+let sidebarStartX = 0;
+let sidebarStartWidth = 0;
+
+function initSidebarResizer() {
+  if (!sidebar || !sidebarResizer) return;
+
+  // 读取本地保存的宽度
+  try {
+    const saved = localStorage.getItem('cloudBookmark_sidebarWidth');
+    if (saved) {
+      const w = parseInt(saved, 10);
+      if (!Number.isNaN(w)) {
+        sidebar.style.width = `${w}px`;
+      }
+    }
+  } catch (e) {
+    // 忽略本地存储异常
+  }
+
+  sidebarResizer.addEventListener('mousedown', (e) => {
+    if (window.innerWidth <= 768) return;
+    isResizingSidebar = true;
+    sidebarStartX = e.clientX;
+    sidebarStartWidth = sidebar.offsetWidth;
+    document.body.style.userSelect = 'none';
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!isResizingSidebar) return;
+    const delta = e.clientX - sidebarStartX;
+    let newWidth = sidebarStartWidth + delta;
+    const minWidth = 180;
+    const maxWidth = 480;
+    newWidth = Math.max(minWidth, Math.min(maxWidth, newWidth));
+    sidebar.style.width = `${newWidth}px`;
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!isResizingSidebar) return;
+    isResizingSidebar = false;
+    document.body.style.userSelect = '';
+    try {
+      const width = sidebar.offsetWidth;
+      localStorage.setItem('cloudBookmark_sidebarWidth', String(width));
+    } catch (e) {
+      // 忽略本地存储异常
+    }
+  });
+}
+
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
   await loadSettings(); // 先加载显示设置
@@ -155,6 +208,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadBookmarks();
   await loadFolders();
   await loadTags();
+  initSidebarResizer();
   setupEventListeners();
   checkUrlParams();
 
@@ -392,9 +446,17 @@ async function loadBookmarks() {
  * 加载文件夹列表
  */
 async function loadFolders() {
+  // 统计每个文件夹下的书签数量
+  const folderCountMap = new Map();
+  currentBookmarks.forEach(b => {
+    const folder = normalizeFolderPath(b.folder || '');
+    if (!folder) return;
+    folderCountMap.set(folder, (folderCountMap.get(folder) || 0) + 1);
+  });
+
   const folders = [...new Set([
     ...currentFolders,
-    ...currentBookmarks.map(b => b.folder).filter(f => f)
+    ...Array.from(folderCountMap.keys())
   ])]
     .map(normalizeFolderPath)
     .filter(f => f);
@@ -409,14 +471,17 @@ async function loadFolders() {
       <ul class="folder-tree">
         <li class="folder-node">
           <div class="folder-row" data-folder="">
-            <span class="folder-label" data-folder="">📁 未分类 (${uncategorizedCount})</span>
+            <span class="folder-label" data-folder="" title="未分类">
+              <span class="folder-label-text">📁 未分类</span>
+              <span class="folder-count">${uncategorizedCount}</span>
+            </span>
           </div>
         </li>
       </ul>
     `;
   }
 
-  html += renderFolderTree(tree.children);
+  html += renderFolderTree(tree.children, folderCountMap);
   foldersList.innerHTML = html;
 
   // 绑定点击事件（筛选）
@@ -499,7 +564,7 @@ function buildFolderTree(folders) {
 /**
  * 渲染树结构为HTML
  */
-function renderFolderTree(children) {
+function renderFolderTree(children, folderCountMap = new Map()) {
   const entries = Object.values(children);
   if (entries.length === 0) return '';
 
@@ -508,10 +573,13 @@ function renderFolderTree(children) {
       ${entries.map(child => `
         <li class="folder-node">
           <div class="folder-row" data-folder="${escapeHtml(child.path)}">
-            <span class="folder-label" data-folder="${escapeHtml(child.path)}">📁 ${escapeHtml(child.name)}</span>
+            <span class="folder-label" data-folder="${escapeHtml(child.path)}" title="${escapeHtml(child.path)}">
+              <span class="folder-label-text">📁 ${escapeHtml(child.name)}</span>
+              <span class="folder-count">${folderCountMap.get(child.path) || 0}</span>
+            </span>
             <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
           </div>
-          ${renderFolderTree(child.children)}
+          ${renderFolderTree(child.children, folderCountMap)}
         </li>
       `).join('')}
     </ul>
@@ -1330,31 +1398,38 @@ function updateBatchModeUI() {
  */
 function updateSelectedCount() {
   selectedCount.textContent = `已选择 ${selectedBookmarkIds.size} 项`;
-  // 更新全选按钮文字
-  if (selectAllBtn) {
-    const allSelected = currentBookmarks.length > 0 && selectedBookmarkIds.size === currentBookmarks.length;
-    selectAllBtn.textContent = allSelected ? '取消全选' : '全选';
-  }
+  if (!selectAllBtn) return;
+
+  const displayedCards = Array.from(document.querySelectorAll('.bookmark-card'));
+  const displayedIds = displayedCards.map(card => card.dataset.id);
+  const totalDisplayed = displayedIds.length;
+  const selectedOnScreen = displayedIds.filter(id => selectedBookmarkIds.has(id)).length;
+  const allSelected = totalDisplayed > 0 && selectedOnScreen === totalDisplayed;
+
+  selectAllBtn.textContent = allSelected ? '取消全选' : '全选';
 }
 
 /**
  * 全选/取消全选
  */
 function toggleSelectAll() {
-  const allSelected = currentBookmarks.length > 0 && selectedBookmarkIds.size === currentBookmarks.length;
-  
+  const cards = Array.from(document.querySelectorAll('.bookmark-card'));
+  const displayedIds = cards.map(card => card.dataset.id);
+  const selectedOnScreen = displayedIds.filter(id => selectedBookmarkIds.has(id));
+  const allSelected = displayedIds.length > 0 && selectedOnScreen.length === displayedIds.length;
+
   if (allSelected) {
-    // 取消全选
-    selectedBookmarkIds.clear();
+    // 只取消当前界面显示的书签
+    displayedIds.forEach(id => selectedBookmarkIds.delete(id));
   } else {
-    // 全选
-    currentBookmarks.forEach(b => selectedBookmarkIds.add(b.id));
+    // 只选择当前界面显示的书签
+    displayedIds.forEach(id => selectedBookmarkIds.add(id));
   }
-  
+
   // 更新UI
   updateSelectedCount();
   // 更新所有复选框状态
-  document.querySelectorAll('.bookmark-card .batch-checkbox').forEach(checkbox => {
+  document.querySelectorAll('.bookmark-card .bookmark-select-checkbox').forEach(checkbox => {
     checkbox.checked = selectedBookmarkIds.has(checkbox.dataset.id);
   });
 }
