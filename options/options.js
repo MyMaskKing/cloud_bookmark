@@ -4,6 +4,73 @@
 
 const storage = new StorageManager();
 
+// 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
+const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function(message, callback) {
+  const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+  
+  if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+    // Firefox: 使用 Promise
+    return runtime.sendMessage(message).then(response => {
+      if (callback) callback(response);
+      return response;
+    }).catch(error => {
+      // Firefox 中，如果接收端不存在（background script 未准备好），静默处理
+      const isReceivingEndError = error && (
+        error.message?.includes('Receiving end does not exist') ||
+        error.message?.includes('Could not establish connection') ||
+        String(error).includes('Receiving end does not exist') ||
+        String(error).includes('Could not establish connection')
+      );
+      
+      if (isReceivingEndError) {
+        // 静默处理，返回 null 而不是抛出错误
+        if (callback) callback(null);
+        return null;
+      }
+      
+      // 其他错误正常抛出
+      if (callback) callback(null);
+      throw error;
+    });
+  } else {
+    // Chrome: 使用回调
+    return new Promise((resolve, reject) => {
+      runtime.sendMessage(message, (response) => {
+        const lastError = runtime.lastError;
+        if (lastError) {
+          if (callback) callback(null);
+          reject(new Error(lastError.message));
+        } else {
+          if (callback) callback(response);
+          resolve(response);
+        }
+      });
+    });
+  }
+};
+
+// 判断是否为后台未就绪的典型错误
+function isReceivingEndError(err) {
+  if (!err) return false;
+  const msg = err.message || String(err);
+  return msg.includes('Receiving end does not exist') || msg.includes('Could not establish connection');
+}
+
+// 通用带重试的消息发送（主要防 Firefox 背景未激活）
+async function sendWithRetry(message, { retries = 2, delay = 300 } = {}) {
+  for (let i = 0; i <= retries; i++) {
+    try {
+      const res = await sendMessageCompat(message);
+      // sendMessageCompat 在 Firefox 未就绪时会返回 null，这里也当作需重试
+      if (res !== null && res !== undefined) return res;
+      if (i === retries) return res;
+    } catch (err) {
+      if (!isReceivingEndError(err) || i === retries) throw err;
+    }
+    await new Promise(r => setTimeout(r, delay * (i + 1)));
+  }
+}
+
 // DOM元素
 const configForm = document.getElementById('configForm');
 const testBtn = document.getElementById('testBtn');
@@ -99,36 +166,104 @@ configForm.addEventListener('submit', async (e) => {
     await storage.clearSyncedScenes();
     showMessage('配置已保存，正在同步数据…', 'success');
     
-    // 通知后台更新同步任务
-    chrome.runtime.sendMessage({ 
-      action: 'configUpdated',
-      config 
-    });
+    try {
+      // 通知后台更新同步任务
+      await sendMessageCompat({ 
+        action: 'configUpdated',
+        config 
+      });
 
-    // 保存成功后，先拉取云端设置，再注册设备，并同步当前场景数据到本地
-    chrome.runtime.sendMessage({ action: 'syncSettingsFromCloud' }, async () => {
-      // 等待设备注册完成
-      await new Promise((resolve) => {
-        chrome.runtime.sendMessage({ action: 'registerDevice' }, (response) => {
-          if (chrome.runtime.lastError) {
-            console.error('设备注册失败:', chrome.runtime.lastError);
-          } else if (response && !response.success) {
-            console.error('设备注册失败:', response.error);
+      // 保存成功后，先拉取云端设置，再注册设备，并同步当前场景数据到本地
+      // Firefox 中可能需要等待 background script 准备好，添加短暂延迟
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      try {
+        const syncSettingsResponse = await sendMessageCompat({ action: 'syncSettingsFromCloud' });
+        // 如果返回 null（Firefox 中 background script 未准备好），等待后重试一次
+        if (syncSettingsResponse === null) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+          await sendMessageCompat({ action: 'syncSettingsFromCloud' });
+        }
+      } catch (error) {
+        const isReceivingEndError = error && (
+          error.message?.includes('Receiving end does not exist') ||
+          error.message?.includes('Could not establish connection') ||
+          String(error).includes('Receiving end does not exist') ||
+          String(error).includes('Could not establish connection')
+        );
+        if (!isReceivingEndError) {
+          console.warn('同步设置失败:', error.message || error);
+        }
+      }
+      
+      // 等待设备注册完成（带重试机制）
+      let registerSuccess = false;
+      for (let retry = 0; retry < 3; retry++) {
+        try {
+          const registerResponse = await sendMessageCompat({ action: 'registerDevice' });
+          if (registerResponse && registerResponse.success) {
+            registerSuccess = true;
+            break;
+          } else if (registerResponse && !registerResponse.success) {
+            // 明确的失败响应，不再重试
+            break;
+          } else if (registerResponse === null) {
+            // Firefox 中，如果 background script 未准备好，sendMessage 返回 null
+            if (retry < 2) {
+              // 等待后重试
+              await new Promise(resolve => setTimeout(resolve, 200 * (retry + 1)));
+              continue;
+            }
           }
-          resolve(response);
-        });
-      });
+        } catch (error) {
+          // Firefox 中，如果 background script 未准备好，会抛出 "Receiving end does not exist" 错误
+          const isReceivingEndError = error && (
+            error.message?.includes('Receiving end does not exist') ||
+            error.message?.includes('Could not establish connection') ||
+            String(error).includes('Receiving end does not exist') ||
+            String(error).includes('Could not establish connection')
+          );
+          if (isReceivingEndError && retry < 2) {
+            // 等待后重试
+            await new Promise(resolve => setTimeout(resolve, 200 * (retry + 1)));
+            continue;
+          } else if (!isReceivingEndError) {
+            // 其他错误只记录一次
+            if (retry === 0) {
+              console.warn('设备注册失败:', error.message || error);
+            }
+            break;
+          }
+        }
+      }
+      
       const currentSceneId = await storage.getCurrentScene();
-      chrome.runtime.sendMessage({ action: 'sync', sceneId: currentSceneId }, () => {
-        // 刷新设置页面显示云端同步的最新数据
-        loadScenes();
-        loadDevices();
-        loadUiSettings();
-        loadDeviceDetectionSetting();
-        loadFloatingBallSetting();
-        updateSyncStatus();
-      });
-    });
+      try {
+        const syncResponse = await sendWithRetry(
+          { action: 'sync', sceneId: currentSceneId },
+          { retries: 2, delay: 300 }
+        );
+        // sendWithRetry 已处理 null/重试，这里无需额外处理
+        if (syncResponse && !syncResponse.success) {
+          console.warn('同步失败:', syncResponse.error || 'unknown');
+        }
+      } catch (error) {
+        if (!isReceivingEndError(error)) {
+          console.warn('同步失败:', error.message || error);
+        }
+      }
+      
+      // 刷新设置页面显示云端同步的最新数据
+      loadScenes();
+      loadDevices();
+      loadUiSettings();
+      loadDeviceDetectionSetting();
+      loadFloatingBallSetting();
+      updateSyncStatus();
+    } catch (error) {
+      console.error('同步过程出错:', error);
+      showMessage('配置已保存，但同步过程出现错误: ' + error.message, 'error');
+    }
   } catch (error) {
     showMessage('保存失败: ' + error.message, 'error');
   }
@@ -319,18 +454,16 @@ syncNowBtn.addEventListener('click', async () => {
   syncNowBtn.textContent = '同步中...';
   
   try {
-    chrome.runtime.sendMessage({ action: 'sync' }, (response) => {
-      if (response && response.success) {
-        showMessage('同步成功', 'success');
-        setTimeout(updateSyncStatus, 1000);
-      } else {
-        showMessage('同步失败: ' + (response?.error || '未知错误'), 'error');
-      }
-      syncNowBtn.disabled = false;
-      syncNowBtn.textContent = '立即同步';
-    });
+  const response = await sendMessageCompat({ action: 'sync' });
+    if (response && response.success) {
+      showMessage('同步成功', 'success');
+      setTimeout(updateSyncStatus, 1000);
+    } else {
+      showMessage('同步失败: ' + (response?.error || '未知错误'), 'error');
+    }
   } catch (error) {
     showMessage('同步失败: ' + error.message, 'error');
+  } finally {
     syncNowBtn.disabled = false;
     syncNowBtn.textContent = '立即同步';
   }
@@ -343,17 +476,15 @@ syncUploadBtn.addEventListener('click', async () => {
   syncUploadBtn.disabled = true;
   syncUploadBtn.textContent = '上传中...';
   try {
-    chrome.runtime.sendMessage({ action: 'syncUpload' }, (response) => {
-      if (response && response.success) {
-        showMessage('上传成功', 'success');
-      } else {
-        showMessage('上传失败: ' + (response?.error || '未知错误'), 'error');
-      }
-      syncUploadBtn.disabled = false;
-      syncUploadBtn.textContent = '立即上传';
-    });
+  const response = await sendMessageCompat({ action: 'syncUpload' });
+    if (response && response.success) {
+      showMessage('上传成功', 'success');
+    } else {
+      showMessage('上传失败: ' + (response?.error || '未知错误'), 'error');
+    }
   } catch (error) {
     showMessage('上传失败: ' + error.message, 'error');
+  } finally {
     syncUploadBtn.disabled = false;
     syncUploadBtn.textContent = '立即上传';
   }
@@ -504,7 +635,7 @@ importBrowserBtn.addEventListener('click', async () => {
       await storage.saveBookmarks(mergedBookmarks, allFolders);
       
       // 同步到云端（同步到选择的场景）
-      chrome.runtime.sendMessage({ 
+      await sendMessageCompat({ 
         action: 'syncToCloud', 
         bookmarks: sceneBookmarks,
         folders: [...new Set(sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean))],
@@ -546,7 +677,7 @@ expandFirstLevelCheckbox.addEventListener('change', async () => {
       }
     });
     showMessage('界面设置已保存（已同步至云端）', 'success');
-    chrome.runtime.sendMessage({ action: 'syncSettings' });
+  await sendMessageCompat({ action: 'syncSettings' });
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
@@ -700,7 +831,7 @@ importFile.addEventListener('change', async (e) => {
       await storage.saveBookmarks(mergedBookmarks, allFolders);
       
       // 同步到云端（同步到选择的场景）
-      chrome.runtime.sendMessage({ 
+      await sendMessageCompat({ 
         action: 'syncToCloud', 
         bookmarks: sceneBookmarks,
         folders: [...new Set(sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean))],
@@ -725,9 +856,7 @@ importFile.addEventListener('change', async (e) => {
  */
 async function loadDevices() {
   try {
-    const res = await new Promise((resolve) => {
-      chrome.runtime.sendMessage({ action: 'getDevices' }, resolve);
-    });
+    const res = await sendWithRetry({ action: 'getDevices' }, { retries: 2, delay: 300 });
     if (res?.error) throw new Error(res.error);
     let devices = res?.devices || [];
     const deviceInfo = res?.deviceInfo;
@@ -775,12 +904,10 @@ async function loadDevices() {
           if (!doubleCheck) return;
         }
         const newDevices = devices.filter(d => d.id !== id);
-        const saveRes = await new Promise((resolve) => {
-          chrome.runtime.sendMessage({ action: 'saveDevices', devices: newDevices }, resolve);
-        });
+        const saveRes = await sendWithRetry({ action: 'saveDevices', devices: newDevices }, { retries: 2, delay: 300 });
         if (saveRes?.success) {
           showMessage('已移除设备', 'success');
-          chrome.runtime.sendMessage({ action: 'syncSettings' });
+          await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
           loadDevices();
         } else {
           showMessage('移除失败: ' + (saveRes?.error || '未知错误'), 'error');
@@ -819,7 +946,7 @@ enableDeviceDetection.addEventListener('change', async () => {
     const newSettings = { ...(settings || {}), deviceDetection };
     await storage.saveSettings(newSettings);
     // 立即同步到云端
-    chrome.runtime.sendMessage({ action: 'syncSettings' });
+    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
     showMessage('设备检测设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
@@ -850,13 +977,17 @@ enableFloatingBall.addEventListener('change', async () => {
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
     // 立即同步到云端
-    chrome.runtime.sendMessage({ action: 'syncSettings' });
+    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
     // 通知所有标签页更新悬浮球状态
-    chrome.tabs.query({}, (tabs) => {
+    const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+    try {
+      const tabs = await tabsAPI.query({});
       tabs.forEach(tab => {
-        chrome.tabs.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => {});
+        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => {});
       });
-    });
+    } catch (e) {
+      // 忽略错误
+    }
     showMessage('悬浮球设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
@@ -920,9 +1051,7 @@ async function loadScenes() {
           // WebDAV配置有效且该场景从未同步过，需要执行云端同步
           if (hasValidConfig && !isSceneSynced) {
             try {
-              await new Promise(resolve => {
-                chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
-              });
+              await sendMessageCompat({ action: 'sync', sceneId });
             } catch (e) {
               // 忽略单次同步失败，继续后续逻辑
             }
@@ -931,9 +1060,7 @@ async function loadScenes() {
             if (!hasAfter) {
               // 云端也没有，创建一个空文件以便后续同步
               try {
-                await new Promise(resolve => {
-                  chrome.runtime.sendMessage({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId }, resolve);
-                });
+                await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
               } catch (e) {
                 // 忽略，等待用户后续添加书签再同步
               }
@@ -947,7 +1074,7 @@ async function loadScenes() {
             try {
               await storage.updateScene(sceneId, { name: newName.trim() });
               showMessage('场景已重命名', 'success');
-              chrome.runtime.sendMessage({ action: 'syncSettings' });
+              await sendMessageCompat({ action: 'syncSettings' });
               await loadScenes();
             } catch (e) {
               showMessage('重命名失败: ' + e.message, 'error');
@@ -969,9 +1096,9 @@ async function loadScenes() {
             const filteredFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
             await storage.saveBookmarks(filteredBookmarks, filteredFolders);
             // 通知后台删除云端文件
-            chrome.runtime.sendMessage({ action: 'deleteSceneBookmarks', sceneId });
+            await sendMessageCompat({ action: 'deleteSceneBookmarks', sceneId });
             showMessage('场景已删除', 'success');
-            chrome.runtime.sendMessage({ action: 'syncSettings' });
+            await sendMessageCompat({ action: 'syncSettings' });
             await loadScenes();
           } catch (e) {
             showMessage('删除失败: ' + e.message, 'error');
@@ -1098,7 +1225,7 @@ addSceneBtn.addEventListener('click', async () => {
       isDefault: false
     });
     showMessage('场景已添加', 'success');
-    chrome.runtime.sendMessage({ action: 'syncSettings' });
+    await sendMessageCompat({ action: 'syncSettings' });
     await loadScenes();
   } catch (e) {
     showMessage('添加失败: ' + e.message, 'error');

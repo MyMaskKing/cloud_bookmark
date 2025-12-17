@@ -4,6 +4,53 @@
 
 const storage = new StorageManager();
 
+// 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
+const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function(message, callback) {
+  const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+  
+  if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+    // Firefox: 使用 Promise
+    return runtime.sendMessage(message).then(response => {
+      if (callback) callback(response);
+      return response;
+    }).catch(error => {
+      // Firefox 中，如果接收端不存在（background script 未准备好），静默处理
+      const isReceivingEndError = error && (
+        error.message?.includes('Receiving end does not exist') ||
+        error.message?.includes('Could not establish connection') ||
+        String(error).includes('Receiving end does not exist') ||
+        String(error).includes('Could not establish connection')
+      );
+      
+      if (isReceivingEndError) {
+        if (callback) callback(null);
+        return null;
+      }
+      
+      if (callback) callback(null);
+      throw error;
+    });
+  } else {
+    // Chrome/Edge: 使用回调
+    return new Promise((resolve, reject) => {
+      runtime.sendMessage(message, (response) => {
+        const lastError = runtime.lastError;
+        if (lastError) {
+          if (callback) callback(null);
+          reject(new Error(lastError.message));
+        } else {
+          if (callback) callback(response);
+          resolve(response);
+        }
+      });
+    });
+  }
+};
+
+// 兼容的 API 对象
+const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+
 // 工具函数（从utils.js导入的函数需要在这里定义或确保全局可用）
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -123,7 +170,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await updateSyncStatus();
   
   // 监听消息更新
-  chrome.runtime.onMessage.addListener((request) => {
+  runtimeAPI.onMessage.addListener((request) => {
     if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
       loadCurrentScene();
       loadBookmarksForPopup();
@@ -190,9 +237,7 @@ async function loadScenes() {
           // WebDAV配置有效且该场景从未同步过，需要执行云端同步
           if (hasValidConfig && !isSceneSynced) {
             try {
-              await new Promise(resolve => {
-                chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
-              });
+              await sendMessageCompat({ action: 'sync', sceneId });
             } catch (e) {
               // 忽略单次同步失败，继续后续逻辑
             }
@@ -201,9 +246,7 @@ async function loadScenes() {
             if (!hasAfter) {
               // 云端也没有，创建一个空文件以便后续同步
               try {
-                await new Promise(resolve => {
-                  chrome.runtime.sendMessage({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId }, resolve);
-                });
+                await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
               } catch (e) {
                 // 忽略，等待用户后续添加书签再同步
               }
@@ -280,7 +323,7 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
     bookmarkList.querySelectorAll('.bookmark-item').forEach(item => {
       item.addEventListener('click', () => {
         const url = item.dataset.url;
-        chrome.tabs.create({ url });
+        tabsAPI.create({ url });
         window.close();
       });
     });
@@ -334,7 +377,7 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
       item.addEventListener('click', (e) => {
         e.stopPropagation();
         const url = item.dataset.url;
-        chrome.tabs.create({ url });
+        tabsAPI.create({ url });
         window.close();
       });
     });
@@ -371,9 +414,12 @@ async function loadPopupSettings() {
 
 async function loadFolderState() {
   try {
-    const result = await new Promise(resolve => {
-      chrome.storage.local.get(['popupFolderState'], resolve);
-    });
+    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+    const result = typeof browser !== 'undefined' && browser.storage
+      ? await browser.storage.local.get(['popupFolderState'])
+      : await new Promise(resolve => {
+          chrome.storage.local.get(['popupFolderState'], resolve);
+        });
     const state = result && result.popupFolderState;
 
     // 如果上次记录的设置值与当前设置不同，则认为用户刚修改了设置，重置展开状态
@@ -405,12 +451,20 @@ async function loadFolderState() {
 
 function saveFolderState() {
   const expanded = Array.from(expandedFolders);
-  chrome.storage.local.set({
+  const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+  const state = {
     popupFolderState: {
       expanded,
       lastExpandFirstLevel: popupSettings.expandFirstLevel
     }
-  }, () => {});
+  };
+  if (typeof browser !== 'undefined' && browser.storage) {
+    // Firefox: 使用 Promise
+    browser.storage.local.set(state);
+  } else {
+    // Chrome/Edge: 使用回调
+    chrome.storage.local.set(state, () => {});
+  }
 }
 
 function buildFolderTree(bookmarks) {
@@ -520,8 +574,8 @@ addCurrentBtn.addEventListener('click', async () => {
   const tab = await getActiveTabSafe();
   if (tab && tab.url) {
     pushOpLog(`addCurrent: got tab url=${tab.url}`);
-    chrome.tabs.create({
-      url: chrome.runtime.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`)
+    tabsAPI.create({
+      url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`)
     });
     // 操作完成后关闭弹窗
     window.close();
@@ -570,9 +624,7 @@ async function getActiveTabSafe() {
 
   // 回退：让后台获取（兼容部分移动版/Firefox）
   try {
-    const resp = await new Promise(resolve => {
-      chrome.runtime.sendMessage({ action: 'getActiveTab' }, resolve);
-    });
+    const resp = await sendMessageCompat({ action: 'getActiveTab' });
     if (resp && resp.tab) return resp.tab;
   } catch (e) {
     console.warn('后台获取标签页失败:', e?.message || e);
@@ -585,7 +637,7 @@ async function queryTabsCompat(query) {
   if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
     return await browser.tabs.query(query);
   }
-  // Chrome: 使用 callback 包装成 Promise
+  // Chrome/Edge: 使用 callback 包装成 Promise
   if (typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.query) {
     return await new Promise((resolve, reject) => {
       try {
@@ -609,8 +661,8 @@ async function queryTabsCompat(query) {
  * 打开完整界面
  */
 openFullBtn.addEventListener('click', () => {
-  chrome.tabs.create({
-    url: chrome.runtime.getURL('pages/bookmarks.html')
+  tabsAPI.create({
+    url: runtimeAPI.getURL('pages/bookmarks.html')
   });
   // 操作完成后关闭弹窗
   window.close();
@@ -620,7 +672,7 @@ openFullBtn.addEventListener('click', () => {
  * 打开设置
  */
 settingsBtn.addEventListener('click', () => {
-  chrome.runtime.openOptionsPage();
+  runtimeAPI.openOptionsPage();
   // 操作完成后关闭弹窗
   window.close();
 });
@@ -640,14 +692,20 @@ exportLogBtn.addEventListener('click', async () => {
       storage.getSettings()
     ]);
 
-    const manifest = chrome.runtime.getManifest ? chrome.runtime.getManifest() : {};
-    const alarms = await new Promise(resolve => {
-      if (chrome.alarms && chrome.alarms.getAll) {
-        chrome.alarms.getAll(resolve);
+    const manifest = runtimeAPI.getManifest ? runtimeAPI.getManifest() : {};
+    const alarmsAPI = typeof browser !== 'undefined' ? browser.alarms : chrome.alarms;
+    let alarms = [];
+    if (alarmsAPI && alarmsAPI.getAll) {
+      if (typeof browser !== 'undefined' && browser.alarms) {
+        // Firefox: 使用 Promise
+        alarms = await alarmsAPI.getAll();
       } else {
-        resolve([]);
+        // Chrome/Edge: 使用回调
+        alarms = await new Promise(resolve => {
+          alarmsAPI.getAll(resolve);
+        });
       }
-    });
+    }
     const maskConfig = (cfg) => {
       if (!cfg) return null;
       const masked = { ...cfg };

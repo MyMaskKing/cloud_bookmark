@@ -6,6 +6,47 @@
 (function() {
   'use strict';
   
+  // 兼容的 API 对象
+  const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+  
+  // 兼容的消息发送函数（避免与全局 sendMessage 冲突）
+  function sendMessageCompat(message, callback) {
+    if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+      // Firefox: 使用 Promise
+      return browser.runtime.sendMessage(message).then(response => {
+        if (callback) callback(response);
+        return response;
+      }).catch(error => {
+        const isReceivingEndError = error && (
+          error.message?.includes('Receiving end does not exist') ||
+          error.message?.includes('Could not establish connection') ||
+          String(error).includes('Receiving end does not exist') ||
+          String(error).includes('Could not establish connection')
+        );
+        if (isReceivingEndError) {
+          if (callback) callback(null);
+          return null;
+        }
+        if (callback) callback(null);
+        throw error;
+      });
+    } else {
+      // Chrome/Edge: 使用回调
+      return new Promise((resolve, reject) => {
+        chrome.runtime.sendMessage(message, (response) => {
+          const lastError = chrome.runtime.lastError;
+          if (lastError) {
+            if (callback) callback(null);
+            reject(new Error(lastError.message));
+          } else {
+            if (callback) callback(response);
+            resolve(response);
+          }
+        });
+      });
+    }
+  }
+  
   let floatingBall = null;
   let isDragging = false;
   let dragOffset = { x: 0, y: 0 };
@@ -158,41 +199,71 @@
     e.stopPropagation();
     
     // 打开书签弹窗（在新窗口中打开popup页面）
-    chrome.runtime.sendMessage({ action: 'openPopup' }, (response) => {
-      if (chrome.runtime.lastError) {
+    sendMessageCompat({ action: 'openPopup' }).then(response => {
+      if (!response || !response.success) {
         // 如果无法打开popup，尝试打开完整页面
-        chrome.runtime.sendMessage({ action: 'openBookmarksPage' });
+        sendMessageCompat({ action: 'openBookmarksPage' });
       }
+    }).catch(() => {
+      // 如果打开弹窗失败，尝试打开完整页面
+      sendMessageCompat({ action: 'openBookmarksPage' }).catch(() => {});
     });
   }
+  
+  // 兼容的 storage API
+  const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
   
   // 获取设置
   function getSettings() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(['settings'], (result) => {
-        resolve(result.settings || {});
-      });
+      if (typeof browser !== 'undefined' && browser.storage) {
+        // Firefox: 使用 Promise
+        browser.storage.local.get(['settings']).then(result => {
+          resolve(result.settings || {});
+        });
+      } else {
+        // Chrome/Edge: 使用回调
+        chrome.storage.local.get(['settings'], (result) => {
+          resolve(result.settings || {});
+        });
+      }
     });
   }
   
   // 获取悬浮球位置
   function getFloatingBallPosition() {
     return new Promise((resolve) => {
-      chrome.storage.local.get(['floatingBallPosition'], (result) => {
-        resolve(result.floatingBallPosition || null);
-      });
+      if (typeof browser !== 'undefined' && browser.storage) {
+        // Firefox: 使用 Promise
+        browser.storage.local.get(['floatingBallPosition']).then(result => {
+          resolve(result.floatingBallPosition || null);
+        });
+      } else {
+        // Chrome/Edge: 使用回调
+        chrome.storage.local.get(['floatingBallPosition'], (result) => {
+          resolve(result.floatingBallPosition || null);
+        });
+      }
     });
   }
   
   // 保存悬浮球位置
   function saveFloatingBallPosition(position) {
-    chrome.storage.local.set({ floatingBallPosition: position }, () => {});
+    if (typeof browser !== 'undefined' && browser.storage) {
+      // Firefox: 使用 Promise
+      browser.storage.local.set({ floatingBallPosition: position });
+    } else {
+      // Chrome/Edge: 使用回调
+      chrome.storage.local.set({ floatingBallPosition: position }, () => {});
+    }
   }
   
   // 监听消息
-  chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'updateFloatingBall') {
       initFloatingBall();
+      sendResponse({ success: true });
+      return true; // Firefox 异步消息需要返回 true
     }
   });
   
@@ -204,7 +275,7 @@
   }
   
   // 监听设置变化
-  chrome.storage.onChanged.addListener((changes, areaName) => {
+  storageAPI.onChanged.addListener((changes, areaName) => {
     if (areaName === 'local' && changes.settings) {
       initFloatingBall();
     }

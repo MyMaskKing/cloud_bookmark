@@ -170,6 +170,53 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+/**
+ * 兼容 Chrome 和 Firefox 的消息发送函数
+ * Chrome 使用回调，Firefox 使用 Promise
+ */
+function sendMessage(message, callback) {
+  const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+  const isReceivingEndError = (err) => {
+    if (!err) return false;
+    const msg = err.message || String(err);
+    return msg.includes('Receiving end does not exist') || msg.includes('Could not establish connection');
+  };
+  
+  if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+    // Firefox: 使用 Promise
+    return runtime.sendMessage(message).then(response => {
+      if (callback) callback(response);
+      return response;
+    }).catch(error => {
+      if (isReceivingEndError(error)) {
+        if (callback) callback(null);
+        return null; // 背景未就绪时静默返回
+      }
+      if (callback) callback(null);
+      throw error;
+    });
+  } else {
+    // Chrome: 使用回调
+    return new Promise((resolve, reject) => {
+      runtime.sendMessage(message, (response) => {
+        const lastError = runtime.lastError;
+        if (lastError) {
+          if (callback) callback(null);
+          // 对应 Firefox 的“没有接收端”错误，Chrome 也返回 null
+          if (isReceivingEndError(lastError)) {
+            resolve(null);
+            return;
+          }
+          reject(new Error(lastError.message));
+        } else {
+          if (callback) callback(response);
+          resolve(response);
+        }
+      });
+    });
+  }
+}
+
 // 导出函数
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
@@ -183,7 +230,8 @@ if (typeof module !== 'undefined' && module.exports) {
     searchBookmarks,
     organizeByFolder,
     exportToHtml,
-    escapeHtml
+    escapeHtml,
+    sendMessage
   };
 }
 

@@ -3,6 +3,53 @@
  */
 
 const storage = new StorageManager();
+
+// 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
+const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function(message, callback) {
+  const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+  
+  if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+    // Firefox: 使用 Promise
+    return runtime.sendMessage(message).then(response => {
+      if (callback) callback(response);
+      return response;
+    }).catch(error => {
+      // Firefox 中，如果接收端不存在（background script 未准备好），静默处理
+      const isReceivingEndError = error && (
+        error.message?.includes('Receiving end does not exist') ||
+        error.message?.includes('Could not establish connection') ||
+        String(error).includes('Receiving end does not exist') ||
+        String(error).includes('Could not establish connection')
+      );
+      
+      if (isReceivingEndError) {
+        if (callback) callback(null);
+        return null;
+      }
+      
+      if (callback) callback(null);
+      throw error;
+    });
+  } else {
+    // Chrome/Edge: 使用回调
+    return new Promise((resolve, reject) => {
+      runtime.sendMessage(message, (response) => {
+        const lastError = runtime.lastError;
+        if (lastError) {
+          if (callback) callback(null);
+          reject(new Error(lastError.message));
+        } else {
+          if (callback) callback(response);
+          resolve(response);
+        }
+      });
+    });
+  }
+};
+
+// 兼容的 API 对象
+const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
 let viewOptions = {
   showDescription: true,
   showNotes: true,
@@ -219,7 +266,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   // 监听消息更新
-  chrome.runtime.onMessage.addListener((request) => {
+  runtimeAPI.onMessage.addListener((request) => {
     if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
       loadCurrentScene();
       loadBookmarks();
@@ -371,9 +418,7 @@ async function loadScenes() {
             // WebDAV配置有效且该场景从未同步过，需要执行云端同步
             if (hasValidConfig && !isSceneSynced) {
               try {
-                await new Promise(resolve => {
-                  chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
-                });
+                await sendMessageCompat({ action: 'sync', sceneId });
               } catch (e) {
                 // 忽略单次同步失败，继续后续逻辑
               }
@@ -382,9 +427,7 @@ async function loadScenes() {
               if (!hasAfter) {
                 // 云端也没有，创建一个空文件以便后续同步
                 try {
-                  await new Promise(resolve => {
-                    chrome.runtime.sendMessage({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId }, resolve);
-                  });
+                  await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
                 } catch (e) {
                   // 忽略，等待用户后续添加书签再同步
                 }
@@ -396,7 +439,7 @@ async function loadScenes() {
             await loadBookmarks();
             await loadFolders();
             await loadTags();
-            chrome.runtime.sendMessage({ action: 'sceneChanged' });
+            await sendMessageCompat({ action: 'sceneChanged' });
           }
           sceneMenuEl.style.display = 'none';
         });
@@ -889,7 +932,7 @@ function renderBookmarks() {
         // 正常模式
         // 点击卡片打开网站
         card.querySelector('.bookmark-info').addEventListener('click', () => {
-          chrome.tabs.create({ url: bookmark.url });
+          tabsAPI.create({ url: bookmark.url });
         });
         
         // 收藏/取消收藏
@@ -1263,7 +1306,7 @@ async function persistSettings() {
   try {
     const settings = { viewOptions, viewMode: currentView };
     await storage.saveSettings(settings);
-    chrome.runtime.sendMessage({ action: 'syncSettings' });
+    await sendMessageCompat({ action: 'syncSettings' });
   } catch (e) {
     console.warn('保存设置失败', e);
   }
@@ -1329,20 +1372,18 @@ async function handleSync() {
   syncBtn.textContent = '同步中...';
   
   try {
-    chrome.runtime.sendMessage({ action: 'sync' }, async (response) => {
-      if (response && response.success) {
-        await loadBookmarks();
-        await loadFolders();
-        await loadTags();
-        alert('同步成功');
-      } else {
-        alert('同步失败: ' + (response?.error || '未知错误'));
-      }
-      syncBtn.disabled = false;
-      syncBtn.textContent = '🔄';
-    });
+    const response = await sendMessageCompat({ action: 'sync' });
+    if (response && response.success) {
+      await loadBookmarks();
+      await loadFolders();
+      await loadTags();
+      alert('同步成功');
+    } else {
+      alert('同步失败: ' + (response?.error || '未知错误'));
+    }
   } catch (error) {
     alert('同步失败: ' + error.message);
+  } finally {
     syncBtn.disabled = false;
     syncBtn.textContent = '🔄';
   }
@@ -1355,7 +1396,7 @@ async function syncToCloud() {
   try {
     // currentBookmarks已经是当前场景的书签，直接同步
     // 确保传递当前场景ID，让后台同步到正确的场景文件
-    chrome.runtime.sendMessage({
+    await sendMessageCompat({
       action: 'syncToCloud',
       bookmarks: currentBookmarks,
       folders: currentFolders,

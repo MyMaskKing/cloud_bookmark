@@ -141,12 +141,19 @@ async function syncSettingsFromCloud() {
   }
 }
 
+// 兼容的 API 对象
+const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+const contextMenusAPI = typeof browser !== 'undefined' ? browser.contextMenus : chrome.contextMenus;
+const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+const commandsAPI = typeof browser !== 'undefined' ? browser.commands : chrome.commands;
+const alarmsAPI = typeof browser !== 'undefined' ? browser.alarms : chrome.alarms;
+
 // 监听插件安装
-chrome.runtime.onInstalled.addListener(async () => {
+runtimeAPI.onInstalled.addListener(async () => {
   console.log('云端书签插件已安装');
   
   // 创建右键菜单
-  chrome.contextMenus.create({
+  contextMenusAPI.create({
     id: 'addBookmark',
     title: '添加到云端书签',
     contexts: ['page', 'link']
@@ -158,7 +165,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 
 // 监听浏览器启动（保证每次启动都注册设备与定时任务）
-chrome.runtime.onStartup.addListener(async () => {
+runtimeAPI.onStartup.addListener(async () => {
   await setupSyncAlarm();
   await ensureDeviceRegistered();
   // 尝试同步一次设置，保证设备列表/当前场景及时更新
@@ -166,36 +173,37 @@ chrome.runtime.onStartup.addListener(async () => {
 });
 
 // 监听右键菜单点击
-chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+contextMenusAPI.onClicked.addListener(async (info, tab) => {
   if (info.menuItemId === 'addBookmark') {
     // 打开添加书签页面
-    chrome.tabs.create({
-      url: chrome.runtime.getURL('pages/bookmarks.html?action=add&url=' + encodeURIComponent(info.linkUrl || tab.url))
+    tabsAPI.create({
+      url: runtimeAPI.getURL('pages/bookmarks.html?action=add&url=' + encodeURIComponent(info.linkUrl || tab.url))
     });
   }
 });
 
 // 监听快捷键命令
-chrome.commands.onCommand.addListener(async (command) => {
+commandsAPI.onCommand.addListener(async (command) => {
   if (command === 'add-bookmark') {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabs = await tabsAPI.query({ active: true, currentWindow: true });
+    const tab = Array.isArray(tabs) ? tabs[0] : tabs;
     if (tab) {
-      chrome.tabs.create({
-        url: chrome.runtime.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}`)
+      tabsAPI.create({
+        url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}`)
       });
     }
   }
 });
 
 // 监听定时任务
-chrome.alarms.onAlarm.addListener(async (alarm) => {
+alarmsAPI.onAlarm.addListener(async (alarm) => {
   if (alarm.name === syncAlarmName) {
     await syncFromCloud();
   }
 });
 
 // 监听来自popup或pages的消息
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
     syncFromCloud(request.sceneId).then(() => {
       sendResponse({ success: true });
@@ -236,23 +244,56 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   
   if (request.action === 'openPopup') {
     // 打开弹窗（在新窗口中打开popup页面）
-    chrome.windows.create({
-      url: chrome.runtime.getURL('popup/popup.html'),
-      type: 'popup',
-      width: 400,
-      height: 600
-    }, (window) => {
-      sendResponse({ success: true, windowId: window?.id });
-    });
+    const windowsAPI = typeof browser !== 'undefined' ? browser.windows : chrome.windows;
+    const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+    
+    if (typeof browser !== 'undefined' && browser.windows) {
+      // Firefox: 使用 Promise
+      windowsAPI.create({
+        url: runtimeAPI.getURL('popup/popup.html'),
+        type: 'popup',
+        width: 400,
+        height: 600
+      }).then(window => {
+        sendResponse({ success: true, windowId: window?.id });
+      }).catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    } else {
+      // Chrome: 使用回调
+      windowsAPI.create({
+        url: runtimeAPI.getURL('popup/popup.html'),
+        type: 'popup',
+        width: 400,
+        height: 600
+      }, (window) => {
+        sendResponse({ success: true, windowId: window?.id });
+      });
+    }
     return true;
   }
   
   if (request.action === 'openBookmarksPage') {
     // 打开完整书签管理页面
-    chrome.tabs.create({
-      url: chrome.runtime.getURL('pages/bookmarks.html')
-    });
-    sendResponse({ success: true });
+    const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+    const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+    
+    if (typeof browser !== 'undefined' && browser.tabs) {
+      // Firefox: 使用 Promise
+      tabsAPI.create({
+        url: runtimeAPI.getURL('pages/bookmarks.html')
+      }).then(() => {
+        sendResponse({ success: true });
+      }).catch(error => {
+        sendResponse({ success: false, error: error.message });
+      });
+    } else {
+      // Chrome: 使用回调
+      tabsAPI.create({
+        url: runtimeAPI.getURL('pages/bookmarks.html')
+      });
+      sendResponse({ success: true });
+    }
     return true;
   }
   
@@ -333,19 +374,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       };
 
       if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
-        browser.tabs.query({ active: true, currentWindow: true })
+        // Firefox: 使用 Promise
+        tabsAPI.query({ active: true, currentWindow: true })
           .then(tabs => {
             if (tabs && tabs.length) {
               handleTabs(tabs);
             } else {
-              return browser.tabs.query({ active: true, lastFocusedWindow: true })
+              return tabsAPI.query({ active: true, lastFocusedWindow: true })
                 .then(res => {
                   if (res && res.length) return handleTabs(res);
                   // 继续回退：不带窗口限制
-                  return browser.tabs.query({ active: true }).then(list => {
+                  return tabsAPI.query({ active: true }).then(list => {
                     if (list && list.length) return handleTabs(list);
                     // 最后回退：取所有标签第一页
-                    return browser.tabs.query({}).then(all => handleTabs(all));
+                    return tabsAPI.query({}).then(all => handleTabs(all));
                   });
                 });
             }
@@ -356,16 +398,16 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         return true;
       }
 
-      // chrome 回退：callback 形式
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      // Chrome 回退：callback 形式
+      tabsAPI.query({ active: true, currentWindow: true }, (tabs) => {
         if (tabs && tabs.length) {
           handleTabs(tabs);
         } else {
-          chrome.tabs.query({ active: true, lastFocusedWindow: true }, (res) => {
+          tabsAPI.query({ active: true, lastFocusedWindow: true }, (res) => {
             if (res && res.length) return handleTabs(res);
-            chrome.tabs.query({ active: true }, (list) => {
+            tabsAPI.query({ active: true }, (list) => {
               if (list && list.length) return handleTabs(list);
-              chrome.tabs.query({}, handleTabs);
+              tabsAPI.query({}, handleTabs);
             });
           });
         }
@@ -387,7 +429,7 @@ async function setupSyncAlarm() {
     syncInterval = config.syncInterval * 60 * 1000;
   }
   
-  chrome.alarms.create(syncAlarmName, {
+  alarmsAPI.create(syncAlarmName, {
     periodInMinutes: syncInterval / (60 * 1000)
   });
 }
@@ -552,7 +594,7 @@ async function syncFromCloud(sceneId = null) {
     });
 
     // 通知所有打开的页面更新
-    chrome.runtime.sendMessage({ action: 'bookmarksUpdated' }).catch(() => {
+    runtimeAPI.sendMessage({ action: 'bookmarksUpdated' }).catch(() => {
       // 忽略错误，可能没有打开的页面
     });
     
