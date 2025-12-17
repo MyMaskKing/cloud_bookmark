@@ -7,6 +7,8 @@ const storage = new StorageManager();
 // DOM元素
 const configForm = document.getElementById('configForm');
 const testBtn = document.getElementById('testBtn');
+const exportConfigBtn = document.getElementById('exportConfigBtn');
+const importConfigBtn = document.getElementById('importConfigBtn');
 const syncNowBtn = document.getElementById('syncNowBtn');
 const syncUploadBtn = document.getElementById('syncUploadBtn');
 const exportJsonBtn = document.getElementById('exportJsonBtn');
@@ -16,8 +18,11 @@ const importBrowserBtn = document.getElementById('importBrowserBtn');
 const importFile = document.getElementById('importFile');
 const deviceList = document.getElementById('deviceList');
 const currentDeviceName = document.getElementById('currentDeviceName');
+const currentDeviceId = document.getElementById('currentDeviceId');
 const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
+const enableDeviceDetection = document.getElementById('enableDeviceDetection');
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
+const enableFloatingBall = document.getElementById('enableFloatingBall');
 const sceneList = document.getElementById('sceneList');
 const currentSceneName = document.getElementById('currentSceneName');
 const addSceneBtn = document.getElementById('addSceneBtn');
@@ -44,6 +49,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   await updateSyncStatus();
   await loadDevices();
   await loadUiSettings();
+  await loadDeviceDetectionSetting();
+  await loadFloatingBallSetting();
   await loadScenes();
   
   // 定时更新同步状态
@@ -88,6 +95,8 @@ configForm.addEventListener('submit', async (e) => {
     }
 
     await storage.saveConfig(config);
+    // WebDAV配置变更后，清空已同步场景列表，让所有场景重新同步
+    await storage.clearSyncedScenes();
     showMessage('配置已保存，正在同步数据…', 'success');
     
     // 通知后台更新同步任务
@@ -101,7 +110,10 @@ configForm.addEventListener('submit', async (e) => {
       chrome.runtime.sendMessage({ action: 'registerDevice' });
       const currentSceneId = await storage.getCurrentScene();
       chrome.runtime.sendMessage({ action: 'sync', sceneId: currentSceneId }, () => {
+        // 刷新设置页面显示云端同步的最新数据
         loadScenes();
+        loadDevices();
+        loadUiSettings();
         updateSyncStatus();
       });
     });
@@ -145,6 +157,147 @@ testBtn.addEventListener('click', async () => {
     testBtn.textContent = '测试连接';
   }
 });
+
+/**
+ * 导出WebDAV配置到剪贴板
+ */
+exportConfigBtn.addEventListener('click', async () => {
+  try {
+    const config = await storage.getConfig();
+    if (!config || !config.serverUrl) {
+      showMessage('没有可导出的配置', 'error');
+      return;
+    }
+    
+    const configText = `${config.serverUrl}\n${config.username || ''}\n${config.password || ''}`;
+    
+    // 复制到剪贴板
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(configText);
+      showMessage('配置已复制到剪贴板', 'success');
+    } else {
+      // 回退方案：使用传统方法
+      const textarea = document.createElement('textarea');
+      textarea.value = configText;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+        showMessage('配置已复制到剪贴板', 'success');
+      } catch (e) {
+        showMessage('复制失败，请手动复制', 'error');
+      }
+      document.body.removeChild(textarea);
+    }
+  } catch (error) {
+    showMessage('导出失败: ' + error.message, 'error');
+  }
+});
+
+/**
+ * 导入WebDAV配置
+ */
+importConfigBtn.addEventListener('click', async () => {
+  const result = await showImportConfigDialog();
+  if (!result) return;
+  
+  const { serverUrl, username, password } = result;
+  
+  // 填充到表单
+  serverUrlInput.value = serverUrl || '';
+  usernameInput.value = username || '';
+  passwordInput.value = password || '';
+  
+  showMessage('配置已导入，请检查后保存', 'success');
+});
+
+/**
+ * 显示导入配置对话框
+ */
+function showImportConfigDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    `;
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      background: #fff;
+      border-radius: 8px;
+      padding: 20px;
+      width: 480px;
+      max-width: 90%;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      font-size: 14px;
+    `;
+    dialog.innerHTML = `
+      <h3 style="margin: 0 0 12px; font-size: 16px;">导入WebDAV配置</h3>
+      <div style="margin-bottom: 12px;">
+        <label style="display:block; margin-bottom:6px;">请粘贴配置信息（格式：每行一个，依次为地址、用户名、密码）</label>
+        <textarea id="importConfigText" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;min-height:100px;font-family:monospace;" placeholder="https://example.com/webdav&#10;username&#10;password"></textarea>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button id="importConfigCancelBtn" class="btn btn-secondary" style="min-width:70px;">取消</button>
+        <button id="importConfigOkBtn" class="btn btn-primary" style="min-width:70px;">导入</button>
+      </div>
+    `;
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const textInput = dialog.querySelector('#importConfigText');
+    const cancelBtn = dialog.querySelector('#importConfigCancelBtn');
+    const okBtn = dialog.querySelector('#importConfigOkBtn');
+
+    const cleanup = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKeyDown);
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        cleanup();
+        resolve(null);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    cancelBtn.onclick = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    okBtn.onclick = () => {
+      const text = textInput.value.trim();
+      if (!text) {
+        alert('请输入配置信息');
+        return;
+      }
+      
+      const lines = text.split('\n').map(line => line.trim()).filter(line => line);
+      if (lines.length < 1) {
+        alert('配置格式不正确，至少需要提供服务器地址');
+        return;
+      }
+      
+      const serverUrl = lines[0];
+      const username = lines[1] || '';
+      const password = lines[2] || '';
+      
+      cleanup();
+      resolve({ serverUrl, username, password });
+    };
+
+    textInput.focus();
+  });
+}
 
 /**
  * 立即同步
@@ -567,6 +720,7 @@ async function loadDevices() {
     const devices = res?.devices || [];
     const deviceInfo = res?.deviceInfo;
     currentDeviceName.textContent = deviceInfo?.name || '未知设备';
+    currentDeviceId.textContent = deviceInfo?.id || '-';
 
     if (!devices.length) {
       deviceList.innerHTML = '<div class="empty-state">暂无设备</div>';
@@ -581,6 +735,7 @@ async function loadDevices() {
         <div class="device-item" data-id="${dev.id}">
           <div class="device-info">
             <div class="device-name">${dev.name || '未命名设备'} ${isCurrent ? '(当前设备)' : ''}</div>
+            <div class="device-meta">设备ID：${dev.id || '-'}</div>
             <div class="device-meta">创建：${created}</div>
             <div class="device-meta">上次在线：${last}</div>
           </div>
@@ -619,6 +774,75 @@ async function loadDevices() {
 }
 
 refreshDevicesBtn.addEventListener('click', loadDevices);
+
+/**
+ * 加载设备检测设置
+ */
+async function loadDeviceDetectionSetting() {
+  try {
+    const settings = await storage.getSettings();
+    const deviceDetection = (settings && settings.deviceDetection) || {};
+    // 默认关闭
+    enableDeviceDetection.checked = deviceDetection.enabled === true;
+  } catch (e) {
+    console.warn('加载设备检测设置失败', e);
+    enableDeviceDetection.checked = false;
+  }
+}
+
+/**
+ * 设备检测开关变更
+ */
+enableDeviceDetection.addEventListener('change', async () => {
+  try {
+    const settings = await storage.getSettings();
+    const deviceDetection = { enabled: enableDeviceDetection.checked };
+    const newSettings = { ...(settings || {}), deviceDetection };
+    await storage.saveSettings(newSettings);
+    // 立即同步到云端
+    chrome.runtime.sendMessage({ action: 'syncSettings' });
+    showMessage('设备检测设置已保存（已同步至云端）', 'success');
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+});
+
+/**
+ * 加载悬浮球设置
+ */
+async function loadFloatingBallSetting() {
+  try {
+    const settings = await storage.getSettings();
+    const floatingBall = (settings && settings.floatingBall) || {};
+    enableFloatingBall.checked = !!floatingBall.enabled;
+  } catch (e) {
+    console.warn('加载悬浮球设置失败', e);
+    enableFloatingBall.checked = false;
+  }
+}
+
+/**
+ * 悬浮球开关变更
+ */
+enableFloatingBall.addEventListener('change', async () => {
+  try {
+    const settings = await storage.getSettings();
+    const floatingBall = { enabled: enableFloatingBall.checked };
+    const newSettings = { ...(settings || {}), floatingBall };
+    await storage.saveSettings(newSettings);
+    // 立即同步到云端
+    chrome.runtime.sendMessage({ action: 'syncSettings' });
+    // 通知所有标签页更新悬浮球状态
+    chrome.tabs.query({}, (tabs) => {
+      tabs.forEach(tab => {
+        chrome.tabs.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => {});
+      });
+    });
+    showMessage('悬浮球设置已保存（已同步至云端）', 'success');
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+});
 
 /**
  * 加载场景列表
@@ -667,10 +891,15 @@ async function loadScenes() {
         if (action === 'switch') {
           await storage.saveCurrentScene(sceneId);
           showMessage(`已切换到"${scene.name}"场景`, 'success');
-          // 先看本地是否已有该场景数据
-          const localData = await storage.getBookmarks(sceneId);
-          const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
-          if (!hasLocal) {
+          
+          // 检查 WebDAV 配置是否有效
+          const config = await storage.getConfig();
+          const hasValidConfig = config && config.serverUrl;
+          // 检查该场景是否已同步过
+          const isSceneSynced = await storage.isSceneSynced(sceneId);
+          
+          // WebDAV配置有效且该场景从未同步过，需要执行云端同步
+          if (hasValidConfig && !isSceneSynced) {
             try {
               await new Promise(resolve => {
                 chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
@@ -690,11 +919,7 @@ async function loadScenes() {
                 // 忽略，等待用户后续添加书签再同步
               }
             }
-            // 只有走过云端时再同步设置到云端，避免本地已有数据也访问云端
-            chrome.runtime.sendMessage({ action: 'syncSettings' });
-          } else {
-            // 本地已有数据，无需访问云端，可选同步设置
-            // chrome.runtime.sendMessage({ action: 'syncSettings' });
+            // 场景切换不同步到云端，只保存在本地
           }
           await loadScenes();
         } else if (action === 'rename') {

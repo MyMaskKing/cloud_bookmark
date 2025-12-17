@@ -10,10 +10,10 @@ let viewOptions = {
   showUrl: true,
   showIcon: true
 };
-let currentView = 'grid';
+let currentView = 'list';
 const defaultSettings = {
   viewOptions: { ...viewOptions },
-  viewMode: 'grid'
+  viewMode: 'list'
 };
 const defaultViewOptions = { ...defaultSettings.viewOptions };
 
@@ -92,6 +92,8 @@ let currentFilter = 'all';
 let currentSort = 'created-desc';
 let editingBookmarkId = null;
 let currentSceneId = null;
+let batchMode = false;
+let selectedBookmarkIds = new Set();
 
 // DOM元素
 const addBookmarkBtn = document.getElementById('addBookmarkBtn');
@@ -113,6 +115,13 @@ const addFolderBtn = document.getElementById('addFolderBtn');
 const sidebar = document.querySelector('.sidebar');
 const sidebarOverlay = document.getElementById('sidebarOverlay');
 const sidebarToggle = document.getElementById('sidebarToggle');
+const batchModeBtn = document.getElementById('batchModeBtn');
+const batchActionsBar = document.getElementById('batchActionsBar');
+const normalActions = document.getElementById('normalActions');
+const selectedCount = document.getElementById('selectedCount');
+const batchMoveBtn = document.getElementById('batchMoveBtn');
+const batchCancelBtn = document.getElementById('batchCancelBtn');
+const selectAllBtn = document.getElementById('selectAllBtn');
 
 function openSidebarMobile() {
   if (sidebar) sidebar.classList.add('open');
@@ -298,10 +307,15 @@ async function loadScenes() {
           if (sceneId !== currentSceneId) {
             await storage.saveCurrentScene(sceneId);
             currentSceneId = sceneId; // 立即更新，避免后续读取旧值
-            // 先看本地是否已有该场景数据
-            const localData = await storage.getBookmarks(sceneId);
-            const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
-            if (!hasLocal) {
+            
+            // 检查 WebDAV 配置是否有效
+            const config = await storage.getConfig();
+            const hasValidConfig = config && config.serverUrl;
+            // 检查该场景是否已同步过
+            const isSceneSynced = await storage.isSceneSynced(sceneId);
+            
+            // WebDAV配置有效且该场景从未同步过，需要执行云端同步
+            if (hasValidConfig && !isSceneSynced) {
               try {
                 await new Promise(resolve => {
                   chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
@@ -321,11 +335,7 @@ async function loadScenes() {
                   // 忽略，等待用户后续添加书签再同步
                 }
               }
-              // 只有走过云端时再同步设置到云端，避免本地已有数据也访问云端
-              chrome.runtime.sendMessage({ action: 'syncSettings' });
-            } else {
-              // 本地已有数据，无需访问云端，可选同步设置
-              // chrome.runtime.sendMessage({ action: 'syncSettings' });
+              // 场景切换不同步到云端，只保存在本地
             }
             await loadCurrentScene();
             await loadScenes();
@@ -783,36 +793,63 @@ function renderBookmarks() {
       const bookmarkId = card.dataset.id;
       const bookmark = currentBookmarks.find(b => b.id === bookmarkId);
       
-      // 点击卡片打开网站
-      card.querySelector('.bookmark-info').addEventListener('click', () => {
-        chrome.tabs.create({ url: bookmark.url });
-      });
-      
-      // 收藏/取消收藏
-      const starBtn = card.querySelector('.bookmark-star');
-      if (starBtn) {
-        starBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          toggleStar(bookmarkId);
+      // 批量选择模式
+      if (batchMode) {
+        const checkbox = card.querySelector('.bookmark-select-checkbox');
+        if (checkbox) {
+          checkbox.addEventListener('change', (e) => {
+            e.stopPropagation();
+            if (checkbox.checked) {
+              selectedBookmarkIds.add(bookmarkId);
+            } else {
+              selectedBookmarkIds.delete(bookmarkId);
+            }
+            updateSelectedCount();
+          });
+        }
+        // 批量模式下点击卡片切换选择状态
+        card.addEventListener('click', (e) => {
+          if (e.target.type !== 'checkbox' && !e.target.closest('.bookmark-checkbox')) {
+            const checkbox = card.querySelector('.bookmark-select-checkbox');
+            if (checkbox) {
+              checkbox.checked = !checkbox.checked;
+              checkbox.dispatchEvent(new Event('change'));
+            }
+          }
         });
-      }
-      
-      // 编辑
-      const editBtn = card.querySelector('.edit-btn');
-      if (editBtn) {
-        editBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          showEditForm(bookmark);
+      } else {
+        // 正常模式
+        // 点击卡片打开网站
+        card.querySelector('.bookmark-info').addEventListener('click', () => {
+          chrome.tabs.create({ url: bookmark.url });
         });
-      }
-      
-      // 删除
-      const deleteBtn = card.querySelector('.delete-btn');
-      if (deleteBtn) {
-        deleteBtn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          deleteBookmark(bookmarkId);
-        });
+        
+        // 收藏/取消收藏
+        const starBtn = card.querySelector('.bookmark-star');
+        if (starBtn) {
+          starBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            toggleStar(bookmarkId);
+          });
+        }
+        
+        // 编辑
+        const editBtn = card.querySelector('.edit-btn');
+        if (editBtn) {
+          editBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showEditForm(bookmark);
+          });
+        }
+        
+        // 删除
+        const deleteBtn = card.querySelector('.delete-btn');
+        if (deleteBtn) {
+          deleteBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            deleteBookmark(bookmarkId);
+          });
+        }
       }
     });
   }
@@ -824,10 +861,16 @@ function renderBookmarks() {
 function renderBookmarkCard(bookmark) {
   const favicon = bookmark.favicon || bookmark.icon || getFaviconUrl(bookmark.url);
   const domain = getDomain(bookmark.url);
+  const isSelected = selectedBookmarkIds.has(bookmark.id);
   
   return `
-    <div class="bookmark-card ${bookmark.starred ? 'starred' : ''}" data-id="${bookmark.id}">
-      <div class="bookmark-actions">
+    <div class="bookmark-card ${bookmark.starred ? 'starred' : ''} ${isSelected ? 'selected' : ''}" data-id="${bookmark.id}">
+      ${batchMode ? `
+        <div class="bookmark-checkbox">
+          <input type="checkbox" class="bookmark-select-checkbox" data-id="${bookmark.id}" ${isSelected ? 'checked' : ''}>
+        </div>
+      ` : ''}
+      <div class="bookmark-actions" style="${batchMode ? 'display: none;' : ''}">
         <button class="action-btn edit-btn" title="编辑">✏️</button>
         <button class="action-btn delete-btn" title="删除">🗑️</button>
       </div>
@@ -1254,6 +1297,198 @@ async function syncToCloud() {
     console.error('同步到云端失败:', error);
   }
 }
+
+/**
+ * 切换批量模式
+ */
+function toggleBatchMode() {
+  batchMode = !batchMode;
+  if (!batchMode) {
+    selectedBookmarkIds.clear();
+  }
+  updateBatchModeUI();
+  renderBookmarks();
+}
+
+/**
+ * 更新批量模式UI
+ */
+function updateBatchModeUI() {
+  if (batchMode) {
+    batchActionsBar.style.display = 'flex';
+    normalActions.style.display = 'none';
+  } else {
+    batchActionsBar.style.display = 'none';
+    normalActions.style.display = 'flex';
+    selectedBookmarkIds.clear();
+  }
+  updateSelectedCount();
+}
+
+/**
+ * 更新选中数量
+ */
+function updateSelectedCount() {
+  selectedCount.textContent = `已选择 ${selectedBookmarkIds.size} 项`;
+  // 更新全选按钮文字
+  if (selectAllBtn) {
+    const allSelected = currentBookmarks.length > 0 && selectedBookmarkIds.size === currentBookmarks.length;
+    selectAllBtn.textContent = allSelected ? '取消全选' : '全选';
+  }
+}
+
+/**
+ * 全选/取消全选
+ */
+function toggleSelectAll() {
+  const allSelected = currentBookmarks.length > 0 && selectedBookmarkIds.size === currentBookmarks.length;
+  
+  if (allSelected) {
+    // 取消全选
+    selectedBookmarkIds.clear();
+  } else {
+    // 全选
+    currentBookmarks.forEach(b => selectedBookmarkIds.add(b.id));
+  }
+  
+  // 更新UI
+  updateSelectedCount();
+  // 更新所有复选框状态
+  document.querySelectorAll('.bookmark-card .batch-checkbox').forEach(checkbox => {
+    checkbox.checked = selectedBookmarkIds.has(checkbox.dataset.id);
+  });
+}
+
+/**
+ * 批量移动书签
+ */
+async function batchMoveBookmarks() {
+  if (selectedBookmarkIds.size === 0) {
+    alert('请先选择要移动的书签');
+    return;
+  }
+  
+  // 显示文件夹选择对话框
+  const targetFolder = await showFolderSelectDialog();
+  if (targetFolder === null) return; // 用户取消
+  
+  try {
+    const bookmarksToMove = currentBookmarks.filter(b => selectedBookmarkIds.has(b.id));
+    
+    // 更新书签的文件夹
+    bookmarksToMove.forEach(bookmark => {
+      bookmark.folder = targetFolder || undefined;
+      bookmark.updatedAt = Date.now();
+    });
+    
+    // 保存到本地
+    await storage.saveBookmarks(currentBookmarks, currentFolders);
+    
+    // 同步到云端
+    const currentSceneId = await storage.getCurrentScene();
+    chrome.runtime.sendMessage({
+      action: 'syncToCloud',
+      bookmarks: currentBookmarks.filter(b => b.scene === currentSceneId),
+      folders: currentFolders,
+      sceneId: currentSceneId
+    });
+    
+    // 退出批量模式并刷新
+    toggleBatchMode();
+    await loadBookmarks();
+    await loadFolders();
+    renderBookmarks();
+    
+    alert(`已成功移动 ${bookmarksToMove.length} 个书签`);
+  } catch (error) {
+    console.error('批量移动失败:', error);
+    alert('批量移动失败: ' + error.message);
+  }
+}
+
+/**
+ * 显示文件夹选择对话框
+ */
+function showFolderSelectDialog() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    `;
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      background: #fff;
+      border-radius: 8px;
+      padding: 20px;
+      width: 360px;
+      max-width: 90%;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      font-size: 14px;
+    `;
+    
+    const folderOptions = ['<option value="">未分类</option>'];
+    currentFolders.forEach(folder => {
+      folderOptions.push(`<option value="${escapeHtml(folder)}">${escapeHtml(folder)}</option>`);
+    });
+    
+    dialog.innerHTML = `
+      <h3 style="margin: 0 0 12px; font-size: 16px;">选择目标文件夹</h3>
+      <div style="margin-bottom: 16px;">
+        <select id="targetFolderSelect" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
+          ${folderOptions.join('')}
+        </select>
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button id="folderSelectCancelBtn" class="btn btn-secondary" style="min-width:70px;">取消</button>
+        <button id="folderSelectOkBtn" class="btn btn-primary" style="min-width:70px;">确定</button>
+      </div>
+    `;
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const folderSelect = dialog.querySelector('#targetFolderSelect');
+    const cancelBtn = dialog.querySelector('#folderSelectCancelBtn');
+    const okBtn = dialog.querySelector('#folderSelectOkBtn');
+
+    const cleanup = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKeyDown);
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        cleanup();
+        resolve(null);
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    cancelBtn.onclick = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    okBtn.onclick = () => {
+      const folder = folderSelect.value.trim() || null;
+      cleanup();
+      resolve(folder);
+    };
+
+    folderSelect.focus();
+  });
+}
+
+// 绑定批量操作事件
+batchModeBtn.addEventListener('click', toggleBatchMode);
+batchCancelBtn.addEventListener('click', toggleBatchMode);
+batchMoveBtn.addEventListener('click', batchMoveBookmarks);
+selectAllBtn.addEventListener('click', toggleSelectAll);
 
 // 全局函数供HTML调用
 window.showAddForm = showAddForm;

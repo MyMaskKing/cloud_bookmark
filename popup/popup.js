@@ -180,10 +180,15 @@ async function loadScenes() {
         if (sceneId !== currentId) {
           await storage.saveCurrentScene(sceneId);
           currentSceneId = sceneId; // 立即更新本地状态，避免后续逻辑读取旧值
-          // 先看本地是否已有该场景数据
-          const localData = await storage.getBookmarks(sceneId);
-          const hasLocal = (localData.bookmarks && localData.bookmarks.length) || (localData.folders && localData.folders.length);
-          if (!hasLocal) {
+          
+          // 检查 WebDAV 配置是否有效
+          const config = await storage.getConfig();
+          const hasValidConfig = config && config.serverUrl;
+          // 检查该场景是否已同步过
+          const isSceneSynced = await storage.isSceneSynced(sceneId);
+          
+          // WebDAV配置有效且该场景从未同步过，需要执行云端同步
+          if (hasValidConfig && !isSceneSynced) {
             try {
               await new Promise(resolve => {
                 chrome.runtime.sendMessage({ action: 'sync', sceneId }, resolve);
@@ -203,11 +208,7 @@ async function loadScenes() {
                 // 忽略，等待用户后续添加书签再同步
               }
             }
-            // 只有走过云端时再同步设置到云端，避免本地已有数据也访问云端
-            chrome.runtime.sendMessage({ action: 'syncSettings' });
-          } else {
-            // 本地已有数据，无需访问云端，可选同步设置
-            // chrome.runtime.sendMessage({ action: 'syncSettings' });
+            // 场景切换不同步到云端，只保存在本地
           }
           await loadCurrentScene();
           await loadScenes();

@@ -24,6 +24,7 @@ class StorageManager {
     this.settingsKey = 'settings'; // 非敏感设置
     this.scenesKey = 'scenes'; // 场景列表
     this.currentSceneKey = 'currentScene'; // 当前选中场景
+    this.syncedScenesKey = 'syncedScenes'; // 已完成云端同步的场景列表
   }
   
   /**
@@ -338,7 +339,8 @@ class StorageManager {
       this.settingsKey,
       this.scenesKey,
       this.currentSceneKey,
-      this.syncStatusKey
+      this.syncStatusKey,
+      this.syncedScenesKey
     ];
     return new Promise((resolve, reject) => {
       this.storage.remove(keys, () => {
@@ -475,7 +477,84 @@ class StorageManager {
       throw new Error('默认场景不能删除');
     }
     const filtered = scenes.filter(s => s.id !== sceneId);
+    // 同时从已同步列表中移除
+    await this.removeSyncedScene(sceneId);
     return await this.saveScenes(filtered);
+  }
+
+  /**
+   * 获取已同步的场景列表
+   */
+  async getSyncedScenes() {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.syncedScenesKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(result[this.syncedScenesKey] || []);
+        }
+      });
+    });
+  }
+
+  /**
+   * 检查场景是否已同步过
+   */
+  async isSceneSynced(sceneId) {
+    const syncedScenes = await this.getSyncedScenes();
+    return syncedScenes.includes(sceneId);
+  }
+
+  /**
+   * 标记场景为已同步
+   */
+  async addSyncedScene(sceneId) {
+    const syncedScenes = await this.getSyncedScenes();
+    if (!syncedScenes.includes(sceneId)) {
+      syncedScenes.push(sceneId);
+      return new Promise((resolve, reject) => {
+        this.storage.set({ [this.syncedScenesKey]: syncedScenes }, () => {
+          if (this.hasError()) {
+            reject(new Error(this.getError()));
+          } else {
+            resolve(syncedScenes);
+          }
+        });
+      });
+    }
+    return syncedScenes;
+  }
+
+  /**
+   * 移除场景的已同步标记
+   */
+  async removeSyncedScene(sceneId) {
+    const syncedScenes = await this.getSyncedScenes();
+    const filtered = syncedScenes.filter(id => id !== sceneId);
+    return new Promise((resolve, reject) => {
+      this.storage.set({ [this.syncedScenesKey]: filtered }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(filtered);
+        }
+      });
+    });
+  }
+
+  /**
+   * 清空已同步场景列表（WebDAV配置变更时调用）
+   */
+  async clearSyncedScenes() {
+    return new Promise((resolve, reject) => {
+      this.storage.set({ [this.syncedScenesKey]: [] }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve([]);
+        }
+      });
+    });
   }
 }
 

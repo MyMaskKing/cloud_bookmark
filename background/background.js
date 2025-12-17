@@ -79,13 +79,12 @@ async function syncSettingsToCloud() {
   const devices = await storage.getDevices();
   const deviceInfo = await storage.getDeviceInfo();
   const scenes = await storage.getScenes();
-  const currentScene = await storage.getCurrentScene();
+  // 注意：currentScene 不同步到云端，每个设备独立维护当前场景
   await webdav.writeSettings({
     settings: settings || {},
     devices: devices || [],
     deviceInfo: deviceInfo || null,
-    scenes: scenes || [],
-    currentScene: currentScene || null
+    scenes: scenes || []
   });
 }
 
@@ -112,10 +111,7 @@ async function syncSettingsFromCloud() {
       if (cloud.scenes && Array.isArray(cloud.scenes) && cloud.scenes.length > 0) {
         await storage.saveScenes(cloud.scenes);
       }
-      // 同步当前场景
-      if (cloud.currentScene) {
-        await storage.saveCurrentScene(cloud.currentScene);
-      }
+      // 注意：currentScene 不从云端同步，每个设备独立维护当前场景
     }
   } catch (e) {
     // 忽略设置读取失败，不影响书签同步
@@ -213,6 +209,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     storage.getConfig().then(config => {
       sendResponse({ config });
     });
+    return true;
+  }
+  
+  if (request.action === 'openPopup') {
+    // 打开弹窗（在新窗口中打开popup页面）
+    chrome.windows.create({
+      url: chrome.runtime.getURL('popup/popup.html'),
+      type: 'popup',
+      width: 400,
+      height: 600
+    }, (window) => {
+      sendResponse({ success: true, windowId: window?.id });
+    });
+    return true;
+  }
+  
+  if (request.action === 'openBookmarksPage') {
+    // 打开完整书签管理页面
+    chrome.tabs.create({
+      url: chrome.runtime.getURL('pages/bookmarks.html')
+    });
+    sendResponse({ success: true });
     return true;
   }
   
@@ -370,7 +388,12 @@ async function syncFromCloud(sceneId = null) {
 
     // 设备校验：严格模式，云端缺少当前设备则清理并停止；
     // 但对于“未知设备”一律跳过校验，避免在无法识别设备信息时误报。
-    if (!isUnknownDevice(currentDevice)) {
+    // 检查设备检测开关（默认关闭）
+    const settings = await storage.getSettings();
+    const deviceDetectionEnabled = settings?.deviceDetection?.enabled === true;
+    
+    // 设备校验：仅在设备检测开关开启时进行严格模式检测，云端缺少当前设备则清理并停止
+    if (deviceDetectionEnabled) {
       let devices = await storage.getDevices();
       if (!devices || devices.length === 0) {
         // 云端空列表视为缺设备，清理并停
@@ -415,22 +438,90 @@ async function syncFromCloud(sceneId = null) {
     const cloudData = await webdav.readBookmarks(currentSceneId);
     const cleaned = normalizeData(cloudData.bookmarks || [], cloudData.folders || []);
     
-    // 获取所有本地书签，合并当前场景的数据
+    // 获取所有本地书签
     const allBookmarks = await storage.getBookmarks();
+    const localSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene === currentSceneId);
     const otherSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== currentSceneId);
-    const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
     
-    // 合并文件夹（所有场景的文件夹）
-    const allFolders = [...new Set([
-      ...(allBookmarks.folders || []),
-      ...cleaned.folders
-    ])];
-    
-    // 保存合并后的数据
-    await storage.saveBookmarks(mergedBookmarks, allFolders);
+    // 如果本地有书签且云端也有数据，需要归档本地书签（仅归档未在"本地_"开头的文件夹中的书签）
+    if (localSceneBookmarks.length > 0 && cleaned.bookmarks.length > 0) {
+      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // 如 20240115
+      const archiveFolder = `本地_${timestamp}`;
+      
+      // 检查哪些本地书签需要归档（不在"本地_"开头的文件夹中的）
+      const bookmarksToArchive = localSceneBookmarks.filter(b => {
+        const folder = b.folder || '';
+        // 检查是否在任何"本地_xxx"文件夹中
+        return !folder.startsWith('本地_') && !folder.match(/^本地_\d{8}/);
+      });
+      
+      // 已经归档的书签（在任何"本地_xxx"文件夹中的）
+      const alreadyArchivedBookmarks = localSceneBookmarks.filter(b => {
+        const folder = b.folder || '';
+        return folder.startsWith('本地_') || folder.match(/^本地_\d{8}/);
+      });
+      
+      // 将需要归档的书签归档到"本地"文件夹
+      const archivedBookmarks = bookmarksToArchive.map(b => ({
+        ...b,
+        folder: b.folder ? `${archiveFolder}/${b.folder}` : archiveFolder
+      }));
+      
+      // 合并归档后的本地书签和云端书签
+      const mergedSceneBookmarks = [...cleaned.bookmarks, ...alreadyArchivedBookmarks, ...archivedBookmarks];
+      
+      // 合并所有场景的书签
+      const mergedBookmarks = [...otherSceneBookmarks, ...mergedSceneBookmarks];
+      
+      // 合并文件夹（包括归档文件夹）
+      const archiveFolders = new Set();
+      archivedBookmarks.forEach(b => {
+        if (b.folder) {
+          // 提取归档文件夹下的所有子文件夹路径
+          const parts = b.folder.split('/');
+          for (let i = 1; i <= parts.length; i++) {
+            archiveFolders.add(parts.slice(0, i).join('/'));
+          }
+        }
+      });
+      
+      const allFolders = [...new Set([
+        ...(allBookmarks.folders || []),
+        ...cleaned.folders,
+        ...Array.from(archiveFolders)
+      ])];
+      
+      // 保存合并后的数据
+      await storage.saveBookmarks(mergedBookmarks, allFolders);
+      
+      // 同步合并后的数据到云端
+      const sceneFolders = allFolders.filter(f => {
+        // 只同步当前场景相关的文件夹
+        return mergedSceneBookmarks.some(b => {
+          const bFolder = b.folder || '';
+          return bFolder === f || (bFolder.startsWith(f + '/'));
+        });
+      });
+      await syncToCloud(mergedSceneBookmarks, sceneFolders, currentSceneId);
+    } else {
+      // 没有本地书签或没有云端数据，直接合并
+      const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
+      
+      // 合并文件夹（所有场景的文件夹）
+      const allFolders = [...new Set([
+        ...(allBookmarks.folders || []),
+        ...cleaned.folders
+      ])];
+      
+      // 保存合并后的数据
+      await storage.saveBookmarks(mergedBookmarks, allFolders);
+    }
 
     // 更新设备上次同步时间
     await touchCurrentDevice();
+    
+    // 标记该场景为已同步
+    await storage.addSyncedScene(currentSceneId);
     
     await storage.saveSyncStatus({
       status: 'success',
@@ -467,8 +558,13 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
     }
 
     await ensureDeviceRegistered();
-    // 上行同步只在可识别设备时检查授权；“未知设备”跳过严格校验，避免误报。
-    if (!isUnknownDevice(currentDevice)) {
+    
+    // 检查设备检测开关（默认关闭）
+    const settings = await storage.getSettings();
+    const deviceDetectionEnabled = settings?.deviceDetection?.enabled === true;
+    
+    // 上行同步仅在设备检测开关开启时检查授权
+    if (deviceDetectionEnabled) {
       let devices = await storage.getDevices();
       if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
         // 再拉取一次云端设置确认
@@ -566,7 +662,7 @@ async function ensureDeviceRegistered() {
   let info = await storage.getDeviceInfo();
   if (!info) {
     info = {
-      id: storage.generateId(),
+      id: await generateDeviceId(),
       name: await getDeviceName(),
       createdAt: Date.now(),
       lastSeen: Date.now()
@@ -576,6 +672,11 @@ async function ensureDeviceRegistered() {
     // 如果名称缺失，补一个
     if (!info.name) {
       info.name = await getDeviceName();
+      await storage.saveDeviceInfo(info);
+    }
+    // 如果设备ID格式不符合新规则，重新生成（兼容旧数据）
+    if (info.id && !info.id.includes('_')) {
+      info.id = await generateDeviceId();
       await storage.saveDeviceInfo(info);
     }
   }
@@ -613,6 +714,80 @@ async function touchCurrentDevice() {
 }
 
 /**
+ * 检测浏览器类型
+ */
+function detectBrowserType() {
+  try {
+    const ua = navigator.userAgent || '';
+    if (/chrome/i.test(ua) && !/edge|edg|opr|opera/i.test(ua)) {
+      return 'chrome';
+    } else if (/firefox/i.test(ua)) {
+      return 'firefox';
+    } else if (/edge|edg/i.test(ua)) {
+      return 'edge';
+    } else if (/opr|opera/i.test(ua)) {
+      return 'opera';
+    } else if (/safari/i.test(ua) && !/chrome/i.test(ua)) {
+      return 'safari';
+    }
+  } catch (e) {
+    // ignore
+  }
+  return 'unknownbrowser';
+}
+
+/**
+ * 检测设备类型
+ */
+async function detectDeviceType() {
+  try {
+    // 优先使用 platformInfo
+    if (chrome?.runtime?.getPlatformInfo) {
+      const platform = await new Promise(resolve => chrome.runtime.getPlatformInfo(resolve));
+      if (platform?.os) {
+        const os = platform.os.toLowerCase();
+        if (os === 'win' || os === 'mac' || os === 'linux' || os === 'openbsd' || os === 'fuchsia') {
+          return 'pc';
+        } else if (os === 'android') {
+          return 'android';
+        } else if (os === 'ios' || os === 'cros') {
+          return os;
+        }
+      }
+    }
+    // 回退：使用 userAgent
+    const ua = navigator.userAgent || '';
+    if (/android/i.test(ua)) {
+      return 'android';
+    } else if (/iphone|ipad|ipod/i.test(ua)) {
+      return 'ios';
+    } else if (/windows|macintosh|linux/i.test(ua)) {
+      return 'pc';
+    }
+  } catch (e) {
+    // ignore
+  }
+  return 'unknowndevice';
+}
+
+/**
+ * 生成唯一随机数
+ */
+function generateUniqueId() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
+}
+
+/**
+ * 生成设备ID（格式：浏览器类型_设备类型_唯一随机数）
+ */
+async function generateDeviceId() {
+  const browserType = detectBrowserType();
+  const deviceType = await detectDeviceType();
+  const uniqueId = generateUniqueId();
+  return `${browserType}_${deviceType}_${uniqueId}`;
+}
+
+/**
  * 获取设备名称
  */
 async function getDeviceName() {
@@ -639,9 +814,4 @@ async function getDeviceName() {
 /**
  * 判断是否为“未知设备”——在这种情况下跳过严格授权校验，避免误报
  */
-function isUnknownDevice(device) {
-  if (!device) return true;
-  const name = (device.name || '').trim();
-  return !name || name === '未知设备';
-}
 
