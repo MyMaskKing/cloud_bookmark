@@ -25,18 +25,25 @@ async function ensureDeviceInCloud() {
   }
 
   // 从云端拉取最新的设备列表（不覆盖本地的 deviceInfo）
-  await syncSettingsFromCloud();
+  // 即使拉取失败，也继续执行设备注册逻辑（可能是首次连接，云端文件不存在）
+  try {
+    await syncSettingsFromCloud();
+  } catch (e) {
+    console.warn('拉取云端设置失败，继续执行设备注册:', e.message);
+  }
   
-  // 获取云端的设备列表
+  // 获取设备列表（可能是从云端拉取的，也可能是本地已有的）
   let devices = await storage.getDevices() || [];
   const now = Date.now();
+  
+  console.log('[设备注册] 当前设备列表数量:', devices.length, '当前设备ID:', currentDevice.id);
 
   // 检查当前设备是否在列表中
   const idx = devices.findIndex(d => d.id === currentDevice.id);
   
   if (idx === -1) {
     // 当前设备不在列表中，添加到列表
-    console.log('当前设备不在云端列表中，添加到列表:', currentDevice.id);
+    console.log('[设备注册] 当前设备不在列表中，添加到列表:', currentDevice.id, currentDevice.name);
     devices.push({
       id: currentDevice.id,
       name: currentDevice.name,
@@ -45,7 +52,7 @@ async function ensureDeviceInCloud() {
     });
   } else {
     // 当前设备已在列表中，仅刷新 lastSeen 和 name
-    console.log('当前设备已在云端列表中，更新 lastSeen:', currentDevice.id);
+    console.log('[设备注册] 当前设备已在列表中，更新 lastSeen:', currentDevice.id);
     devices[idx] = { ...devices[idx], lastSeen: now, name: currentDevice.name };
   }
 
