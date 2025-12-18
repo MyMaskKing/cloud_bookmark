@@ -242,8 +242,10 @@ configForm.addEventListener('submit', async (e) => {
       
       const currentSceneId = await storage.getCurrentScene();
       try {
+        // 保存配置时只注册设备，不进行设备检测（skipDeviceDetection: true）
+        // 设备检测只在定时同步时进行
         const syncResponse = await sendWithRetry(
-          { action: 'sync', sceneId: currentSceneId },
+          { action: 'sync', sceneId: currentSceneId, skipDeviceDetection: true },
           { retries: 2, delay: 300 }
         );
         // sendWithRetry 已处理 null/重试，这里无需额外处理

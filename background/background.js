@@ -435,7 +435,8 @@ alarmsAPI.onAlarm.addListener(async (alarm) => {
 // 监听来自popup或pages的消息
 runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
-    syncFromCloud(request.sceneId).then((result) => {
+    // skipDeviceDetection: 保存配置时使用，只注册设备不进行设备检测
+    syncFromCloud(request.sceneId, request.skipDeviceDetection).then((result) => {
       // syncFromCloud 现在会返回 {success, error, ...}
       if (result && typeof result.success === 'boolean') {
         sendResponse(result);
@@ -738,8 +739,10 @@ async function setupSyncAlarm() {
 
 /**
  * 从云端同步到本地
+ * @param {String} sceneId - 场景ID（可选）
+ * @param {Boolean} skipDeviceDetection - 是否跳过设备检测（保存配置时使用，只注册设备不检测）
  */
-async function syncFromCloud(sceneId = null) {
+async function syncFromCloud(sceneId = null, skipDeviceDetection = false) {
   try {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
@@ -753,13 +756,15 @@ async function syncFromCloud(sceneId = null) {
     await syncSettingsFromCloud();
 
     // 设备校验：严格模式，云端缺少当前设备则清理并停止；
-    // 但对于“未知设备”一律跳过校验，避免在无法识别设备信息时误报。
+    // 但对于"未知设备"一律跳过校验，避免在无法识别设备信息时误报。
     // 检查设备检测开关（默认关闭）
+    // 注意：保存配置时跳过设备检测，只注册设备；设备检测仅在定时同步时进行
     const settings = await storage.getSettings();
     const deviceDetectionEnabled = settings?.deviceDetection?.enabled === true;
     
     // 设备校验：仅在设备检测开关开启时进行严格模式检测，云端缺少当前设备则清理并停止
-    if (deviceDetectionEnabled) {
+    // 保存配置时（skipDeviceDetection=true）跳过设备检测，只注册设备
+    if (deviceDetectionEnabled && !skipDeviceDetection) {
       let devices = await storage.getDevices();
       if (!devices || devices.length === 0) {
         // 云端空列表视为缺设备，清理并停
