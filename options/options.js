@@ -244,8 +244,9 @@ configForm.addEventListener('submit', async (e) => {
       try {
         // 保存配置时只注册设备，不进行设备检测（skipDeviceDetection: true）
         // 设备检测只在定时同步时进行
+        // skipDeviceListSync: true - 跳过设备列表同步，避免覆盖刚注册的设备
         const syncResponse = await sendWithRetry(
-          { action: 'sync', sceneId: currentSceneId, skipDeviceDetection: true },
+          { action: 'sync', sceneId: currentSceneId, skipDeviceDetection: true, skipDeviceListSync: true },
           { retries: 2, delay: 300 }
         );
         // sendWithRetry 已处理 null/重试，这里无需额外处理

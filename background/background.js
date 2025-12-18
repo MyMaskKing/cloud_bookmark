@@ -33,10 +33,12 @@ async function ensureDeviceInCloud() {
   }
   
   // 获取设备列表（可能是从云端拉取的，也可能是本地已有的）
+  // 确保从云端同步后，获取最新的设备列表
   let devices = await storage.getDevices() || [];
   const now = Date.now();
   
-  console.log('[设备注册] 当前设备列表数量:', devices.length, '当前设备ID:', currentDevice.id);
+  console.log('[设备注册] 拉取云端后，本地设备列表数量:', devices.length, '当前设备ID:', currentDevice.id);
+  console.log('[设备注册] 设备列表内容:', devices.map(d => ({ id: d.id, name: d.name })));
 
   // 检查当前设备是否在列表中
   const idx = devices.findIndex(d => d.id === currentDevice.id);
@@ -60,14 +62,27 @@ async function ensureDeviceInCloud() {
   await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
   
   // 保存更新后的设备列表到本地
+  console.log('[设备注册] 保存设备列表到本地，数量:', devices.length);
   await storage.saveDevices(devices);
   
+  // 验证保存是否成功
+  const savedDevices = await storage.getDevices() || [];
+  console.log('[设备注册] 验证保存结果，本地设备列表数量:', savedDevices.length);
+  const isCurrentDeviceInList = savedDevices.find(d => d.id === currentDevice.id);
+  if (!isCurrentDeviceInList) {
+    console.error('[设备注册] 错误：保存后当前设备不在列表中！');
+    throw new Error('设备列表保存失败：当前设备未在列表中');
+  }
+  
   // 同步设备列表到云端
+  // 重要：直接传入刚刚修改过的 devices 变量，而不是让 syncSettingsToCloud 从存储重新读取
+  // 这样可以避免时序问题，确保同步的是最新的设备列表
   try {
-    await syncSettingsToCloud();
-    console.log('设备列表已同步到云端，当前设备ID:', currentDevice.id);
+    console.log('[设备注册] 开始同步设备列表到云端，设备数量:', devices.length);
+    await syncSettingsToCloud(devices);
+    console.log('[设备注册] 设备列表已成功同步到云端，当前设备ID:', currentDevice.id);
   } catch (error) {
-    console.error('同步设备列表到云端失败:', error);
+    console.error('[设备注册] 同步设备列表到云端失败:', error);
     throw error;
   }
 }
@@ -106,15 +121,20 @@ function normalizeData(bookmarks = [], folders = []) {
 
 /**
  * 同步设置到云端（非敏感）
+ * @param {Array} devicesOverride - 可选的设备列表，如果提供则使用此列表而不是从存储读取
  */
-async function syncSettingsToCloud() {
+async function syncSettingsToCloud(devicesOverride = null) {
   const config = await storage.getConfig();
   if (!config || !config.serverUrl) return;
   const webdav = new WebDAVClient(config);
   const settings = await storage.getSettings();
-  const devices = await storage.getDevices();
+  // 如果提供了设备列表参数，使用参数；否则从存储读取
+  const devices = devicesOverride !== null ? devicesOverride : await storage.getDevices();
   const deviceInfo = await storage.getDeviceInfo();
   const scenes = await storage.getScenes();
+  
+  console.log('[设置同步] 同步设置到云端，设备列表数量:', devices?.length || 0, devicesOverride !== null ? '(使用传入列表)' : '(从存储读取)');
+  
   // 注意：currentScene 不同步到云端，每个设备独立维护当前场景
   await webdav.writeSettings({
     settings: settings || {},
@@ -122,12 +142,15 @@ async function syncSettingsToCloud() {
     deviceInfo: deviceInfo || null,
     scenes: scenes || []
   });
+  
+  console.log('[设置同步] 设置已成功写入云端');
 }
 
 /**
  * 从云端同步设置到本地（非敏感）
+ * @param {Boolean} skipDevices - 是否跳过设备列表同步（刚注册设备后使用，避免覆盖）
  */
-async function syncSettingsFromCloud() {
+async function syncSettingsFromCloud(skipDevices = false) {
   const config = await storage.getConfig();
   if (!config || !config.serverUrl) return;
   const webdav = new WebDAVClient(config);
@@ -137,8 +160,18 @@ async function syncSettingsFromCloud() {
       if (cloud.settings) {
         await storage.saveSettings(cloud.settings);
       }
-      if (cloud.devices) {
-        await storage.saveDevices(cloud.devices);
+      // 同步设备列表：如果云端有设备列表，同步到本地（覆盖本地列表）
+      // 如果云端没有设备列表（undefined），不覆盖本地列表
+      // skipDevices 为 true 时跳过设备列表同步（刚注册设备后避免覆盖）
+      if (!skipDevices) {
+        if (cloud.devices && Array.isArray(cloud.devices)) {
+          console.log('[设置同步] 从云端同步设备列表，数量:', cloud.devices.length);
+          await storage.saveDevices(cloud.devices);
+        } else {
+          console.log('[设置同步] 云端没有设备列表，保留本地设备列表');
+        }
+      } else {
+        console.log('[设置同步] 跳过设备列表同步（避免覆盖刚注册的设备）');
       }
       // 注意：deviceInfo 是每个设备本地的信息，不应该从云端覆盖
       // 每个设备的 deviceInfo 由本地生成和维护
@@ -436,7 +469,8 @@ alarmsAPI.onAlarm.addListener(async (alarm) => {
 runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
     // skipDeviceDetection: 保存配置时使用，只注册设备不进行设备检测
-    syncFromCloud(request.sceneId, request.skipDeviceDetection).then((result) => {
+    // skipDeviceListSync: 刚注册设备后使用，避免覆盖刚注册的设备列表
+    syncFromCloud(request.sceneId, request.skipDeviceDetection, request.skipDeviceListSync).then((result) => {
       // syncFromCloud 现在会返回 {success, error, ...}
       if (result && typeof result.success === 'boolean') {
         sendResponse(result);
@@ -741,8 +775,9 @@ async function setupSyncAlarm() {
  * 从云端同步到本地
  * @param {String} sceneId - 场景ID（可选）
  * @param {Boolean} skipDeviceDetection - 是否跳过设备检测（保存配置时使用，只注册设备不检测）
+ * @param {Boolean} skipDeviceListSync - 是否跳过设备列表同步（刚注册设备后使用，避免覆盖）
  */
-async function syncFromCloud(sceneId = null, skipDeviceDetection = false) {
+async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDeviceListSync = false) {
   try {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
@@ -753,7 +788,8 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false) {
     await ensureDeviceRegistered();
 
     // 先拉取云端设置，获取最新设备列表
-    await syncSettingsFromCloud();
+    // skipDeviceListSync 为 true 时跳过设备列表同步（刚注册设备后避免覆盖）
+    await syncSettingsFromCloud(skipDeviceListSync);
 
     // 设备校验：严格模式，云端缺少当前设备则清理并停止；
     // 但对于"未知设备"一律跳过校验，避免在无法识别设备信息时误报。
@@ -803,7 +839,8 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false) {
     });
 
     // 先同步设置（包含场景列表）
-    await syncSettingsFromCloud();
+    // 如果跳过设备列表同步，这里也跳过（保持一致性）
+    await syncSettingsFromCloud(skipDeviceListSync);
 
     // 获取目标场景
     const currentSceneId = sceneId || await storage.getCurrentScene();
