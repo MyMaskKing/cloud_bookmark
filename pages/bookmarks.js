@@ -150,6 +150,7 @@ const viewToggle = document.getElementById('viewToggle');
 const viewOptionsBtn = document.getElementById('viewOptionsBtn');
 const exportBtn = document.getElementById('exportBtn');
 const syncBtn = document.getElementById('syncBtn');
+const syncErrorBanner = document.getElementById('syncErrorBanner');
 const bookmarksGrid = document.getElementById('bookmarksGrid');
 const emptyState = document.getElementById('emptyState');
 const bookmarkModal = document.getElementById('bookmarkModal');
@@ -170,6 +171,91 @@ const selectedCount = document.getElementById('selectedCount');
 const batchMoveBtn = document.getElementById('batchMoveBtn');
 const batchCancelBtn = document.getElementById('batchCancelBtn');
 const selectAllBtn = document.getElementById('selectAllBtn');
+
+// 非阻断 Toast（用于同步失败提示）
+let toastEl = null;
+let toastTimer = null;
+function showToast(message, { title = '提示', type = 'error', duration = 2000 } = {}) {
+  try {
+    const toastId = 'cloud-bookmark-page-toast';
+    if (!toastEl) toastEl = document.getElementById(toastId);
+
+    if (!toastEl) {
+      toastEl = document.createElement('div');
+      toastEl.id = toastId;
+      const bg = type === 'error' ? 'rgba(220, 53, 69, 0.96)' : 'rgba(25, 135, 84, 0.92)';
+      toastEl.style.cssText = `
+        position: fixed;
+        top: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 2147483647;
+        max-width: calc(100vw - 32px);
+        width: 520px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        background: ${bg};
+        color: #fff;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 120ms ease;
+      `;
+      toastEl.innerHTML = `
+        <div style="display:flex; gap:10px; align-items:flex-start;">
+          <div style="font-size:18px; line-height:1; margin-top:1px;">⚠️</div>
+          <div style="flex:1; min-width:0;">
+            <div id="${toastId}-title" style="font-weight:700; font-size:13px; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+            <div id="${toastId}-msg" style="font-size:12px; line-height:1.35; opacity:0.95; word-break:break-word;"></div>
+          </div>
+        </div>
+      `;
+      if (document.body) document.body.appendChild(toastEl);
+    }
+
+    const titleEl = toastEl.querySelector(`#${toastId}-title`);
+    const msgEl = toastEl.querySelector(`#${toastId}-msg`);
+    if (titleEl) titleEl.textContent = title || '提示';
+    if (msgEl) msgEl.textContent = message || '';
+
+    if (toastTimer) {
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+
+    requestAnimationFrame(() => {
+      if (toastEl) toastEl.style.opacity = '1';
+    });
+
+    toastTimer = setTimeout(() => {
+      if (!toastEl) return;
+      toastEl.style.opacity = '0';
+      setTimeout(() => {
+        try { toastEl?.remove(); } catch (_) {}
+        toastEl = null;
+      }, 160);
+    }, Math.max(500, duration));
+  } catch (_) {
+    // ignore
+  }
+}
+
+async function updateSyncErrorBanner() {
+  if (!syncErrorBanner) return;
+  try {
+    const status = await storage.getSyncStatus();
+    if (status && status.status === 'error' && status.error) {
+      syncErrorBanner.style.display = 'block';
+      syncErrorBanner.textContent = `同步失败：${status.error}`;
+    } else {
+      syncErrorBanner.style.display = 'none';
+      syncErrorBanner.textContent = '';
+    }
+  } catch (_) {
+    // ignore
+  }
+}
 
 function openSidebarMobile() {
   if (sidebar) sidebar.classList.add('open');
@@ -255,6 +341,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadBookmarks();
   await loadFolders();
   await loadTags();
+  await updateSyncErrorBanner();
   initSidebarResizer();
   setupEventListeners();
   checkUrlParams();
@@ -266,14 +353,42 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   // 监听消息更新
-  runtimeAPI.onMessage.addListener((request) => {
-    if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
+  runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
+    if (request && (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged')) {
       loadCurrentScene();
       loadBookmarks();
       loadFolders();
       loadTags();
+      updateSyncErrorBanner();
+      return;
+    }
+
+    // 后台广播的同步失败 toast（扩展页面收 runtime 消息）
+    if (request && request.action === 'showSyncErrorToast') {
+      showToast(request.message || '同步失败', {
+        title: request.title || '云端书签同步失败',
+        type: 'error',
+        duration: request.duration || 2000
+      });
+      updateSyncErrorBanner();
+      if (sendResponse) sendResponse({ success: true });
+      return true;
     }
   });
+
+  // 同步状态变化时刷新错误条（本地存储变化，不依赖消息）
+  try {
+    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+    if (storageAPI && storageAPI.onChanged) {
+      storageAPI.onChanged.addListener((changes, areaName) => {
+        if (areaName === 'local' && changes && changes.syncStatus) {
+          updateSyncErrorBanner();
+        }
+      });
+    }
+  } catch (_) {
+    // ignore
+  }
 });
 
 /**
@@ -1377,12 +1492,12 @@ async function handleSync() {
       await loadBookmarks();
       await loadFolders();
       await loadTags();
-      alert('同步成功');
+      await updateSyncErrorBanner();
     } else {
-      alert('同步失败: ' + (response?.error || '未知错误'));
+      await updateSyncErrorBanner();
     }
   } catch (error) {
-    alert('同步失败: ' + error.message);
+    await updateSyncErrorBanner();
   } finally {
     syncBtn.disabled = false;
     syncBtn.textContent = '🔄';

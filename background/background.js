@@ -154,6 +154,162 @@ const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
 const commandsAPI = (typeof browser !== 'undefined' ? browser.commands : chrome.commands) || null;
 const alarmsAPI = typeof browser !== 'undefined' ? browser.alarms : chrome.alarms;
 
+// 同步失败提示（Toast）防泛滥机制：本地持久化（兼容 MV3 service worker 可能被唤醒/休眠）
+const SYNC_ERROR_TOAST_STATE_KEY = 'syncErrorToastState'; // local-only，不同步云端
+const NOTIFICATION_COOLDOWN = 5 * 60 * 1000; // 5分钟内相同错误只提示一次
+const MAX_TOAST_STATE_ENTRIES = 20;
+
+function getStorageLocalCompat() {
+  return (typeof browser !== 'undefined' && browser.storage && browser.storage.local)
+    ? browser.storage.local
+    : (typeof chrome !== 'undefined' && chrome.storage ? chrome.storage.local : null);
+}
+
+async function getLocalValueCompat(key) {
+  const local = getStorageLocalCompat();
+  if (!local) return undefined;
+  if (typeof browser !== 'undefined' && browser.storage && browser.storage.local) {
+    const result = await local.get([key]);
+    return result ? result[key] : undefined;
+  }
+  return new Promise((resolve) => {
+    chrome.storage.local.get([key], (result) => resolve(result ? result[key] : undefined));
+  });
+}
+
+async function setLocalValueCompat(obj) {
+  const local = getStorageLocalCompat();
+  if (!local) return;
+  if (typeof browser !== 'undefined' && browser.storage && browser.storage.local) {
+    await local.set(obj);
+    return;
+  }
+  return new Promise((resolve) => {
+    chrome.storage.local.set(obj, () => resolve());
+  });
+}
+
+async function queryTabsCompat(query) {
+  if (!tabsAPI || typeof tabsAPI.query !== 'function') return [];
+  if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
+    return await tabsAPI.query(query);
+  }
+  return new Promise((resolve) => {
+    tabsAPI.query(query, (tabs) => resolve(Array.isArray(tabs) ? tabs : []));
+  });
+}
+
+async function sendMessageToTabCompat(tabId, message) {
+  if (!tabsAPI || typeof tabsAPI.sendMessage !== 'function') return null;
+  if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.sendMessage) {
+    try {
+      return await tabsAPI.sendMessage(tabId, message);
+    } catch (_) {
+      return null; // 可能是特殊页面/无 content script，忽略
+    }
+  }
+  // Chrome (MV2/MV3): 用回调封装 Promise（避免双发）
+  return new Promise((resolve) => {
+    try {
+      tabsAPI.sendMessage(tabId, message, (response) => {
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        if (lastError) return resolve(null);
+        resolve(response || { success: true });
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * 显示同步失败提示（页面内 Toast，2秒自动消失，不抢焦点、不阻断点击）
+ * 形式：通过 content script 在所有普通网页显示（类似悬浮球的覆盖层）。
+ * 说明：浏览器内置页面（chrome://、about:、扩展商店页等）无法注入 content script，因此不会显示。
+ * @param {string} message - 错误消息
+ */
+async function showSyncErrorNotification(message) {
+  try {
+    // 检查是否开启提示（默认开启）
+    const settings = await storage.getSettings();
+    const enabled = settings?.syncErrorNotification?.enabled !== false;
+    if (!enabled) {
+      console.log('[Toast] disabled by setting, skip', { message: message || '' });
+      return;
+    }
+
+    const now = Date.now();
+    const msg = (message || '同步过程中发生错误，请检查网络连接或WebDAV配置');
+    // 用前80字符做 key，足够稳定且避免存太大
+    const hashKey = String(msg).slice(0, 80);
+
+    // 防泛滥：从本地读取状态（MV3 也能跨唤醒持久）
+    const state = (await getLocalValueCompat(SYNC_ERROR_TOAST_STATE_KEY)) || {};
+    const lastShown = state[hashKey];
+    if (lastShown && (now - lastShown) < NOTIFICATION_COOLDOWN) {
+      console.log('[Toast] cooldown skip', { secondsSinceLast: Math.floor((now - lastShown) / 1000), hashKey });
+      return;
+    }
+
+    // 更新状态并清理
+    state[hashKey] = now;
+    for (const [k, t] of Object.entries(state)) {
+      if (!t || (now - t) > NOTIFICATION_COOLDOWN) delete state[k];
+    }
+    // 控制最大条数
+    const entries = Object.entries(state).sort((a, b) => (b[1] || 0) - (a[1] || 0));
+    const trimmed = entries.slice(0, MAX_TOAST_STATE_ENTRIES);
+    const newState = {};
+    trimmed.forEach(([k, t]) => { newState[k] = t; });
+    await setLocalValueCompat({ [SYNC_ERROR_TOAST_STATE_KEY]: newState });
+
+    // 广播给所有标签页的 content script 显示 toast
+    const tabs = await queryTabsCompat({});
+    if (!Array.isArray(tabs) || tabs.length === 0) return;
+
+    const payload = {
+      action: 'showSyncErrorToast',
+      title: '云端书签同步失败',
+      message: msg,
+      duration: settings?.syncErrorNotification?.sticky ? 0 : 2000
+    };
+
+    const results = await Promise.all((tabs || []).map(async tab => {
+      if (!tab || typeof tab.id !== 'number') return { tab, resp: null };
+      const resp = await sendMessageToTabCompat(tab.id, payload);
+      return { tab, resp };
+    }));
+    const deliveredTabs = (results || []).filter(r => r && r.resp && (r.resp.success === true || r.resp.ok === true));
+    const delivered = deliveredTabs.length;
+    console.log('[Toast] sent to tabs', { attempted: (tabs || []).length, delivered });
+
+    // 额外调试：打印“哪些 tab 收到了/哪些没收到”（只打印协议，避免泄露完整 URL）
+    try {
+      const deliveredIds = new Set(deliveredTabs.map(r => r.tab?.id).filter(id => typeof id === 'number'));
+      const missed = (tabs || []).filter(t => t && typeof t.id === 'number' && !deliveredIds.has(t.id));
+      const summarizeProto = (u) => {
+        try { return new URL(u).protocol; } catch (_) { return 'unknown:'; }
+      };
+      const missedSummary = missed.map(t => ({ id: t.id, proto: summarizeProto(t.url) })).slice(0, 12);
+      if (missedSummary.length) {
+        console.log('[Toast] not delivered sample', missedSummary);
+      }
+    } catch (_) {}
+
+    // 同时通知扩展页面（options/bookmarks/popup 等扩展页面不是 content script，收不到 tabs.sendMessage）
+    try {
+      const ret = runtimeAPI.sendMessage(payload);
+      if (ret && typeof ret.then === 'function') {
+        await ret;
+      }
+    } catch (_) {
+      // 没有接收端或某些环境不支持，忽略
+    }
+  } catch (error) {
+    console.error('[Toast] 显示同步失败提示时出错:', error);
+  }
+}
+
 // 监听插件安装
 runtimeAPI.onInstalled.addListener(async () => {
   console.log('云端书签插件已安装');
@@ -272,8 +428,14 @@ alarmsAPI.onAlarm.addListener(async (alarm) => {
 // 监听来自popup或pages的消息
 runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
-    syncFromCloud(request.sceneId).then(() => {
-      sendResponse({ success: true });
+    syncFromCloud(request.sceneId).then((result) => {
+      // syncFromCloud 现在会返回 {success, error, ...}
+      if (result && typeof result.success === 'boolean') {
+        sendResponse(result);
+      } else {
+        // 兜底：旧逻辑
+        sendResponse({ success: true });
+      }
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
     });
@@ -575,7 +737,7 @@ async function syncFromCloud(sceneId = null) {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
       console.log('WebDAV配置未设置');
-      return;
+      return { success: false, skipped: true, error: 'WebDAV配置未设置' };
     }
 
     await ensureDeviceRegistered();
@@ -594,12 +756,14 @@ async function syncFromCloud(sceneId = null) {
       let devices = await storage.getDevices();
       if (!devices || devices.length === 0) {
         // 云端空列表视为缺设备，清理并停
+        const errorMsg = '当前设备未被授权，已清理本地数据并停止同步';
         await storage.clearAllData();
         await storage.saveSyncStatus({
           status: 'error',
           lastSync: Date.now(),
-          error: '当前设备未被授权，已清理本地数据并停止同步'
+          error: errorMsg
         });
+        await showSyncErrorNotification(errorMsg);
         return;
       }
       if (!devices.find(d => d.id === currentDevice.id)) {
@@ -607,12 +771,14 @@ async function syncFromCloud(sceneId = null) {
         await syncSettingsFromCloud();
         devices = await storage.getDevices();
         if (!devices.find(d => d.id === currentDevice.id)) {
+          const errorMsg = '当前设备未被授权，已清理本地数据并停止同步';
           await storage.clearAllData();
           await storage.saveSyncStatus({
             status: 'error',
             lastSync: Date.now(),
-            error: '当前设备未被授权，已清理本地数据并停止同步'
+            error: errorMsg
           });
+          await showSyncErrorNotification(errorMsg);
           return;
         }
       }
@@ -629,11 +795,11 @@ async function syncFromCloud(sceneId = null) {
 
     // 获取目标场景
     const currentSceneId = sceneId || await storage.getCurrentScene();
+    console.log('[SYNC] syncFromCloud start', { sceneId: currentSceneId });
     
     const webdav = new WebDAVClient(config);
     // 只同步当前场景的书签文件
     const cloudData = await webdav.readBookmarks(currentSceneId);
-    const cleaned = normalizeData(cloudData.bookmarks || [], cloudData.folders || []);
     
     // 获取所有本地书签
     const allBookmarks = await storage.getBookmarks();
@@ -642,64 +808,129 @@ async function syncFromCloud(sceneId = null) {
     
     // 检查该场景是否已同步过
     const isSceneSynced = await storage.isSceneSynced(currentSceneId);
+
+    // 云端文件缺失(404)的处理：避免误删本地数据
+    if (cloudData && cloudData._notFound) {
+      const hasLocal = localSceneBookmarks.length > 0;
+      if (isSceneSynced || hasLocal) {
+        const filePath = cloudData._filePath || `${currentSceneId}_bookmarks.json`;
+        const errorMsg = `云端场景文件不存在（可能被删除）：${filePath}`;
+        console.warn('[SYNC] cloud file missing -> fail', { sceneId: currentSceneId, isSceneSynced, localCount: localSceneBookmarks.length, filePath });
+
+        await storage.saveSyncStatus({
+          status: 'error',
+          lastSync: Date.now(),
+          error: errorMsg
+        });
+        await showSyncErrorNotification(errorMsg);
+        return { success: false, error: errorMsg, code: 'CLOUD_FILE_MISSING' };
+      } else {
+        console.log('[SYNC] cloud file missing but scene not synced and local empty -> treat as empty', { sceneId: currentSceneId });
+        // 尝试创建空文件，避免后续继续 404（如果失败，应视为同步失败，否则会误报成功）
+        try {
+          const r = await webdav.writeBookmarks({ bookmarks: [], folders: [] }, currentSceneId);
+          console.log('[SYNC] created empty cloud file', { sceneId: currentSceneId, ok: !!r?.success });
+        } catch (e) {
+          const errorMsg = `云端场景文件不存在，且创建空文件失败：${e?.message || e}`;
+          console.warn('[SYNC] create empty cloud file failed -> fail', { sceneId: currentSceneId, error: e?.message || e });
+          await storage.saveSyncStatus({
+            status: 'error',
+            lastSync: Date.now(),
+            error: errorMsg
+          });
+          await showSyncErrorNotification(errorMsg);
+          return { success: false, error: errorMsg, code: 'CLOUD_FILE_CREATE_FAILED' };
+        }
+      }
+    }
+
+    const cleaned = normalizeData(cloudData.bookmarks || [], cloudData.folders || []);
+    console.log('[SYNC] cloud data loaded', { sceneId: currentSceneId, cloudBookmarks: cleaned.bookmarks.length, cloudFolders: cleaned.folders.length });
+    
+    // 检查本地书签是否已经包含在云端书签中（避免重复合并）
+    // 通过比较书签ID来判断是否已经合并过
+    const cloudBookmarkIds = new Set((cleaned.bookmarks || []).map(b => b.id));
+    const localBookmarkIds = new Set((localSceneBookmarks || []).map(b => b.id));
+    
+    // 检查本地书签是否已经与云端书签合并过
+    // 如果本地书签的ID都在云端书签中，说明已经合并过，不需要再次归档
+    const allLocalInCloud = localBookmarkIds.size > 0 && 
+                            Array.from(localBookmarkIds).every(id => cloudBookmarkIds.has(id));
     
     if (!isSceneSynced && localSceneBookmarks.length > 0 && cleaned.bookmarks.length > 0) {
       // 首次同步：如果本地有书签且云端也有数据，需要归档本地书签
-      const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // 如 20240115
-      const archiveFolder = `本地_${timestamp}`;
-      
-      // 检查哪些本地书签需要归档（不在"本地_"开头的文件夹中的）
-      const bookmarksToArchive = localSceneBookmarks.filter(b => {
-        const folder = b.folder || '';
-        return !folder.startsWith('本地_') && !folder.match(/^本地_\d{8}/);
-      });
-      
-      // 已经归档的书签（在任何"本地_xxx"文件夹中的）
-      const alreadyArchivedBookmarks = localSceneBookmarks.filter(b => {
-        const folder = b.folder || '';
-        return folder.startsWith('本地_') || folder.match(/^本地_\d{8}/);
-      });
-      
-      // 将需要归档的书签归档到"本地_时间戳"文件夹
-      const archivedBookmarks = bookmarksToArchive.map(b => ({
-        ...b,
-        folder: b.folder ? `${archiveFolder}/${b.folder}` : archiveFolder
-      }));
-      
-      // 合并归档后的本地书签和云端书签
-      const mergedSceneBookmarks = [...cleaned.bookmarks, ...alreadyArchivedBookmarks, ...archivedBookmarks];
-      
-      // 合并所有场景的书签
-      const mergedBookmarks = [...otherSceneBookmarks, ...mergedSceneBookmarks];
-      
-      // 合并文件夹（包括归档文件夹）
-      const archiveFolders = new Set();
-      archivedBookmarks.forEach(b => {
-        if (b.folder) {
-          const parts = b.folder.split('/');
-          for (let i = 1; i <= parts.length; i++) {
-            archiveFolders.add(parts.slice(0, i).join('/'));
+      // 但如果本地书签已经全部在云端（说明已经合并过），则不需要再次归档
+      if (allLocalInCloud) {
+        // 本地书签已经全部在云端，直接使用云端数据（避免重复合并）
+        // 云端数据已经包含了所有本地书签，不需要再次归档
+        const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
+        const allFolders = [...new Set([
+          ...(allBookmarks.folders || []),
+          ...cleaned.folders
+        ])];
+        await storage.saveBookmarks(mergedBookmarks, allFolders);
+      } else {
+        // 需要归档：本地有书签不在云端（需要归档）
+        const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // 如 20240115
+        const archiveFolder = `本地_${timestamp}`;
+        
+        // 检查哪些本地书签需要归档（不在"本地_"开头的文件夹中，且不在云端的）
+        const bookmarksToArchive = localSceneBookmarks.filter(b => {
+          // 只归档不在云端的书签
+          if (cloudBookmarkIds.has(b.id)) {
+            return false; // 云端已有，不需要归档
           }
-        }
-      });
-      
-      const allFolders = [...new Set([
-        ...(allBookmarks.folders || []),
-        ...cleaned.folders,
-        ...Array.from(archiveFolders)
-      ])];
-      
-      // 保存合并后的数据
-      await storage.saveBookmarks(mergedBookmarks, allFolders);
-      
-      // 同步合并后的数据到云端
-      const sceneFolders = allFolders.filter(f => {
-        return mergedSceneBookmarks.some(b => {
-          const bFolder = b.folder || '';
-          return bFolder === f || (bFolder.startsWith(f + '/'));
+          const folder = b.folder || '';
+          return !folder.startsWith('本地_') && !folder.match(/^本地_\d{8}/);
         });
-      });
-      await syncToCloud(mergedSceneBookmarks, sceneFolders, currentSceneId);
+        
+        // 已经归档的书签（在任何"本地_xxx"文件夹中的）
+        const alreadyArchivedBookmarks = localSceneBookmarks.filter(b => {
+          const folder = b.folder || '';
+          return folder.startsWith('本地_') || folder.match(/^本地_\d{8}/);
+        });
+        
+        // 将需要归档的书签归档到"本地_时间戳"文件夹
+        const archivedBookmarks = bookmarksToArchive.map(b => ({
+          ...b,
+          folder: b.folder ? `${archiveFolder}/${b.folder}` : archiveFolder
+        }));
+        
+        // 合并归档后的本地书签和云端书签
+        const mergedSceneBookmarks = [...cleaned.bookmarks, ...alreadyArchivedBookmarks, ...archivedBookmarks];
+      
+        // 合并所有场景的书签
+        const mergedBookmarks = [...otherSceneBookmarks, ...mergedSceneBookmarks];
+        
+        // 合并文件夹（包括归档文件夹）
+        const archiveFolders = new Set();
+        archivedBookmarks.forEach(b => {
+          if (b.folder) {
+            const parts = b.folder.split('/');
+            for (let i = 1; i <= parts.length; i++) {
+              archiveFolders.add(parts.slice(0, i).join('/'));
+            }
+          }
+        });
+        
+        const allFolders = [...new Set([
+          ...(allBookmarks.folders || []),
+          ...cleaned.folders,
+          ...Array.from(archiveFolders)
+        ])];
+        
+        // 保存合并后的数据
+        await storage.saveBookmarks(mergedBookmarks, allFolders);
+        
+        // 同步合并后的数据到云端
+        const sceneFolders = allFolders.filter(f => {
+          return mergedSceneBookmarks.some(b => {
+            const bFolder = b.folder || '';
+            return bFolder === f || (bFolder.startsWith(f + '/'));
+          });
+        });
+        await syncToCloud(mergedSceneBookmarks, sceneFolders, currentSceneId);
+      }
     } else {
       // 定时同步或首次同步无冲突：云端数据直接覆盖本地当前场景
       const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
@@ -730,6 +961,9 @@ async function syncFromCloud(sceneId = null) {
     runtimeAPI.sendMessage({ action: 'bookmarksUpdated' }).catch(() => {
       // 忽略错误，可能没有打开的页面
     });
+
+    console.log('[SYNC] syncFromCloud success', { sceneId: currentSceneId });
+    return { success: true };
     
   } catch (error) {
     console.error('同步失败:', error);
@@ -738,6 +972,12 @@ async function syncFromCloud(sceneId = null) {
       lastSync: Date.now(),
       error: error.message
     });
+    
+    // 显示同步失败通知
+    // 注意：配置未设置的情况已经在上面直接return了，不会进入catch
+    // 所以这里捕获的都是真正的同步失败（包括连接失败、网络错误等）
+    await showSyncErrorNotification(error.message);
+    return { success: false, error: error.message };
   }
 }
 
@@ -751,7 +991,9 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
   try {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
-      throw new Error('WebDAV配置未设置');
+      // 没有配置WebDAV，直接返回，不通知
+      console.log('WebDAV配置未设置，跳过同步');
+      return;
     }
 
     await ensureDeviceRegistered();
@@ -823,6 +1065,11 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
       lastSync: Date.now(),
       error: error.message
     });
+    
+    // 显示同步失败通知
+    // 注意：配置未设置的情况已经在上面直接return了，不会进入catch
+    // 所以这里捕获的都是真正的同步失败（包括连接失败、网络错误等）
+    await showSyncErrorNotification(error.message);
     
     // 保存到待同步队列
     await storage.addPendingChange({
@@ -928,9 +1175,25 @@ function detectBrowserType() {
  */
 async function detectDeviceType() {
   try {
-    // 优先使用 platformInfo
-    if (chrome?.runtime?.getPlatformInfo) {
-      const platform = await new Promise(resolve => chrome.runtime.getPlatformInfo(resolve));
+    // 优先使用 platformInfo（兼容 MV2/MV3）
+    const platformInfoAPI = (typeof browser !== 'undefined' && browser.runtime && browser.runtime.getPlatformInfo) 
+      ? browser.runtime 
+      : (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getPlatformInfo) 
+        ? chrome.runtime 
+        : null;
+    
+    if (platformInfoAPI && platformInfoAPI.getPlatformInfo) {
+      let platform;
+      if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.getPlatformInfo) {
+        // Firefox: 使用 Promise
+        platform = await browser.runtime.getPlatformInfo();
+      } else {
+        // Chrome: 使用回调（兼容 MV2/MV3）
+        platform = await new Promise(resolve => {
+          chrome.runtime.getPlatformInfo(resolve);
+        });
+      }
+      
       if (platform?.os) {
         const os = platform.os.toLowerCase();
         if (os === 'win' || os === 'mac' || os === 'linux' || os === 'openbsd' || os === 'fuchsia') {
@@ -979,9 +1242,25 @@ async function generateDeviceId() {
  */
 async function getDeviceName() {
   try {
-    // 优先使用 platformInfo（更可靠）
-    if (chrome?.runtime?.getPlatformInfo) {
-      const platform = await new Promise(resolve => chrome.runtime.getPlatformInfo(resolve));
+    // 优先使用 platformInfo（更可靠，兼容 MV2/MV3）
+    const platformInfoAPI = (typeof browser !== 'undefined' && browser.runtime && browser.runtime.getPlatformInfo) 
+      ? browser.runtime 
+      : (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getPlatformInfo) 
+        ? chrome.runtime 
+        : null;
+    
+    if (platformInfoAPI && platformInfoAPI.getPlatformInfo) {
+      let platform;
+      if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.getPlatformInfo) {
+        // Firefox: 使用 Promise
+        platform = await browser.runtime.getPlatformInfo();
+      } else {
+        // Chrome: 使用回调（兼容 MV2/MV3）
+        platform = await new Promise(resolve => {
+          chrome.runtime.getPlatformInfo(resolve);
+        });
+      }
+      
       const parts = [];
       if (platform?.os) parts.push(platform.os);
       if (platform?.arch) parts.push(platform.arch);

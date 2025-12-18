@@ -372,6 +372,19 @@ body {
   gap: 8px;
 }
 
+/* 同步错误提示条（完全画面显示同步错误信息） */
+.sync-error-banner {
+  margin: 0 24px 12px 24px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(220, 53, 69, 0.10);
+  border: 1px solid rgba(220, 53, 69, 0.28);
+  color: #b02a37;
+  font-size: 13px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
 .batch-actions-bar {
   display: flex;
   align-items: center;

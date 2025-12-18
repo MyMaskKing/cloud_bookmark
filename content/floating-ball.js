@@ -53,6 +53,142 @@
   let touchStartTime = 0;
   let touchStartPos = { x: 0, y: 0 };
   let hasMoved = false; // 标记是否实际移动了
+
+  // 同步失败 Toast（不影响页面交互：pointer-events: none）
+  let toastEl = null;
+  let toastTimer = null;
+
+  function showSyncErrorToast({ title, message, duration = 2000 } = {}) {
+    try {
+      const toastId = 'cloud-bookmark-sync-error-toast';
+      if (!toastEl) {
+        toastEl = document.getElementById(toastId);
+      }
+
+      if (!toastEl) {
+        toastEl = document.createElement('div');
+        toastEl.id = toastId;
+        toastEl.style.cssText = `
+          position: fixed;
+          top: 16px;
+          left: 50%;
+          transform: translateX(-50%);
+          z-index: 2147483647;
+          max-width: calc(100vw - 32px);
+          width: 420px;
+          padding: 10px 14px;
+          border-radius: 10px;
+          background: rgba(220, 53, 69, 0.96);
+          color: #fff;
+          box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+          pointer-events: none; /* 关键：不阻断页面点击 */
+          opacity: 0;
+          transition: opacity 120ms ease;
+        `;
+
+        toastEl.innerHTML = `
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="font-size:18px; line-height:1; margin-top:1px;">⚠️</div>
+            <div style="flex:1; min-width:0;">
+              <div id="${toastId}-title" style="font-weight:700; font-size:13px; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
+              <div id="${toastId}-msg" style="font-size:12px; line-height:1.35; opacity:0.95; word-break:break-word;"></div>
+            </div>
+            <button id="${toastId}-close" style="
+              background:none;
+              border:none;
+              color:#fff;
+              font-size:18px;
+              line-height:1;
+              cursor:pointer;
+              padding:0;
+              width:20px;
+              height:20px;
+              display:flex;
+              align-items:center;
+              justify-content:center;
+              opacity:0.8;
+              transition:opacity 0.15s;
+              flex-shrink:0;
+              margin-left:4px;
+            " title="关闭" aria-label="关闭">×</button>
+          </div>
+        `;
+        
+        // 添加关闭按钮事件（需要允许点击，所以给按钮单独设置 pointer-events）
+        const closeBtn = toastEl.querySelector(`#${toastId}-close`);
+        if (closeBtn) {
+          closeBtn.style.pointerEvents = 'auto'; // 关闭按钮需要可点击
+          closeBtn.addEventListener('mouseenter', () => {
+            closeBtn.style.opacity = '1';
+          });
+          closeBtn.addEventListener('mouseleave', () => {
+            closeBtn.style.opacity = '0.8';
+          });
+          closeBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (toastTimer) {
+              clearTimeout(toastTimer);
+              toastTimer = null;
+            }
+            if (toastEl) {
+              toastEl.style.opacity = '0';
+              setTimeout(() => {
+                try {
+                  toastEl?.remove();
+                } catch (_) {}
+                toastEl = null;
+              }, 160);
+            }
+          });
+        }
+
+        // 只在 body 可用时插入；否则延迟到 DOMReady
+        const mount = () => {
+          if (document.body && !document.getElementById(toastId)) {
+            document.body.appendChild(toastEl);
+          }
+        };
+        if (document.body) mount();
+        else document.addEventListener('DOMContentLoaded', mount, { once: true });
+      }
+
+      const titleEl = toastEl.querySelector(`#${toastId}-title`);
+      const msgEl = toastEl.querySelector(`#${toastId}-msg`);
+      if (titleEl) titleEl.textContent = title || '云端书签同步失败';
+      if (msgEl) msgEl.textContent = message || '同步失败，请检查网络或 WebDAV 配置';
+
+      if (toastTimer) {
+        clearTimeout(toastTimer);
+        toastTimer = null;
+      }
+
+      // 显示
+      requestAnimationFrame(() => {
+        if (toastEl) toastEl.style.opacity = '1';
+      });
+
+      // 自动隐藏 + 移除（duration <= 0 时不自动消失，用于调试）
+      if (duration && duration > 0) {
+        toastTimer = setTimeout(() => {
+          if (!toastEl) return;
+          toastEl.style.opacity = '0';
+          setTimeout(() => {
+            try {
+              toastEl?.remove();
+            } catch (_) {}
+            toastEl = null;
+          }, 160);
+        }, Math.max(500, duration));
+      } else {
+        toastTimer = null;
+      }
+    } catch (e) {
+      // content script 里避免打断页面
+      console.warn('[Toast] 显示失败:', e?.message || e);
+    }
+  }
   
   // 初始化悬浮球
   async function initFloatingBall() {
@@ -395,6 +531,22 @@
       initFloatingBall();
       sendResponse({ success: true });
       return true; // Firefox 异步消息需要返回 true
+    }
+    if (request.action === 'showSyncErrorToast') {
+      try {
+        console.log('[Toast] content script received showSyncErrorToast', {
+          title: request.title,
+          hasMessage: !!request.message,
+          duration: request.duration
+        });
+      } catch (_) {}
+      showSyncErrorToast({
+        title: request.title,
+        message: request.message,
+        duration: request.duration
+      });
+      sendResponse({ success: true });
+      return true;
     }
   });
   

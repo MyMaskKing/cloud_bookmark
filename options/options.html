@@ -114,6 +114,20 @@
           </label>
           <small>开启后，在浏览器所有页面显示悬浮球，点击可快速打开书签弹窗。悬浮球位置本地保存，不同步云端。</small>
         </div>
+        <div class="form-group checkbox-row">
+          <label>
+            <input type="checkbox" id="enableSyncErrorNotification">
+            开启同步失败通知
+          </label>
+          <small>开启后，同步失败时会弹出提示框（2秒自动消失）。相同错误5分钟内只提示一次，避免通知过于频繁。</small>
+        </div>
+        <div class="form-group checkbox-row">
+          <label>
+            <input type="checkbox" id="stickySyncErrorToast">
+            调试：同步失败提示不自动消失
+          </label>
+          <small>仅用于调试：开启后 toast 不会自动消失（直到下次提示覆盖）。不建议长期开启。</small>
+        </div>
       </section>
 
       <section class="section">

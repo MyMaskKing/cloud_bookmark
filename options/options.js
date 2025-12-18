@@ -3,6 +3,7 @@
  */
 
 const storage = new StorageManager();
+const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
 
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
 const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function(message, callback) {
@@ -90,6 +91,8 @@ const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
 const enableDeviceDetection = document.getElementById('enableDeviceDetection');
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const enableFloatingBall = document.getElementById('enableFloatingBall');
+const enableSyncErrorNotification = document.getElementById('enableSyncErrorNotification');
+const stickySyncErrorToast = document.getElementById('stickySyncErrorToast');
 const sceneList = document.getElementById('sceneList');
 const currentSceneName = document.getElementById('currentSceneName');
 const addSceneBtn = document.getElementById('addSceneBtn');
@@ -660,6 +663,13 @@ async function loadUiSettings() {
   const settings = await storage.getSettings();
   const popup = (settings && settings.popup) || {};
   expandFirstLevelCheckbox.checked = !!popup.expandFirstLevel;
+  
+  // 加载同步失败通知开关（默认开启）
+  const syncErrorNotification = settings?.syncErrorNotification || {};
+  enableSyncErrorNotification.checked = syncErrorNotification.enabled !== false;
+  if (stickySyncErrorToast) {
+    stickySyncErrorToast.checked = !!syncErrorNotification.sticky;
+  }
 }
 
 expandFirstLevelCheckbox.addEventListener('change', async () => {
@@ -995,6 +1005,39 @@ enableFloatingBall.addEventListener('change', async () => {
 });
 
 /**
+ * 同步失败通知开关变更
+ */
+enableSyncErrorNotification.addEventListener('change', async () => {
+  try {
+    const settings = await storage.getSettings();
+    const syncErrorNotification = { ...(settings?.syncErrorNotification || {}), enabled: enableSyncErrorNotification.checked };
+    const newSettings = { ...(settings || {}), syncErrorNotification };
+    await storage.saveSettings(newSettings);
+    // 立即同步到云端
+    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+    showMessage('同步失败通知设置已保存（已同步至云端）', 'success');
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+});
+
+// 调试：Toast 不自动消失
+if (stickySyncErrorToast) {
+  stickySyncErrorToast.addEventListener('change', async () => {
+    try {
+      const settings = await storage.getSettings();
+      const syncErrorNotification = { ...(settings?.syncErrorNotification || {}), sticky: !!stickySyncErrorToast.checked };
+      const newSettings = { ...(settings || {}), syncErrorNotification };
+      await storage.saveSettings(newSettings);
+      await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+      showMessage('调试设置已保存（已同步至云端）', 'success');
+    } catch (e) {
+      showMessage('保存失败: ' + (e?.message || e), 'error');
+    }
+  });
+}
+
+/**
  * 加载场景列表
  */
 async function loadScenes() {
@@ -1246,5 +1289,21 @@ function showMessage(message, type) {
   setTimeout(() => {
     messageEl.remove();
   }, 3000);
+}
+
+// 接收后台同步失败 toast（扩展页面不是 content script，收不到 tabs.sendMessage）
+try {
+  runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
+    if (request && request.action === 'showSyncErrorToast') {
+      // 设置页用顶部 message 条提示（不阻断操作）
+      showMessage(request.message || '同步失败', 'error');
+      // 同时刷新同步状态栏里的错误信息
+      updateSyncStatus();
+      sendResponse({ success: true });
+      return true;
+    }
+  });
+} catch (e) {
+  // 忽略：部分环境可能不允许在此处注册
 }
 
