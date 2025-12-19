@@ -164,10 +164,19 @@ configForm.addEventListener('submit', async (e) => {
       return;
     }
 
+    // 判断是否是首次保存webdav配置
+    const oldConfig = await storage.getConfig();
+    const isFirstTime = !oldConfig || !oldConfig.serverUrl;
+
     await storage.saveConfig(config);
     // WebDAV配置变更后，清空已同步场景列表，让所有场景重新同步
     await storage.clearSyncedScenes();
-    showMessage('配置已保存，正在同步数据…', 'success');
+    
+    if (isFirstTime) {
+      showMessage('配置已保存，正在归档本地书签并同步到云端…', 'success');
+    } else {
+      showMessage('配置已保存，正在清空本地数据并从云端重新同步…', 'success');
+    }
     
     try {
       // 通知后台更新同步任务
@@ -176,10 +185,23 @@ configForm.addEventListener('submit', async (e) => {
         config 
       });
 
-      // 保存成功后，先拉取云端设置，再注册设备，并同步当前场景数据到本地
       // Firefox 中可能需要等待 background script 准备好，添加短暂延迟
       await new Promise(resolve => setTimeout(resolve, 100));
       
+      // 非首次保存时，先清空本地数据，避免旧数据被同步到新云端
+      if (!isFirstTime) {
+        console.log('[保存配置] 非首次保存，先清空本地数据');
+        try {
+          const clearResult = await sendMessageCompat({ action: 'clearLocalDataForReconfig' });
+          if (!clearResult || !clearResult.success) {
+            console.warn('[保存配置] 清空本地数据失败，继续同步:', clearResult?.error || 'unknown');
+          }
+        } catch (error) {
+          console.warn('[保存配置] 清空本地数据时出错，继续同步:', error.message);
+        }
+      }
+      
+      // 从新云端同步设置（非首次保存时，本地数据已清空，会使用新云端的内容）
       try {
         const syncSettingsResponse = await sendMessageCompat({ action: 'syncSettingsFromCloud' });
         // 如果返回 null（Firefox 中 background script 未准备好），等待后重试一次
@@ -200,6 +222,7 @@ configForm.addEventListener('submit', async (e) => {
       }
       
       // 等待设备注册完成（带重试机制）
+      // 非首次保存时，本地数据已清空，注册设备时会从新云端拉取设备列表
       let registerSuccess = false;
       for (let retry = 0; retry < 3; retry++) {
         try {
@@ -244,9 +267,16 @@ configForm.addEventListener('submit', async (e) => {
       try {
         // 保存配置时只注册设备，不进行设备检测（skipDeviceDetection: true）
         // 设备检测只在定时同步时进行
-        // skipDeviceListSync: true - 跳过设备列表同步，避免覆盖刚注册的设备
+        // skipDeviceListSync: true - 跳过设备列表同步，避免覆盖刚注册的设备（首次保存时）
+        // clearLocalFirst: false - 非首次保存时，已经在前面清空了本地数据，这里不再清空
         const syncResponse = await sendWithRetry(
-          { action: 'sync', sceneId: currentSceneId, skipDeviceDetection: true, skipDeviceListSync: true },
+          { 
+            action: 'sync', 
+            sceneId: currentSceneId, 
+            skipDeviceDetection: true, 
+            skipDeviceListSync: isFirstTime, // 首次保存时跳过设备列表同步，非首次保存时同步设备列表
+            clearLocalFirst: false // 非首次保存时已经在前面清空了，这里不再清空
+          },
           { retries: 2, delay: 300 }
         );
         // sendWithRetry 已处理 null/重试，这里无需额外处理

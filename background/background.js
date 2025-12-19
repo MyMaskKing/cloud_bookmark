@@ -149,8 +149,9 @@ async function syncSettingsToCloud(devicesOverride = null) {
 /**
  * 从云端同步设置到本地（非敏感）
  * @param {Boolean} skipDevices - 是否跳过设备列表同步（刚注册设备后使用，避免覆盖）
+ * @param {Boolean} forceClear - 是否强制清空本地设置（非首次保存时使用，即使云端没有设置也清空本地）
  */
-async function syncSettingsFromCloud(skipDevices = false) {
+async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
   const config = await storage.getConfig();
   if (!config || !config.serverUrl) return;
   const webdav = new WebDAVClient(config);
@@ -159,14 +160,21 @@ async function syncSettingsFromCloud(skipDevices = false) {
     if (cloud) {
       if (cloud.settings) {
         await storage.saveSettings(cloud.settings);
+      } else if (forceClear) {
+        // 非首次保存时，即使云端没有设置，也清空本地设置
+        await storage.saveSettings({});
       }
       // 同步设备列表：如果云端有设备列表，同步到本地（覆盖本地列表）
-      // 如果云端没有设备列表（undefined），不覆盖本地列表
+      // 如果云端没有设备列表（undefined），不覆盖本地列表（除非forceClear为true）
       // skipDevices 为 true 时跳过设备列表同步（刚注册设备后避免覆盖）
       if (!skipDevices) {
         if (cloud.devices && Array.isArray(cloud.devices)) {
           console.log('[设置同步] 从云端同步设备列表，数量:', cloud.devices.length);
           await storage.saveDevices(cloud.devices);
+        } else if (forceClear) {
+          // 非首次保存时，即使云端没有设备列表，也清空本地设备列表
+          console.log('[设置同步] 非首次保存，清空本地设备列表');
+          await storage.saveDevices([]);
         } else {
           console.log('[设置同步] 云端没有设备列表，保留本地设备列表');
         }
@@ -178,8 +186,18 @@ async function syncSettingsFromCloud(skipDevices = false) {
       // 同步场景列表
       if (cloud.scenes && Array.isArray(cloud.scenes) && cloud.scenes.length > 0) {
         await storage.saveScenes(cloud.scenes);
+      } else if (forceClear) {
+        // 非首次保存时，如果云端没有场景列表，清空本地场景列表
+        // 但getScenes会自动创建默认场景，所以这里不需要手动创建
+        await storage.saveScenes([]);
       }
       // 注意：currentScene 不从云端同步，每个设备独立维护当前场景
+    } else if (forceClear) {
+      // 非首次保存时，如果云端没有设置文件，也清空本地设置和设备列表
+      await storage.saveSettings({});
+      if (!skipDevices) {
+        await storage.saveDevices([]);
+      }
     }
   } catch (e) {
     // 忽略设置读取失败，不影响书签同步
@@ -470,7 +488,8 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
     // skipDeviceDetection: 保存配置时使用，只注册设备不进行设备检测
     // skipDeviceListSync: 刚注册设备后使用，避免覆盖刚注册的设备列表
-    syncFromCloud(request.sceneId, request.skipDeviceDetection, request.skipDeviceListSync).then((result) => {
+    // clearLocalFirst: 非首次保存时，先清空本地数据再同步
+    syncFromCloud(request.sceneId, request.skipDeviceDetection, request.skipDeviceListSync, request.clearLocalFirst).then((result) => {
       // syncFromCloud 现在会返回 {success, error, ...}
       if (result && typeof result.success === 'boolean') {
         sendResponse(result);
@@ -673,6 +692,38 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'clearLocalDataForReconfig') {
+    // 清空本地书签、设备列表、设置（但保留配置和deviceInfo）
+    // 用于非首次保存webdav配置时，先清空本地数据，避免旧数据被同步到新云端
+    (async () => {
+      try {
+        console.log('[清空本地数据] 开始清空本地书签、设备列表、设置');
+        
+        // 清空书签
+        await storage.saveBookmarks([], []);
+        
+        // 清空设备列表
+        await storage.saveDevices([]);
+        
+        // 清空设置（但保留deviceInfo，因为它是本地生成的）
+        await storage.saveSettings({});
+        
+        // 清空已同步场景列表
+        await storage.clearSyncedScenes();
+        
+        console.log('[清空本地数据] 清空完成');
+        sendResponse({ success: true, message: '清空完成' });
+      } catch (error) {
+        console.error('[清空本地数据] 清空过程出错:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })().catch(error => {
+      console.error('[清空本地数据] 未捕获的错误:', error);
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+
   if (request.action === 'getActiveTab') {
     try {
       const handleTabs = (tabs) => {
@@ -776,8 +827,9 @@ async function setupSyncAlarm() {
  * @param {String} sceneId - 场景ID（可选）
  * @param {Boolean} skipDeviceDetection - 是否跳过设备检测（保存配置时使用，只注册设备不检测）
  * @param {Boolean} skipDeviceListSync - 是否跳过设备列表同步（刚注册设备后使用，避免覆盖）
+ * @param {Boolean} clearLocalFirst - 是否先清空本地数据（非首次保存时使用）
  */
-async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDeviceListSync = false) {
+async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDeviceListSync = false, clearLocalFirst = false) {
   try {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
@@ -787,9 +839,22 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
 
     await ensureDeviceRegistered();
 
+    // 如果非首次保存且需要清空本地数据，先清空本地书签、设备列表、设置
+    // 必须在同步设置之前清空，确保使用新的云端内容
+    if (clearLocalFirst) {
+      console.log('[SYNC] 非首次保存，清空本地数据');
+      // 清空书签
+      await storage.saveBookmarks([], []);
+      // 清空设备列表
+      await storage.saveDevices([]);
+      // 清空设置（但保留deviceInfo，因为它是本地生成的）
+      await storage.saveSettings({});
+    }
+
     // 先拉取云端设置，获取最新设备列表
     // skipDeviceListSync 为 true 时跳过设备列表同步（刚注册设备后避免覆盖）
-    await syncSettingsFromCloud(skipDeviceListSync);
+    // forceClear 为 true 时，即使云端没有设置也清空本地设置和设备列表（非首次保存时使用）
+    await syncSettingsFromCloud(skipDeviceListSync, clearLocalFirst);
 
     // 设备校验：严格模式，云端缺少当前设备则清理并停止；
     // 但对于"未知设备"一律跳过校验，避免在无法识别设备信息时误报。
@@ -838,13 +903,9 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
       error: null
     });
 
-    // 先同步设置（包含场景列表）
-    // 如果跳过设备列表同步，这里也跳过（保持一致性）
-    await syncSettingsFromCloud(skipDeviceListSync);
-
     // 获取目标场景
     const currentSceneId = sceneId || await storage.getCurrentScene();
-    console.log('[SYNC] syncFromCloud start', { sceneId: currentSceneId });
+    console.log('[SYNC] syncFromCloud start', { sceneId: currentSceneId, clearLocalFirst });
     
     const webdav = new WebDAVClient(config);
     // 只同步当前场景的书签文件
