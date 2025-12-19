@@ -427,10 +427,10 @@ function setupEventListeners() {
   bookmarkForm.addEventListener('submit', handleSubmit);
   addFolderBtn.addEventListener('click', handleAddFolder);
 
-  // 空状态按钮兜底绑定（避免 inline 失效时无响应）
-  const emptyAddBtn = document.querySelector('.empty-state .btn-primary');
-  if (emptyAddBtn) {
-    emptyAddBtn.addEventListener('click', (e) => {
+  // 空状态按钮绑定（Firefox CSP 要求，不能使用内联 onclick）
+  const addFirstBookmarkBtn = document.getElementById('addFirstBookmarkBtn');
+  if (addFirstBookmarkBtn) {
+    addFirstBookmarkBtn.addEventListener('click', (e) => {
       e.preventDefault();
       showAddForm();
     });
@@ -1019,6 +1019,14 @@ function renderBookmarks() {
       const bookmarkId = card.dataset.id;
       const bookmark = currentBookmarks.find(b => b.id === bookmarkId);
       
+      // 处理 favicon 图片加载错误（Firefox CSP 要求，不能使用内联 onerror）
+      const faviconImg = card.querySelector('.bookmark-favicon[data-fallback-icon]');
+      if (faviconImg) {
+        faviconImg.addEventListener('error', function() {
+          this.src = 'data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23999%27 d=%27M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%27/%3E%3C/svg%3E';
+        });
+      }
+      
       // 批量选择模式
       if (batchMode) {
         const checkbox = card.querySelector('.bookmark-select-checkbox');
@@ -1101,7 +1109,7 @@ function renderBookmarkCard(bookmark) {
         <button class="action-btn delete-btn" title="删除">🗑️</button>
       </div>
       <div class="bookmark-header">
-        ${viewOptions.showIcon ? `<img src="${favicon}" alt="" class="bookmark-favicon" onerror="this.src='data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23999%27 d=%27M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%27/%3E%3C/svg%3E'">` : ''}
+        ${viewOptions.showIcon ? `<img src="${favicon}" alt="" class="bookmark-favicon" data-fallback-icon>` : ''}
         <div class="bookmark-info">
           <div class="bookmark-title">${escapeHtml(bookmark.title || '无标题')}</div>
           ${viewOptions.showUrl ? `<div class="bookmark-url">${escapeHtml(domain || bookmark.url)}</div>` : ''}
