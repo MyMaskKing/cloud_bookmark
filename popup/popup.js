@@ -98,7 +98,7 @@ const statusText = document.getElementById('statusText');
 const sceneSwitchBtn = document.getElementById('sceneSwitchBtn');
 const currentSceneNameEl = document.getElementById('currentSceneName');
 const sceneMenu = document.getElementById('sceneMenu');
-const MAX_BOOKMARKS_DISPLAY = 100;
+// 已移除 MAX_BOOKMARKS_DISPLAY 限制，弹窗现在显示所有书签以保持与完整画面一致
 let currentSceneId = null;
 let expandedFolders = new Set(['']); // 根默认展开
 let lastRenderedBookmarks = [];
@@ -272,7 +272,7 @@ sceneSwitchBtn.addEventListener('click', (e) => {
 });
 
 /**
- * 加载弹窗展示的书签（默认按时间倒序，最多显示 MAX_BOOKMARKS_DISPLAY 条）
+ * 加载弹窗展示的书签（显示所有书签，与完整画面保持一致）
  */
 async function loadBookmarksForPopup() {
   try {
@@ -281,11 +281,10 @@ async function loadBookmarksForPopup() {
     const bookmarks = data.bookmarks || [];
     pushOpLog(`loadBookmarks success, scene=${currentSceneId}, total=${bookmarks.length}`);
     
-    // 按更新/创建时间排序，默认展示最新的
+    // 显示所有书签，与完整画面保持一致（不再限制数量）
     const sorted = bookmarks
       .map(b => ({ ...b }))
-      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0))
-      .slice(0, MAX_BOOKMARKS_DISPLAY);
+      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
     
     // 默认展开第一层（仅在没有本地折叠状态时）
     if (shouldApplyDefaultExpand && popupSettings.expandFirstLevel) {
@@ -490,6 +489,12 @@ function buildFolderTree(bookmarks) {
   return root;
 }
 
+// 计算文件夹下的直接子文件夹数量（不递归，只统计直接子文件夹）
+function countSubfolders(node) {
+  const folders = node.folders || {};
+  return Object.keys(folders).length; // 只统计直接子文件夹数量，不递归
+}
+
 function renderFolderTreeHtml(node, indentPath) {
   const folderEntries = Object.values(node.folders).sort((a, b) => a.name.localeCompare(b.name));
   const items = node.items || [];
@@ -498,12 +503,16 @@ function renderFolderTreeHtml(node, indentPath) {
     const expanded = expandedFolders.has(child.path);
     const icon = expanded ? '📂' : '📁';
     const childContent = expanded ? renderFolderTreeHtml(child, child.path) : '';
+    // 统计：书签数量 + 子文件夹数量
+    const bookmarkCount = (child.items || []).length;
+    const subfolderCount = countSubfolders(child);
+    const totalCount = bookmarkCount + subfolderCount;
     return `
       <div class="folder-block">
         <div class="folder-row" data-folder="${escapeHtml(child.path)}">
           <span class="folder-icon">${icon}</span>
           <span class="folder-name">${escapeHtml(child.name)}</span>
-          <span class="folder-count">${(child.items || []).length}</span>
+          <span class="folder-count">${totalCount}</span>
         </div>
         ${expanded ? `<div class="folder-children">${childContent}</div>` : ''}
       </div>

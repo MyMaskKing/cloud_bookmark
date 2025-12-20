@@ -601,6 +601,14 @@ async function loadBookmarks() {
 }
 
 /**
+ * 计算文件夹下的直接子文件夹数量（不递归，只统计直接子文件夹）
+ */
+function countSubfoldersInTree(node) {
+  const children = node.children || {};
+  return Object.keys(children).length; // 只统计直接子文件夹数量，不递归
+}
+
+/**
  * 加载文件夹列表
  */
 async function loadFolders() {
@@ -639,7 +647,7 @@ async function loadFolders() {
     `;
   }
 
-  html += renderFolderTree(tree.children, folderCountMap);
+  html += renderFolderTree(tree.children, folderCountMap, tree);
   foldersList.innerHTML = html;
 
   // 绑定点击事件（筛选）
@@ -722,24 +730,30 @@ function buildFolderTree(folders) {
 /**
  * 渲染树结构为HTML
  */
-function renderFolderTree(children, folderCountMap = new Map()) {
+function renderFolderTree(children, folderCountMap = new Map(), rootNode = null) {
   const entries = Object.values(children);
   if (entries.length === 0) return '';
 
   return `
     <ul class="folder-tree">
-      ${entries.map(child => `
+      ${entries.map(child => {
+        // 统计：书签数量 + 子文件夹数量
+        const bookmarkCount = folderCountMap.get(child.path) || 0;
+        const subfolderCount = countSubfoldersInTree(child);
+        const totalCount = bookmarkCount + subfolderCount;
+        return `
         <li class="folder-node">
           <div class="folder-row" data-folder="${escapeHtml(child.path)}">
             <span class="folder-label" data-folder="${escapeHtml(child.path)}" title="${escapeHtml(child.path)}">
               <span class="folder-label-text">📁 ${escapeHtml(child.name)}</span>
-              <span class="folder-count">${folderCountMap.get(child.path) || 0}</span>
+              <span class="folder-count">${totalCount}</span>
             </span>
             <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
           </div>
-          ${renderFolderTree(child.children, folderCountMap)}
+          ${renderFolderTree(child.children, folderCountMap, rootNode)}
         </li>
-      `).join('')}
+      `;
+      }).join('')}
     </ul>
   `;
 }
