@@ -417,7 +417,13 @@ function setupEventListeners() {
     currentSort = e.target.value;
     renderBookmarks();
   });
+  // 视图切换按钮：同时支持点击和触摸事件（解决安卓上点击没效果的问题）
   viewToggle.addEventListener('click', toggleView);
+  viewToggle.addEventListener('touchend', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleView();
+  });
   viewOptionsBtn.addEventListener('click', handleViewOptions);
   exportBtn.addEventListener('click', handleExport);
   syncBtn.addEventListener('click', handleSync);
@@ -1316,7 +1322,7 @@ function handleSearch() {
 function toggleView() {
   currentView = currentView === 'grid' ? 'list' : 'grid';
   applyViewMode();
-  persistSettings();
+  persistViewMode(); // 只保存到本地，不触发云端同步
 }
 
 /**
@@ -1415,6 +1421,7 @@ function applyViewMode() {
 
 /**
  * 加载非敏感设置（本地或云端同步后的本地）
+ * 注意：viewMode 从本地存储读取，不从云端同步的设置中读取
  */
 async function loadSettings() {
   try {
@@ -1424,8 +1431,22 @@ async function loadSettings() {
     } else {
       viewOptions = { ...defaultViewOptions };
     }
-    if (settings && settings.viewMode) {
-      currentView = settings.viewMode;
+    
+    // viewMode 从本地存储读取，不从云端同步的设置中读取
+    let localViewMode = null;
+    if (typeof browser !== 'undefined' && browser.storage) {
+      const result = await browser.storage.local.get(['viewMode']);
+      localViewMode = result.viewMode;
+    } else {
+      localViewMode = await new Promise((resolve) => {
+        chrome.storage.local.get(['viewMode'], (result) => {
+          resolve(result.viewMode);
+        });
+      });
+    }
+    
+    if (localViewMode) {
+      currentView = localViewMode;
     } else {
       currentView = defaultSettings.viewMode;
     }
@@ -1437,11 +1458,31 @@ async function loadSettings() {
 }
 
 /**
+ * 保存视图模式到本地存储（不触发云端同步）
+ */
+async function persistViewMode() {
+  try {
+    // viewMode 只保存到本地存储，不同步到云端
+    if (typeof browser !== 'undefined' && browser.storage) {
+      await browser.storage.local.set({ viewMode: currentView });
+    } else {
+      await new Promise((resolve) => {
+        chrome.storage.local.set({ viewMode: currentView }, resolve);
+      });
+    }
+  } catch (e) {
+    console.warn('保存视图模式失败', e);
+  }
+}
+
+/**
  * 持久化非敏感设置并通知后台同步到云端
+ * 注意：viewMode 不同步到云端，只保存在本地
  */
 async function persistSettings() {
   try {
-    const settings = { viewOptions, viewMode: currentView };
+    // 保存到云端的设置（不包含 viewMode）
+    const settings = { viewOptions };
     await storage.saveSettings(settings);
     await sendMessageCompat({ action: 'syncSettings' });
   } catch (e) {
