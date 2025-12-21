@@ -584,7 +584,7 @@ addCurrentBtn.addEventListener('click', async () => {
   if (tab && tab.url) {
     pushOpLog(`addCurrent: got tab url=${tab.url}`);
     tabsAPI.create({
-      url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}`)
+      url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}&source=popup`)
     });
     // 操作完成后关闭弹窗
     window.close();

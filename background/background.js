@@ -627,6 +627,42 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'closeCurrentTab') {
+    console.log('[后台] 收到 closeCurrentTab 请求');
+    const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+    
+    // 获取发送消息的标签页ID
+    if (sender && sender.tab && sender.tab.id) {
+      const tabId = sender.tab.id;
+      if (typeof browser !== 'undefined' && browser.tabs) {
+        // Firefox: 使用 Promise
+        tabsAPI.remove(tabId).then(() => {
+          console.log('[后台] closeCurrentTab 成功');
+          sendResponse({ success: true });
+        }).catch(error => {
+          console.error('[后台] closeCurrentTab 失败:', error);
+          sendResponse({ success: false, error: error.message });
+        });
+      } else {
+        // Chrome: 使用回调
+        tabsAPI.remove(tabId, () => {
+          const lastError = chrome.runtime.lastError;
+          if (lastError) {
+            console.error('[后台] closeCurrentTab 失败:', lastError.message);
+            sendResponse({ success: false, error: lastError.message });
+          } else {
+            console.log('[后台] closeCurrentTab 成功');
+            sendResponse({ success: true });
+          }
+        });
+      }
+    } else {
+      console.warn('[后台] closeCurrentTab: 无法获取标签页ID');
+      sendResponse({ success: false, error: '无法获取标签页ID' });
+    }
+    return true;
+  }
+  
   if (request.action === 'syncSettings') {
     syncSettingsToCloud().then(() => {
       sendResponse({ success: true });

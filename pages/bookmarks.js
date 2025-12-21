@@ -141,6 +141,8 @@ let editingBookmarkId = null;
 let currentSceneId = null;
 let batchMode = false;
 let selectedBookmarkIds = new Set();
+let pageSource = null; // 记录页面来源（popup/floating-ball等）
+let autoCloseTimer = null; // 自动关闭定时器
 
 // DOM元素
 const addBookmarkBtn = document.getElementById('addBookmarkBtn');
@@ -397,6 +399,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const action = params.get('action');
+  pageSource = params.get('source'); // 记录页面来源
   
   if (action === 'add') {
     const url = params.get('url');
@@ -1151,6 +1154,12 @@ function renderBookmarkCard(bookmark) {
  * 显示添加表单
  */
 function showAddForm(data = {}) {
+  // 清除可能存在的自动关闭定时器
+  if (autoCloseTimer) {
+    clearTimeout(autoCloseTimer);
+    autoCloseTimer = null;
+  }
+  
   editingBookmarkId = null;
   document.getElementById('modalTitle').textContent = '添加书签';
   bookmarkForm.reset();
@@ -1172,6 +1181,12 @@ function showAddForm(data = {}) {
  * 显示编辑表单
  */
 function showEditForm(bookmark) {
+  // 清除可能存在的自动关闭定时器
+  if (autoCloseTimer) {
+    clearTimeout(autoCloseTimer);
+    autoCloseTimer = null;
+  }
+  
   editingBookmarkId = bookmark.id;
   document.getElementById('modalTitle').textContent = '编辑书签';
   
@@ -1203,8 +1218,67 @@ function loadFolderOptions(selected = '') {
  * 隐藏模态框
  */
 function hideModal() {
+  // 清除自动关闭定时器
+  if (autoCloseTimer) {
+    clearTimeout(autoCloseTimer);
+    autoCloseTimer = null;
+  }
   bookmarkModal.style.display = 'none';
   editingBookmarkId = null;
+}
+
+/**
+ * 在模态框中显示成功消息
+ */
+function showSuccessInModal(message = '添加成功') {
+  const modalBody = bookmarkForm;
+  if (!modalBody) return;
+  
+  // 显示成功消息（替换表单内容）
+  modalBody.innerHTML = `
+    <div style="
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+      text-align: center;
+      min-height: 200px;
+    ">
+      <div style="
+        font-size: 48px;
+        margin-bottom: 16px;
+        color: #198754;
+      ">✓</div>
+      <div style="
+        font-size: 18px;
+        font-weight: 500;
+        color: #198754;
+        margin-bottom: 20px;
+      ">${escapeHtml(message)}</div>
+      <button type="button" id="successCloseBtn" class="btn btn-primary" style="min-width: 100px;">
+        关闭
+      </button>
+    </div>
+  `;
+  
+  // 绑定关闭按钮事件
+  const closeBtn = document.getElementById('successCloseBtn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', () => {
+      hideModal();
+      // 如果是从弹窗/悬浮球打开的，关闭页面
+      if (pageSource === 'popup' || pageSource === 'floating-ball') {
+        sendMessageCompat({ action: 'closeCurrentTab' }).catch(() => {
+          try {
+            window.close();
+          } catch (e) {
+            // 静默处理
+          }
+        });
+      }
+    });
+  }
 }
 
 /**
@@ -1237,6 +1311,8 @@ async function handleSubmit(e) {
   }
   
   try {
+    const isNewBookmark = !editingBookmarkId;
+    
     if (editingBookmarkId) {
       // 更新
       const index = currentBookmarks.findIndex(b => b.id === editingBookmarkId);
@@ -1261,7 +1337,35 @@ async function handleSubmit(e) {
     await loadBookmarks();
     await loadFolders();
     await loadTags();
-    hideModal();
+    
+    // 不立即关闭模态框，先显示成功消息
+    // 在模态框中显示成功提示
+    showSuccessInModal('添加成功');
+    
+    // 如果是新增书签且是从弹窗/悬浮球打开的，1.5秒后关闭页面
+    if (isNewBookmark && (pageSource === 'popup' || pageSource === 'floating-ball')) {
+      autoCloseTimer = setTimeout(() => {
+        // 先关闭模态框
+        hideModal();
+        // 通过消息让 background 关闭当前标签页
+        sendMessageCompat({ action: 'closeCurrentTab' }).catch(() => {
+          // 如果消息失败，尝试使用 window.close()（某些情况下可能有效）
+          try {
+            window.close();
+          } catch (e) {
+            // 如果都失败，静默处理
+          }
+        });
+      }, 1500);
+    } else if (isNewBookmark) {
+      // 其他情况显示成功提示，1.5秒后关闭模态框
+      autoCloseTimer = setTimeout(() => {
+        hideModal();
+      }, 1500);
+    } else {
+      // 编辑情况，直接关闭模态框
+      hideModal();
+    }
   } catch (error) {
     console.error('保存失败:', error);
     alert('保存失败: ' + error.message);
