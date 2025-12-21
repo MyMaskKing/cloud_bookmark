@@ -162,19 +162,31 @@ window.addEventListener('unhandledrejection', (event) => {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+  console.log('[弹窗] DOMContentLoaded 触发');
+  
   await loadPopupSettings();
   await loadFolderState();
   await loadCurrentScene();
   await loadScenes();
-  await loadBookmarksForPopup();
-  await updateSyncStatus();
+  
+  // 确保 DOM 完全准备好后再加载书签
+  requestAnimationFrame(async () => {
+    console.log('[弹窗] requestAnimationFrame 回调执行，开始加载书签');
+    await loadBookmarksForPopup();
+    await updateSyncStatus();
+    console.log('[弹窗] 书签加载完成');
+  });
   
   // 监听消息更新
   runtimeAPI.onMessage.addListener((request) => {
     if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
+      console.log('[弹窗] 收到更新消息，重新加载书签');
       loadCurrentScene();
-      loadBookmarksForPopup();
-      updateSyncStatus();
+      // 使用 requestAnimationFrame 确保 DOM 更新完成
+      requestAnimationFrame(async () => {
+        await loadBookmarksForPopup();
+        await updateSyncStatus();
+      });
     }
   });
   
@@ -318,12 +330,24 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
       </div>
     `).join('');
 
-    // 点击事件
-    bookmarkList.querySelectorAll('.bookmark-item').forEach(item => {
-      item.addEventListener('click', () => {
-        const url = item.dataset.url;
-        tabsAPI.create({ url });
-        window.close();
+    // 点击事件（使用 requestAnimationFrame 确保 DOM 更新完成）
+    requestAnimationFrame(() => {
+      const items = bookmarkList.querySelectorAll('.bookmark-item');
+      console.log('[弹窗] 搜索模式：找到书签项数量:', items.length);
+      
+      items.forEach((item, index) => {
+        console.log(`[弹窗] 搜索模式：绑定书签项 ${index}:`, item.dataset.url);
+        item.addEventListener('click', () => {
+          console.log('[弹窗] 搜索模式：书签项被点击:', item.dataset.url);
+          const url = item.dataset.url;
+          if (url) {
+            console.log('[弹窗] 搜索模式：打开URL:', url);
+            tabsAPI.create({ url });
+            window.close();
+          } else {
+            console.error('[弹窗] 搜索模式：URL为空，无法打开');
+          }
+        });
       });
     });
     return;
@@ -337,24 +361,9 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
   const tree = buildFolderTree(bookmarks);
   bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
 
-  // 绑定文件夹展开/折叠
-  bookmarkList.querySelectorAll('.folder-row').forEach(row => {
-    row.addEventListener('click', () => {
-      const path = row.dataset.folder || '';
-      if (expandedFolders.has(path)) {
-        expandedFolders.delete(path);
-      } else {
-        expandedFolders.add(path);
-      }
-      saveFolderState();
-      bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
-      bindFolderEvents();
-    });
-  });
-
-  bindBookmarkClick();
-
-  function bindFolderEvents() {
+  // 使用 requestAnimationFrame 确保 DOM 更新完成后再绑定事件
+  requestAnimationFrame(() => {
+    // 绑定文件夹展开/折叠
     bookmarkList.querySelectorAll('.folder-row').forEach(row => {
       row.addEventListener('click', () => {
         const path = row.dataset.folder || '';
@@ -366,18 +375,50 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
         saveFolderState();
         bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
         bindFolderEvents();
-        bindBookmarkClick();
+      });
+    });
+
+    bindBookmarkClick();
+  });
+
+  function bindFolderEvents() {
+    // 使用 requestAnimationFrame 确保 DOM 更新完成后再绑定事件
+    requestAnimationFrame(() => {
+      bookmarkList.querySelectorAll('.folder-row').forEach(row => {
+        row.addEventListener('click', () => {
+          const path = row.dataset.folder || '';
+          if (expandedFolders.has(path)) {
+            expandedFolders.delete(path);
+          } else {
+            expandedFolders.add(path);
+          }
+          saveFolderState();
+          bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
+          bindFolderEvents();
+          bindBookmarkClick();
+        });
       });
     });
   }
 
   function bindBookmarkClick() {
-    bookmarkList.querySelectorAll('.bookmark-item').forEach(item => {
+    console.log('[弹窗] bindBookmarkClick 被调用');
+    const items = bookmarkList.querySelectorAll('.bookmark-item');
+    console.log('[弹窗] 找到书签项数量:', items.length);
+    
+    items.forEach((item, index) => {
+      console.log(`[弹窗] 绑定书签项 ${index}:`, item.dataset.url);
       item.addEventListener('click', (e) => {
+        console.log('[弹窗] 书签项被点击:', item.dataset.url);
         e.stopPropagation();
         const url = item.dataset.url;
-        tabsAPI.create({ url });
-        window.close();
+        if (url) {
+          console.log('[弹窗] 打开URL:', url);
+          tabsAPI.create({ url });
+          window.close();
+        } else {
+          console.error('[弹窗] URL为空，无法打开');
+        }
       });
     });
   }
