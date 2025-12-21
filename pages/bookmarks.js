@@ -1206,15 +1206,71 @@ function showEditForm(bookmark) {
 }
 
 /**
- * 加载文件夹选项
+ * 构建文件夹树结构
+ */
+function buildFolderTreeForSelect(folders) {
+  const root = { name: '', path: '', children: {} };
+  folders.forEach(folder => {
+    const parts = folder.split('/');
+    let node = root;
+    let currentPath = '';
+    parts.forEach(part => {
+      currentPath = currentPath ? `${currentPath}/${part}` : part;
+      if (!node.children[part]) {
+        node.children[part] = { name: part, path: currentPath, children: {} };
+      }
+      node = node.children[part];
+    });
+  });
+  return root;
+}
+
+/**
+ * 渲染文件夹树为选项HTML（带缩进）
+ */
+function renderFolderTreeOptions(node, level = 0, selected = '') {
+  let html = '';
+  const indent = '&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(level);
+  const icon = level === 0 ? '' : '📁';
+  
+  // 渲染当前节点（如果不是根节点）
+  if (level > 0) {
+    const isSelected = node.path === selected;
+    html += `<option value="${escapeHtml(node.path)}" ${isSelected ? 'selected' : ''}>${indent}${icon} ${escapeHtml(node.name)}</option>`;
+  }
+  
+  // 递归渲染子节点
+  const children = Object.values(node.children).sort((a, b) => a.name.localeCompare(b.name));
+  children.forEach(child => {
+    html += renderFolderTreeOptions(child, level + 1, selected);
+  });
+  
+  return html;
+}
+
+/**
+ * 加载文件夹选项（优化版：树形结构）
  */
 function loadFolderOptions(selected = '') {
   const select = document.getElementById('bookmarkFolder');
   const folders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
   folders.sort();
   
-  select.innerHTML = '<option value="">未分类</option>' + 
-    folders.map(f => `<option value="${escapeHtml(f)}" ${f === selected ? 'selected' : ''}>${escapeHtml(f)}</option>`).join('');
+  // 构建树结构
+  const tree = buildFolderTreeForSelect(folders);
+  
+  // 渲染选项
+  let html = '<option value="">📁 未分类</option>';
+  html += renderFolderTreeOptions(tree, 0, selected);
+  
+  select.innerHTML = html;
+  
+  // 添加搜索功能（如果选项很多）
+  if (folders.length > 10) {
+    // 为 select 添加搜索提示
+    select.title = '提示：可以输入关键词快速搜索文件夹';
+    select.setAttribute('data-searchable', 'true');
+  }
 }
 
 /**
@@ -1870,43 +1926,86 @@ function showFolderSelectDialog() {
       z-index: 2000;
     `;
     const dialog = document.createElement('div');
+    // 检测是否为移动设备
+    const isMobile = window.innerWidth <= 768;
     dialog.style.cssText = `
       background: #fff;
       border-radius: 8px;
-      padding: 20px;
-      width: 360px;
+      padding: ${isMobile ? '16px' : '20px'};
+      width: ${isMobile ? '95%' : '420px'};
       max-width: 90%;
+      max-height: ${isMobile ? '85vh' : '80vh'};
       box-shadow: 0 8px 24px rgba(0,0,0,0.18);
-      font-size: 14px;
+      font-size: ${isMobile ? '16px' : '14px'};
+      display: flex;
+      flex-direction: column;
     `;
     
     // 与单个编辑时的 loadFolderOptions 逻辑一致：从书签中提取文件夹
     const folders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
     folders.sort();
     
-    const folderOptions = ['<option value="">未分类</option>'];
-    folders.forEach(folder => {
-      folderOptions.push(`<option value="${escapeHtml(folder)}">${escapeHtml(folder)}</option>`);
-    });
+    // 构建树结构
+    const tree = buildFolderTreeForSelect(folders);
+    
+    // 渲染选项
+    let folderOptions = '<option value="">📁 未分类</option>';
+    folderOptions += renderFolderTreeOptions(tree, 0, '');
+    
+    const selectSize = isMobile ? 8 : 12;
+    const inputPadding = isMobile ? '12px' : '8px 12px';
+    const inputFontSize = isMobile ? '16px' : '14px';
+    const selectFontSize = isMobile ? '16px' : '14px';
+    const minHeight = isMobile ? '250px' : '200px';
+    const maxHeight = isMobile ? '50vh' : '400px';
     
     dialog.innerHTML = `
-      <h3 style="margin: 0 0 12px; font-size: 16px;">选择目标文件夹</h3>
-      <div style="margin-bottom: 16px;">
-        <select id="targetFolderSelect" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;">
-          ${folderOptions.join('')}
+      <h3 style="margin: 0 0 12px; font-size: ${isMobile ? '18px' : '16px'}; font-weight: 600;">选择目标文件夹</h3>
+      <div style="margin-bottom: 12px;">
+        <input type="text" id="folderSearchInput" placeholder="搜索文件夹..." style="width:100%;padding:${inputPadding};border:1px solid #ddd;border-radius:6px;font-size:${inputFontSize};box-sizing:border-box;-webkit-appearance:none;">
+      </div>
+      <div style="margin-bottom: 16px; flex: 1; min-height: ${minHeight}; max-height: ${maxHeight}; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; padding: 8px; background: #fafafa;">
+        <select id="targetFolderSelect" size="${selectSize}" style="width:100%;border:none;font-size:${selectFontSize};outline:none;background:transparent;">
+          ${folderOptions}
         </select>
       </div>
-      <div style="display:flex; justify-content:flex-end; gap:10px;">
-        <button id="folderSelectCancelBtn" class="btn btn-secondary" style="min-width:70px;">取消</button>
-        <button id="folderSelectOkBtn" class="btn btn-primary" style="min-width:70px;">确定</button>
+      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top: auto;">
+        <button id="folderSelectCancelBtn" class="btn btn-secondary" style="min-width:${isMobile ? '80px' : '70px'};min-height:${isMobile ? '44px' : 'auto'};font-size:${isMobile ? '16px' : '14px'};">取消</button>
+        <button id="folderSelectOkBtn" class="btn btn-primary" style="min-width:${isMobile ? '80px' : '70px'};min-height:${isMobile ? '44px' : 'auto'};font-size:${isMobile ? '16px' : '14px'};">确定</button>
       </div>
     `;
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
 
     const folderSelect = dialog.querySelector('#targetFolderSelect');
+    const searchInput = dialog.querySelector('#folderSearchInput');
     const cancelBtn = dialog.querySelector('#folderSelectCancelBtn');
     const okBtn = dialog.querySelector('#folderSelectOkBtn');
+    
+    // 添加搜索功能
+    if (searchInput) {
+      const allOptions = Array.from(folderSelect.options);
+      searchInput.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase().trim();
+        if (!query) {
+          // 显示所有选项
+          allOptions.forEach(opt => {
+            opt.style.display = '';
+          });
+          return;
+        }
+        
+        // 过滤选项
+        allOptions.forEach(opt => {
+          const text = opt.textContent.toLowerCase();
+          if (text.includes(query) || opt.value === '') {
+            opt.style.display = '';
+          } else {
+            opt.style.display = 'none';
+          }
+        });
+      });
+    }
 
     const cleanup = () => {
       overlay.remove();
