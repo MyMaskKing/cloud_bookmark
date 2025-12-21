@@ -414,10 +414,18 @@ body {
   cursor: pointer;
   border-radius: 6px;
   transition: all 0.2s;
+  -webkit-tap-highlight-color: transparent; /* 移除移动端点击高亮 */
+  touch-action: manipulation; /* 优化触摸响应 */
+  user-select: none; /* 防止文本选择 */
 }
 
 .btn-icon:hover {
   background: #f8f9fa;
+}
+
+.btn-icon:active {
+  background: #e9ecef;
+  transform: scale(0.95);
 }
 
 .bookmarks-container {
@@ -834,9 +842,15 @@ body {
     padding: 16px;
   }
 
-  .bookmarks-grid.view-grid,
+  /* 移动端：grid 视图显示2列，list 视图显示1列 */
+  .bookmarks-grid.view-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+  }
+  
   .bookmarks-grid.view-list {
     grid-template-columns: 1fr;
+    gap: 12px;
   }
 
   .bookmark-card {
@@ -846,6 +860,14 @@ body {
   .modal-content {
     width: 96%;
     max-height: 90vh;
+  }
+
+  .btn-icon {
+    min-width: 44px; /* 安卓UI适配：增大触摸目标 */
+    min-height: 44px;
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
   }
 }
 

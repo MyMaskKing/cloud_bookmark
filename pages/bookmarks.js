@@ -423,12 +423,29 @@ function setupEventListeners() {
     renderBookmarks();
   });
   // 视图切换按钮：同时支持点击和触摸事件（解决安卓上点击没效果的问题）
-  viewToggle.addEventListener('click', toggleView);
-  viewToggle.addEventListener('touchend', (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    toggleView();
-  });
+  if (viewToggle) {
+    console.log('[视图切换] viewToggle 元素找到:', viewToggle);
+    
+    viewToggle.addEventListener('click', (e) => {
+      console.log('[视图切换] click 事件触发', e);
+      e.preventDefault();
+      e.stopPropagation();
+      toggleView();
+    });
+    
+    viewToggle.addEventListener('touchend', (e) => {
+      console.log('[视图切换] touchend 事件触发', e);
+      e.preventDefault();
+      e.stopPropagation();
+      toggleView();
+    });
+    
+    viewToggle.addEventListener('touchstart', (e) => {
+      console.log('[视图切换] touchstart 事件触发', e);
+    });
+  } else {
+    console.error('[视图切换] viewToggle 元素未找到！');
+  }
   viewOptionsBtn.addEventListener('click', handleViewOptions);
   exportBtn.addEventListener('click', handleExport);
   syncBtn.addEventListener('click', handleSync);
@@ -1483,9 +1500,19 @@ function handleSearch() {
  * 切换视图
  */
 function toggleView() {
+  console.log('[视图切换] toggleView 被调用，当前视图:', currentView);
+  const oldView = currentView;
   currentView = currentView === 'grid' ? 'list' : 'grid';
-  applyViewMode();
-  persistViewMode(); // 只保存到本地，不触发云端同步
+  console.log('[视图切换] 新视图:', currentView, '旧视图:', oldView);
+  
+  try {
+    applyViewMode();
+    console.log('[视图切换] applyViewMode 执行完成');
+    persistViewMode(); // 只保存到本地，不触发云端同步
+    console.log('[视图切换] persistViewMode 执行完成');
+  } catch (error) {
+    console.error('[视图切换] 执行出错:', error);
+  }
 }
 
 /**
@@ -1579,8 +1606,35 @@ function handleViewOptions() {
 }
 
 function applyViewMode() {
-  bookmarksGrid.className = `bookmarks-grid view-${currentView}`;
-  viewToggle.textContent = currentView === 'grid' ? '📋' : '⊞';
+  console.log('[视图切换] applyViewMode 被调用，currentView:', currentView);
+  console.log('[视图切换] bookmarksGrid:', bookmarksGrid);
+  console.log('[视图切换] viewToggle:', viewToggle);
+  console.log('[视图切换] 窗口宽度:', window.innerWidth, '是否为移动端:', window.innerWidth <= 768);
+  
+  if (bookmarksGrid) {
+    const newClassName = `bookmarks-grid view-${currentView}`;
+    console.log('[视图切换] 设置 className:', newClassName);
+    bookmarksGrid.className = newClassName;
+    console.log('[视图切换] 实际 className:', bookmarksGrid.className);
+    
+    // 检查计算后的样式
+    setTimeout(() => {
+      const computedStyle = window.getComputedStyle(bookmarksGrid);
+      const gridTemplateColumns = computedStyle.gridTemplateColumns;
+      console.log('[视图切换] 计算后的 grid-template-columns:', gridTemplateColumns);
+    }, 100);
+  } else {
+    console.error('[视图切换] bookmarksGrid 元素未找到！');
+  }
+  
+  if (viewToggle) {
+    const newText = currentView === 'grid' ? '📋' : '⊞';
+    console.log('[视图切换] 设置按钮文本:', newText);
+    viewToggle.textContent = newText;
+    console.log('[视图切换] 实际按钮文本:', viewToggle.textContent);
+  } else {
+    console.error('[视图切换] viewToggle 元素未找到！');
+  }
 }
 
 /**
