@@ -531,6 +531,15 @@ body {
   -webkit-box-orient: vertical;
 }
 
+.bookmark-folder {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .bookmark-tags {
   display: flex;
   flex-wrap: wrap;
@@ -730,6 +739,20 @@ body {
   font-size: 12px;
 }
 
+.btn-danger {
+  background: #dc3545;
+  color: white;
+  border: none;
+}
+
+.btn-danger:hover {
+  background: #c82333;
+}
+
+.btn-danger:active {
+  background: #bd2130;
+}
+
 /* 响应式 */
 @media (max-width: 768px) {
   .app-container {
@@ -778,11 +801,24 @@ body {
   .batch-actions-bar {
     width: 100%;
     justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .batch-actions-bar button {
+    min-height: 44px; /* 安卓UI适配：增大触摸目标 */
+    padding: 10px 14px;
+    font-size: 14px;
+    flex: 1;
+    min-width: 0;
   }
 
   .batch-actions-bar #selectedCount {
-    flex: 1;
+    flex: 1 1 100%;
     text-align: center;
+    order: -1;
+    padding: 8px 0;
+    font-size: 14px;
   }
 
   .search-box {

@@ -55,7 +55,8 @@ let viewOptions = {
   showNotes: true,
   showTags: true,
   showUrl: true,
-  showIcon: true
+  showIcon: true,
+  showFolder: false
 };
 let currentView = 'list';
 const defaultSettings = {
@@ -171,6 +172,7 @@ const batchActionsBar = document.getElementById('batchActionsBar');
 const normalActions = document.getElementById('normalActions');
 const selectedCount = document.getElementById('selectedCount');
 const batchMoveBtn = document.getElementById('batchMoveBtn');
+const batchDeleteBtn = document.getElementById('batchDeleteBtn');
 const batchCancelBtn = document.getElementById('batchCancelBtn');
 const selectAllBtn = document.getElementById('selectAllBtn');
 
@@ -1141,6 +1143,7 @@ function renderBookmarkCard(bookmark) {
       </div>
       ${viewOptions.showDescription && bookmark.description ? `<div class="bookmark-description">${escapeHtml(bookmark.description)}</div>` : ''}
       ${viewOptions.showNotes && bookmark.notes ? `<div class="bookmark-notes">📝 ${escapeHtml(bookmark.notes)}</div>` : ''}
+      ${viewOptions.showFolder ? `<div class="bookmark-folder">📁 ${bookmark.folder ? escapeHtml(bookmark.folder) : '未分类'}</div>` : ''}
       ${viewOptions.showTags && bookmark.tags && bookmark.tags.length > 0 ? `
         <div class="bookmark-tags">
           ${bookmark.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
@@ -1484,7 +1487,8 @@ function handleViewOptions() {
     { key: 'showUrl', label: '显示URL' },
     { key: 'showDescription', label: '显示描述' },
     { key: 'showNotes', label: '显示备注' },
-    { key: 'showTags', label: '显示标签' }
+    { key: 'showTags', label: '显示标签' },
+    { key: 'showFolder', label: '显示文件夹' }
   ];
 
   options.forEach(opt => {
@@ -1806,6 +1810,51 @@ async function batchMoveBookmarks() {
 }
 
 /**
+ * 批量删除书签
+ */
+async function batchDeleteBookmarks() {
+  if (selectedBookmarkIds.size === 0) {
+    alert('请先选择要删除的书签');
+    return;
+  }
+  
+  const count = selectedBookmarkIds.size;
+  const confirmMessage = `确定要删除选中的 ${count} 个书签吗？此操作不可恢复。`;
+  
+  if (!confirm(confirmMessage)) {
+    return;
+  }
+  
+  try {
+    // 删除选中的书签
+    currentBookmarks = currentBookmarks.filter(b => !selectedBookmarkIds.has(b.id));
+    
+    // 更新文件夹列表（从剩余书签中提取）
+    const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
+    const allFolders = [...new Set(bookmarkFolders)].sort();
+    currentFolders = allFolders;
+    
+    // 保存到本地
+    await storage.saveBookmarks(currentBookmarks, currentFolders);
+    
+    // 同步到云端
+    await syncToCloud();
+    
+    // 退出批量模式并刷新
+    toggleBatchMode();
+    await loadBookmarks();
+    await loadFolders();
+    await loadTags();
+    renderBookmarks();
+    
+    alert(`已成功删除 ${count} 个书签`);
+  } catch (error) {
+    console.error('批量删除失败:', error);
+    alert('批量删除失败: ' + error.message);
+  }
+}
+
+/**
  * 显示文件夹选择对话框
  */
 function showFolderSelectDialog() {
@@ -1892,6 +1941,7 @@ function showFolderSelectDialog() {
 batchModeBtn.addEventListener('click', toggleBatchMode);
 batchCancelBtn.addEventListener('click', toggleBatchMode);
 batchMoveBtn.addEventListener('click', batchMoveBookmarks);
+batchDeleteBtn.addEventListener('click', batchDeleteBookmarks);
 selectAllBtn.addEventListener('click', toggleSelectAll);
 
 // 全局函数供HTML调用
