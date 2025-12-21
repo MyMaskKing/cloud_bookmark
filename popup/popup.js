@@ -374,7 +374,11 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
         }
         saveFolderState();
         bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
-        bindFolderEvents();
+        // 重新绑定事件时，也要使用 requestAnimationFrame 确保 DOM 更新完成
+        requestAnimationFrame(() => {
+          bindFolderEvents();
+          bindBookmarkClick();
+        });
       });
     });
 
@@ -394,8 +398,11 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
           }
           saveFolderState();
           bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
-          bindFolderEvents();
-          bindBookmarkClick();
+          // 重新绑定事件时，也要使用 requestAnimationFrame 确保 DOM 更新完成
+          requestAnimationFrame(() => {
+            bindFolderEvents();
+            bindBookmarkClick();
+          });
         });
       });
     });
