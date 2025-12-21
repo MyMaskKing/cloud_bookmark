@@ -14,6 +14,8 @@
   ],
   "background": {
     "scripts": [
+      "utils/storage.js",
+      "utils/webdav.js",
       "background/background.js"
     ]
   },
