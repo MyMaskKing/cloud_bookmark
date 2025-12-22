@@ -193,11 +193,13 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
       }
       // 注意：currentScene 不从云端同步，每个设备独立维护当前场景
     } else if (forceClear) {
-      // 非首次保存时，如果云端没有设置文件，也清空本地设置和设备列表
+      // 非首次保存时，如果云端没有设置文件，也清空本地设置、设备列表和场景列表
       await storage.saveSettings({});
       if (!skipDevices) {
         await storage.saveDevices([]);
       }
+      // 清空场景列表，确保使用新的云端数据
+      await storage.saveScenes([]);
     }
   } catch (e) {
     // 忽略设置读取失败，不影响书签同步
@@ -673,7 +675,10 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'syncSettingsFromCloud') {
-    syncSettingsFromCloud().then(() => {
+    // 支持传递 skipDevices 和 forceClear 参数
+    const skipDevices = request.skipDevices || false;
+    const forceClear = request.forceClear || false;
+    syncSettingsFromCloud(skipDevices, forceClear).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });

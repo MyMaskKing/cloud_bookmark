@@ -202,12 +202,19 @@ configForm.addEventListener('submit', async (e) => {
       }
       
       // 从新云端同步设置（非首次保存时，本地数据已清空，会使用新云端的内容）
+      // 非首次保存时，传递 forceClear: true，确保即使云端没有场景列表也清空本地场景列表
       try {
-        const syncSettingsResponse = await sendMessageCompat({ action: 'syncSettingsFromCloud' });
+        const syncSettingsResponse = await sendMessageCompat({ 
+          action: 'syncSettingsFromCloud',
+          forceClear: !isFirstTime  // 非首次保存时，强制清空场景列表
+        });
         // 如果返回 null（Firefox 中 background script 未准备好），等待后重试一次
         if (syncSettingsResponse === null) {
           await new Promise(resolve => setTimeout(resolve, 300));
-          await sendMessageCompat({ action: 'syncSettingsFromCloud' });
+          await sendMessageCompat({ 
+            action: 'syncSettingsFromCloud',
+            forceClear: !isFirstTime  // 非首次保存时，强制清空场景列表
+          });
         }
       } catch (error) {
         const isReceivingEndError = error && (
