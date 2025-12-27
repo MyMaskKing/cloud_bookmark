@@ -190,6 +190,54 @@
     }
   }
   
+  // 确保悬浮球在可视区域内
+  function constrainToViewport() {
+    if (!floatingBall) return;
+    
+    const rect = floatingBall.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const ballWidth = rect.width;
+    const ballHeight = rect.height;
+    
+    // 使用 getBoundingClientRect 获取实际位置（更可靠）
+    let currentLeft = rect.left;
+    let currentTop = rect.top;
+    
+    let needsAdjustment = false;
+    let newLeft = currentLeft;
+    let newTop = currentTop;
+    
+    // 检查并修正水平位置
+    if (currentLeft < 0) {
+      newLeft = 0;
+      needsAdjustment = true;
+    } else if (currentLeft + ballWidth > viewportWidth) {
+      newLeft = Math.max(0, viewportWidth - ballWidth);
+      needsAdjustment = true;
+    }
+    
+    // 检查并修正垂直位置
+    if (currentTop < 0) {
+      newTop = 0;
+      needsAdjustment = true;
+    } else if (currentTop + ballHeight > viewportHeight) {
+      newTop = Math.max(0, viewportHeight - ballHeight);
+      needsAdjustment = true;
+    }
+    
+    // 如果需要调整，更新位置
+    if (needsAdjustment) {
+      floatingBall.style.left = newLeft + 'px';
+      floatingBall.style.top = newTop + 'px';
+      floatingBall.style.right = 'auto';
+      floatingBall.style.transform = '';
+      
+      // 保存新位置
+      saveFloatingBallPosition({ x: newLeft, y: newTop });
+    }
+  }
+  
   // 初始化悬浮球
   async function initFloatingBall() {
     console.log('[悬浮球] initFloatingBall 开始');
@@ -207,9 +255,10 @@
       return;
     }
     
-    // 如果已存在，不重复创建
+    // 如果已存在，只更新位置约束
     if (floatingBall) {
-      console.log('[悬浮球] 已存在，跳过创建');
+      console.log('[悬浮球] 已存在，检查位置约束');
+      constrainToViewport();
       return;
     }
     
@@ -221,8 +270,8 @@
     floatingBall.innerHTML = '📚';
     floatingBall.style.cssText = `
       position: fixed;
-      width: 48px;
-      height: 48px;
+      width: 40px;
+      height: 40px;
       border-radius: 50%;
       background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       box-shadow: 0 4px 12px rgba(0,0,0,0.15);
@@ -231,7 +280,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 24px;
+      font-size: 20px;
       user-select: none;
       transition: transform 0.2s, box-shadow 0.2s;
     `;
@@ -273,6 +322,11 @@
     });
     
     document.body.appendChild(floatingBall);
+    
+    // 确保位置在可视区域内（延迟执行以确保元素已渲染）
+    setTimeout(() => {
+      constrainToViewport();
+    }, 0);
   }
   
   // 开始拖动
@@ -352,7 +406,10 @@
     
     floatingBall.style.transition = 'transform 0.2s, box-shadow 0.2s';
     
-    // 保存位置
+    // 确保位置在可视区域内
+    constrainToViewport();
+    
+    // 保存位置（使用当前实际位置）
     const rect = floatingBall.getBoundingClientRect();
     saveFloatingBallPosition({
       x: rect.left,
@@ -563,4 +620,76 @@
       initFloatingBall();
     }
   });
+  
+  // 监听窗口大小变化和页面缩放，自动调整悬浮球位置
+  let resizeTimer = null;
+  let lastViewportWidth = window.innerWidth;
+  let lastViewportHeight = window.innerHeight;
+  
+  function handleResize() {
+    // 防抖处理，避免频繁调用
+    if (resizeTimer) {
+      clearTimeout(resizeTimer);
+    }
+    resizeTimer = setTimeout(() => {
+      if (floatingBall) {
+        // 检查视口大小是否真的改变了（避免不必要的调用）
+        const currentWidth = window.innerWidth;
+        const currentHeight = window.innerHeight;
+        if (currentWidth !== lastViewportWidth || currentHeight !== lastViewportHeight) {
+          lastViewportWidth = currentWidth;
+          lastViewportHeight = currentHeight;
+          constrainToViewport();
+        }
+      }
+    }, 100);
+  }
+  
+  // 基础 resize 事件（所有浏览器都支持）
+  if (window.addEventListener) {
+    window.addEventListener('resize', handleResize);
+  } else if (window.attachEvent) {
+    // 兼容 IE8 及以下（虽然现在很少用，但为了完整性）
+    window.attachEvent('onresize', handleResize);
+  }
+  
+  // 监听页面缩放（通过 visualViewport API，如果可用）
+  // visualViewport API 支持情况：
+  // - Chrome 61+, Edge 79+, Firefox 91+, Safari 13+
+  if (typeof window !== 'undefined' && window.visualViewport) {
+    try {
+      if (window.visualViewport.addEventListener) {
+        window.visualViewport.addEventListener('resize', handleResize);
+        window.visualViewport.addEventListener('scroll', handleResize);
+      }
+    } catch (e) {
+      // 某些浏览器可能不支持，忽略错误
+      console.warn('[悬浮球] visualViewport API 不可用:', e);
+    }
+  }
+  
+  // 备用方案：通过定时检查视口变化（用于检测缩放）
+  // 这可以捕获一些 visualViewport 无法捕获的情况
+  let viewportCheckInterval = null;
+  function startViewportCheck() {
+    if (viewportCheckInterval) return;
+    viewportCheckInterval = setInterval(() => {
+      if (floatingBall) {
+        const currentWidth = window.innerWidth;
+        const currentHeight = window.innerHeight;
+        if (currentWidth !== lastViewportWidth || currentHeight !== lastViewportHeight) {
+          lastViewportWidth = currentWidth;
+          lastViewportHeight = currentHeight;
+          constrainToViewport();
+        }
+      }
+    }, 500); // 每 500ms 检查一次
+  }
+  
+  // 页面加载完成后开始检查
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startViewportCheck);
+  } else {
+    startViewportCheck();
+  }
 })();
