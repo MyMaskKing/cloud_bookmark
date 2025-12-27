@@ -403,6 +403,27 @@ function checkUrlParams() {
   const action = params.get('action');
   pageSource = params.get('source'); // 记录页面来源
   
+  // 如果是从快捷键打开的，隐藏主内容，只显示添加表单
+  if (pageSource === 'shortcut') {
+    const appContainer = document.querySelector('.app-container');
+    if (appContainer) {
+      // 隐藏侧边栏和主内容区域
+      const sidebar = document.querySelector('.sidebar');
+      const main = document.querySelector('main');
+      if (sidebar) sidebar.style.display = 'none';
+      if (main) main.style.display = 'none';
+      
+      // 设置页面样式，居中显示模态框
+      document.body.style.display = 'flex';
+      document.body.style.alignItems = 'center';
+      document.body.style.justifyContent = 'center';
+      document.body.style.minHeight = '100vh';
+      document.body.style.margin = '0';
+      document.body.style.padding = '0';
+      document.body.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
+    }
+  }
+  
   if (action === 'add') {
     const url = params.get('url');
     const title = params.get('title');
@@ -1301,6 +1322,17 @@ function hideModal() {
   }
   bookmarkModal.style.display = 'none';
   editingBookmarkId = null;
+  
+  // 如果是从快捷键打开的，关闭整个页面
+  if (pageSource === 'shortcut') {
+    sendMessageCompat({ action: 'closeCurrentTab' }).catch(() => {
+      try {
+        window.close();
+      } catch (e) {
+        // 静默处理
+      }
+    });
+  }
 }
 
 /**
@@ -1343,8 +1375,8 @@ function showSuccessInModal(message = '添加成功') {
   if (closeBtn) {
     closeBtn.addEventListener('click', () => {
       hideModal();
-      // 如果是从弹窗/悬浮球打开的，关闭页面
-      if (pageSource === 'popup' || pageSource === 'floating-ball') {
+      // 如果是从弹窗/悬浮球/快捷键打开的，关闭页面
+      if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
         sendMessageCompat({ action: 'closeCurrentTab' }).catch(() => {
           try {
             window.close();
@@ -1418,8 +1450,8 @@ async function handleSubmit(e) {
     // 在模态框中显示成功提示
     showSuccessInModal('添加成功');
     
-    // 如果是新增书签且是从弹窗/悬浮球打开的，1.5秒后关闭页面
-    if (isNewBookmark && (pageSource === 'popup' || pageSource === 'floating-ball')) {
+    // 如果是新增书签且是从弹窗/悬浮球/快捷键打开的，1.5秒后关闭页面
+    if (isNewBookmark && (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut')) {
       autoCloseTimer = setTimeout(() => {
         // 先关闭模态框
         hideModal();

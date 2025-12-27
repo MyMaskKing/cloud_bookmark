@@ -446,26 +446,112 @@ if (contextMenusAPI && contextMenusAPI.onClicked && typeof contextMenusAPI.onCli
 }
 
 // 监听快捷键命令（某些平台如移动端可能不支持 commands，需要判断）
+// 复用既存的 getActiveTab 消息处理逻辑
 if (commandsAPI && commandsAPI.onCommand && typeof commandsAPI.onCommand.addListener === 'function') {
   try {
     commandsAPI.onCommand.addListener(async (command) => {
       if (command === 'add-bookmark') {
         try {
-          const tabs = await tabsAPI.query({ active: true, currentWindow: true });
-          const tab = Array.isArray(tabs) ? tabs[0] : tabs;
-          // 验证 tab 和 tab.url 是否有效
-          if (tab && tab.url && typeof tab.id !== 'undefined' && tab.id !== null && !isNaN(tab.id)) {
-            if (typeof browser !== 'undefined' && browser.tabs) {
-              await tabsAPI.create({
-                url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}`)
-              });
-            } else {
-              tabsAPI.create({
-                url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}`)
-              });
+          // 复用既存的 getActiveTab 逻辑（通过内部调用）
+          // 使用与 popup.js 相同的逻辑：通过消息获取活动标签页
+          const handleTabs = (tabs) => {
+            const tab = Array.isArray(tabs) ? tabs[0] : null;
+            // 验证 tab 和 tab.id 是否有效
+            if (tab && typeof tab.id !== 'undefined' && tab.id !== null && !isNaN(tab.id) && tab.id >= 0) {
+              return { id: tab.id, url: tab.url || '', title: tab.title || '' };
+            }
+            return null;
+          };
+
+          const isExtensionUrl = (url) => {
+            return typeof url === 'string' && (
+              url.startsWith('chrome-extension://') ||
+              url.startsWith('moz-extension://') ||
+              url.startsWith('edge-extension://')
+            );
+          };
+
+          const findValidTab = (tabs) => {
+            if (!tabs || tabs.length === 0) return null;
+            const tab = handleTabs(tabs);
+            if (tab && tab.url && !isExtensionUrl(tab.url)) {
+              return tab;
+            }
+            return null;
+          };
+
+          let tab = null;
+
+          if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
+            // Firefox: 使用 Promise
+            tab = findValidTab(await tabsAPI.query({ active: true, currentWindow: true }));
+            if (!tab) {
+              tab = findValidTab(await tabsAPI.query({ active: true, lastFocusedWindow: true }));
+            }
+            if (!tab) {
+              const allTabs = await tabsAPI.query({ active: true });
+              tab = allTabs ? findValidTab(allTabs) : null;
+            }
+            if (!tab) {
+              const allTabs = await tabsAPI.query({});
+              tab = allTabs ? findValidTab(allTabs) : null;
             }
           } else {
-            console.error('[后台] 无法获取有效的活动标签页');
+            // Chrome: 使用回调，需要转换为 Promise
+            tab = await new Promise((resolve) => {
+              tabsAPI.query({ active: true, currentWindow: true }, (tabs) => {
+                if (chrome.runtime.lastError) {
+                  return resolve(null);
+                }
+                const result = findValidTab(tabs);
+                if (result) return resolve(result);
+                
+                tabsAPI.query({ active: true, lastFocusedWindow: true }, (tabs) => {
+                  if (chrome.runtime.lastError) {
+                    return resolve(null);
+                  }
+                  const result = findValidTab(tabs);
+                  if (result) return resolve(result);
+                  
+                  tabsAPI.query({ active: true }, (tabs) => {
+                    if (chrome.runtime.lastError) {
+                      return resolve(null);
+                    }
+                    const result = findValidTab(tabs);
+                    if (result) return resolve(result);
+                    
+                    tabsAPI.query({}, (tabs) => {
+                      if (chrome.runtime.lastError) {
+                        return resolve(null);
+                      }
+                      resolve(findValidTab(tabs));
+                    });
+                  });
+                });
+              });
+            });
+          }
+          
+          if (tab && tab.url) {
+            // 构建URL参数，包含URL和标题，使用 source=shortcut 以便自动关闭
+            const params = new URLSearchParams({
+              action: 'add',
+              url: tab.url,
+              source: 'shortcut'
+            });
+            if (tab.title) {
+              params.set('title', tab.title);
+            }
+            
+            const targetUrl = runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
+            
+            if (typeof browser !== 'undefined' && browser.tabs) {
+              await tabsAPI.create({ url: targetUrl });
+            } else {
+              tabsAPI.create({ url: targetUrl });
+            }
+          } else {
+            console.error('[后台] 无法获取有效的活动标签页（快捷键）');
           }
         } catch (error) {
           console.error('[后台] 快捷键添加书签失败:', error);

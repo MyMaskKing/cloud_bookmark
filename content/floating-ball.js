@@ -53,6 +53,10 @@
   let touchStartTime = 0;
   let touchStartPos = { x: 0, y: 0 };
   let hasMoved = false; // 标记是否实际移动了
+  
+  // 检测是否为移动设备
+  const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+                         (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
 
   // 同步失败 Toast（不影响页面交互：pointer-events: none）
   let toastEl = null;
@@ -350,6 +354,9 @@
       hasMoved = false;
     }
     
+    // 临时禁用点击事件，防止拖动时误触发
+    floatingBall.style.pointerEvents = 'auto';
+    
     document.addEventListener('mousemove', onDrag);
     document.addEventListener('touchmove', onDrag, { passive: false });
     document.addEventListener('mouseup', stopDrag);
@@ -396,8 +403,9 @@
   // 停止拖动
   function stopDrag(e) {
     if (!isDragging) return;
+    
+    const wasMoved = hasMoved; // 保存移动状态
     isDragging = false;
-    hasMoved = false;
     
     document.removeEventListener('mousemove', onDrag);
     document.removeEventListener('touchmove', onDrag);
@@ -415,6 +423,28 @@
       x: rect.left,
       y: rect.top
     });
+    
+    // 如果移动了，延迟重置 hasMoved，确保 click 事件能正确检测到
+    // 这样可以防止拖动后误触发点击
+    // 注意：移动端使用触摸事件，不会触发 click 事件，所以不需要拦截
+    if (wasMoved) {
+      // PC端：延迟重置，给 click 事件足够的时间检查 hasMoved
+      // 同时临时阻止点击事件（仅PC端，移动端不会触发click）
+      if (!isMobileDevice) {
+        const clickHandler = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          floatingBall.removeEventListener('click', clickHandler);
+        };
+        floatingBall.addEventListener('click', clickHandler, { once: true, capture: true });
+      }
+      
+      setTimeout(() => {
+        hasMoved = false;
+      }, 150);
+    } else {
+      hasMoved = false;
+    }
     
     // 重置触摸状态
     touchStartTime = 0;
@@ -500,7 +530,7 @@
     }
   }
   
-  // 处理触摸结束
+  // 处理触摸结束（移动端专用）
   function handleTouchEnd(e) {
     const touchEndTime = Date.now();
     const touch = e.changedTouches[0];
@@ -518,15 +548,34 @@
     // 如果正在拖动，停止拖动
     if (isDragging) {
       stopDrag(e);
+      // 重置状态（移动端拖动后不触发点击）
+      touchStartTime = 0;
+      hasMoved = false;
       return;
     }
     
-    // 如果没有移动且时间很短，认为是点击
+    // 如果没有移动且时间很短，认为是点击（移动端）
+    // 移动端使用触摸事件，不会触发 click 事件，所以直接在这里处理
     if (!hasMoved && timeDiff < 300 && distance < 10) {
-      console.log('[悬浮球] 识别为点击，调用 handleClick');
+      console.log('[悬浮球] 移动端识别为点击');
       e.preventDefault();
       e.stopPropagation();
-      handleClick(e);
+      
+      // 直接调用点击处理逻辑（移动端）
+      sendMessageCompat({ action: 'openPopup' }).then(response => {
+        console.log('[悬浮球] openPopup 响应:', response);
+        if (!response || !response.success) {
+          console.log('[悬浮球] openPopup 失败，尝试打开完整页面');
+          return sendMessageCompat({ action: 'openBookmarksPage' });
+        }
+      }).catch((error) => {
+        console.error('[悬浮球] openPopup 异常:', error);
+        sendMessageCompat({ action: 'openBookmarksPage' }).then(() => {
+          console.log('[悬浮球] openBookmarksPage 成功');
+        }).catch((err) => {
+          console.error('[悬浮球] openBookmarksPage 也失败:', err);
+        });
+      });
     }
     
     // 重置状态

@@ -196,6 +196,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       sceneMenu.style.display = 'none';
     }
   });
+  
+  // ESC键关闭弹窗（仅在PC上启用，手机没有物理键盘）
+  // 检测是否为移动设备
+  const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+                         (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
+  
+  if (!isMobileDevice) {
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' || e.key === 'Esc') {
+        // 如果搜索框有焦点，先清空搜索
+        if (document.activeElement === searchInput && searchInput.value.trim()) {
+          searchInput.value = '';
+          searchInput.dispatchEvent(new Event('input'));
+          return;
+        }
+        // 否则关闭弹窗
+        window.close();
+      }
+    });
+  }
 });
 
 /**

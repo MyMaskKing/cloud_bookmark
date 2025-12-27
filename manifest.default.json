@@ -50,8 +50,8 @@
   "commands": {
     "add-bookmark": {
       "suggested_key": {
-        "default": "Ctrl+Shift+B",
-        "mac": "Command+Shift+B"
+        "default": "Ctrl+Shift+Y",
+        "mac": "Command+Shift+Y"
       },
       "description": "添加当前页面为书签"
     }
