@@ -645,46 +645,117 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
       return true;
     }
     
-    if (typeof browser !== 'undefined' && browser.windows) {
-      // Firefox: 使用 Promise
-      windowsAPI.create({
-        url: runtimeAPI.getURL('popup/popup.html'),
-        type: 'popup',
-        width: 400,
-        height: 600
-      }).then(window => {
-        sendResponse({ success: true, windowId: window?.id });
-      }).catch(error => {
-        // 如果 popup 类型失败，回退到普通标签页
-        tabsAPI.create({
-          url: runtimeAPI.getURL('popup/popup.html')
-        }).then(() => {
-          sendResponse({ success: true });
-        }).catch(err => {
-          sendResponse({ success: false, error: err.message || error.message });
+    // 计算弹窗居中位置
+    const popupWidth = 400;
+    const popupHeight = 600;
+    
+    // 获取当前活动窗口，用于计算居中位置
+    const getCurrentWindow = () => {
+      if (typeof browser !== 'undefined' && browser.windows && browser.windows.getCurrent) {
+        // Firefox: 使用 Promise
+        return windowsAPI.getCurrent().catch(error => {
+          console.warn('[后台] getCurrent 失败:', error);
+          return null;
         });
-      });
-    } else {
-      // Chrome: 使用回调
-      windowsAPI.create({
+      } else if (windowsAPI && windowsAPI.getCurrent) {
+        // Chrome: 使用回调，转换为 Promise
+        return new Promise((resolve) => {
+          try {
+            windowsAPI.getCurrent((window) => {
+              if (chrome.runtime.lastError) {
+                console.warn('[后台] getCurrent 失败:', chrome.runtime.lastError.message);
+                resolve(null);
+              } else {
+                resolve(window);
+              }
+            });
+          } catch (error) {
+            console.warn('[后台] getCurrent 异常:', error);
+            resolve(null);
+          }
+        });
+      } else {
+        // windows API 不可用（如移动端）
+        return Promise.resolve(null);
+      }
+    };
+    
+    const createCenteredPopup = (left, top) => {
+      const popupOptions = {
         url: runtimeAPI.getURL('popup/popup.html'),
         type: 'popup',
-        width: 400,
-        height: 600
-      }, (window) => {
-        if (chrome.runtime.lastError) {
+        width: popupWidth,
+        height: popupHeight,
+        left: left,
+        top: top
+      };
+      
+      if (typeof browser !== 'undefined' && browser.windows) {
+        // Firefox: 使用 Promise
+        return windowsAPI.create(popupOptions).then(window => {
+          sendResponse({ success: true, windowId: window?.id });
+        }).catch(error => {
           // 如果 popup 类型失败，回退到普通标签页
           tabsAPI.create({
             url: runtimeAPI.getURL('popup/popup.html')
-          }, () => {
+          }).then(() => {
             sendResponse({ success: true });
+          }).catch(err => {
+            sendResponse({ success: false, error: err.message || error.message });
           });
-        } else {
-          sendResponse({ success: true, windowId: window?.id });
-        }
-      });
-    }
-    return true;
+        });
+      } else {
+        // Chrome: 使用回调
+        return new Promise((resolve) => {
+          windowsAPI.create(popupOptions, (window) => {
+            if (chrome.runtime.lastError) {
+              // 如果 popup 类型失败，回退到普通标签页
+              tabsAPI.create({
+                url: runtimeAPI.getURL('popup/popup.html')
+              }, () => {
+                sendResponse({ success: true });
+                resolve();
+              });
+            } else {
+              sendResponse({ success: true, windowId: window?.id });
+              resolve();
+            }
+          });
+        });
+      }
+    };
+    
+    // 获取当前窗口并计算居中位置
+    getCurrentWindow().then(currentWindow => {
+      let left, top;
+      
+      if (currentWindow && currentWindow.left !== undefined && currentWindow.width !== undefined) {
+        // 使用当前窗口的位置和大小计算居中
+        left = Math.floor(currentWindow.left + (currentWindow.width - popupWidth) / 2);
+        // 计算垂直居中，确保至少距离顶部 50px（避免被任务栏遮挡）
+        const windowTop = currentWindow.top || 0;
+        const windowHeight = currentWindow.height || 600;
+        const centerTop = windowTop + (windowHeight - popupHeight) / 2;
+        top = Math.max(50, Math.floor(centerTop));
+      } else {
+        // 回退：使用屏幕中心（假设常见屏幕尺寸）
+        // 大多数屏幕至少 1024px 宽，我们使用 1280 作为默认值
+        const screenWidth = 1280;
+        const screenHeight = 720;
+        left = Math.floor((screenWidth - popupWidth) / 2);
+        top = Math.floor((screenHeight - popupHeight) / 2);
+      }
+      
+      return createCenteredPopup(left, top);
+    }).catch(error => {
+      console.error('[后台] 获取当前窗口失败，使用默认位置:', error);
+      // 如果获取窗口失败，使用默认居中位置
+      const defaultLeft = Math.floor((1280 - popupWidth) / 2);
+      const defaultTop = Math.floor((720 - popupHeight) / 2);
+      return createCenteredPopup(defaultLeft, defaultTop);
+    });
+    
+    return true; // 异步响应，保持消息通道开放
   }
   
   if (request.action === 'openBookmarksPage') {
