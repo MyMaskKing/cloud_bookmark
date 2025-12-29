@@ -53,6 +53,7 @@
   let touchStartTime = 0;
   let touchStartPos = { x: 0, y: 0 };
   let hasMoved = false; // 标记是否实际移动了
+  let autoDockTimer = null; // 悬浮球自动贴边计时器
   
   // 检测是否为移动设备
   const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
@@ -242,6 +243,60 @@
     }
   }
   
+  // 清除自动贴边计时器
+  function clearAutoDockTimer() {
+    if (autoDockTimer) {
+      clearTimeout(autoDockTimer);
+      autoDockTimer = null;
+    }
+  }
+
+  // 启动（或重置）自动贴边计时器
+  function scheduleAutoDock() {
+    clearAutoDockTimer();
+    autoDockTimer = setTimeout(() => {
+      dockToNearestEdge();
+    }, 2000); // 2 秒无操作自动贴边
+  }
+
+  // 贴近最近的左右边缘
+  function dockToNearestEdge() {
+    if (!floatingBall) return;
+
+    const rect = floatingBall.getBoundingClientRect();
+    const viewportWidth = window.innerWidth;
+
+    const distanceToLeft = rect.left;
+    const distanceToRight = viewportWidth - (rect.left + rect.width);
+
+    // 使用平滑动画
+    floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 0.2s, box-shadow 0.2s, opacity 0.2s';
+
+    // 仅在左右居中时才需要重新贴边；否则直接根据更近的边来贴
+    if (distanceToLeft <= distanceToRight) {
+      // 贴左边
+      floatingBall.style.left = '0px';
+      floatingBall.style.right = 'auto';
+    } else {
+      // 贴右边
+      floatingBall.style.right = '0px';
+      floatingBall.style.left = 'auto';
+    }
+
+    // 贴边后降低一点透明度，减少遮挡感
+    floatingBall.style.opacity = '0.5';
+
+    // 保存新位置（使用最新的实际位置）
+    setTimeout(() => {
+      if (!floatingBall) return;
+      const finalRect = floatingBall.getBoundingClientRect();
+      saveFloatingBallPosition({
+        x: finalRect.left,
+        y: finalRect.top
+      });
+    }, 220);
+  }
+
   // 初始化悬浮球
   async function initFloatingBall() {
     console.log('[悬浮球] initFloatingBall 开始');
@@ -286,7 +341,8 @@
       justify-content: center;
       font-size: 20px;
       user-select: none;
-      transition: transform 0.2s, box-shadow 0.2s;
+      opacity: 1;
+      transition: left 0.2s ease, right 0.2s ease, transform 0.2s, box-shadow 0.2s, opacity 0.2s;
     `;
     
     // 加载保存的位置
@@ -330,6 +386,8 @@
     // 确保位置在可视区域内（延迟执行以确保元素已渲染）
     setTimeout(() => {
       constrainToViewport();
+      // 初始化后开始自动贴边计时
+      scheduleAutoDock();
     }, 0);
   }
   
@@ -338,6 +396,10 @@
     e.preventDefault();
     e.stopPropagation();
     isDragging = true;
+    clearAutoDockTimer();
+    if (floatingBall) {
+      floatingBall.style.opacity = '1';
+    }
     
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
     const clientY = e.touches ? e.touches[0].clientY : e.clientY;
@@ -412,7 +474,7 @@
     document.removeEventListener('mouseup', stopDrag);
     document.removeEventListener('touchend', stopDrag);
     
-    floatingBall.style.transition = 'transform 0.2s, box-shadow 0.2s';
+    floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 0.2s, box-shadow 0.2s';
     
     // 确保位置在可视区域内
     constrainToViewport();
@@ -448,6 +510,9 @@
     
     // 重置触摸状态
     touchStartTime = 0;
+
+    // 拖动结束后重新启动自动贴边计时
+    scheduleAutoDock();
   }
   
   // 处理点击
@@ -462,6 +527,12 @@
     
     e.preventDefault();
     e.stopPropagation();
+
+    // 点击也视为一次操作，恢复不透明并重新计时
+    if (floatingBall) {
+      floatingBall.style.opacity = '1';
+    }
+    scheduleAutoDock();
     
     console.log('[悬浮球] 开始发送 openPopup 消息');
     
@@ -497,6 +568,12 @@
     const rect = floatingBall.getBoundingClientRect();
     dragOffset.x = touch.clientX - rect.left - rect.width / 2;
     dragOffset.y = touch.clientY - rect.top - rect.height / 2;
+
+    // 触摸开始视为一次操作，清除自动贴边计时器并恢复不透明
+    clearAutoDockTimer();
+    if (floatingBall) {
+      floatingBall.style.opacity = '1';
+    }
   }
   
   // 处理触摸移动
@@ -560,6 +637,12 @@
       console.log('[悬浮球] 移动端识别为点击');
       e.preventDefault();
       e.stopPropagation();
+
+      // 点击视为一次操作，恢复不透明并重新计时
+      if (floatingBall) {
+        floatingBall.style.opacity = '1';
+      }
+      scheduleAutoDock();
       
       // 直接调用点击处理逻辑（移动端）
       sendMessageCompat({ action: 'openPopup' }).then(response => {
@@ -581,6 +664,11 @@
     // 重置状态
     touchStartTime = 0;
     hasMoved = false;
+
+    // 触摸结束后，如果没有触发点击（例如长按但未拖动），也重新开始计时
+    if (!isDragging) {
+      scheduleAutoDock();
+    }
   }
   
   // 兼容的 storage API
