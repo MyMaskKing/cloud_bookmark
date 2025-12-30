@@ -53,21 +53,69 @@ class StorageManager {
       bookmarks = bookmarks.map(b => ({ ...b, scene: b.scene || sceneId }));
     }
     
-    const data = {
-      bookmarks: bookmarks || [],
-      folders: folders || [],
-      lastSync: Date.now()
-    };
+    // 检测传入的书签是否属于同一个场景
+    let targetSceneId = null;
+    if (bookmarks && bookmarks.length > 0) {
+      // 检查所有书签的scene字段是否一致
+      const scenes = [...new Set(bookmarks.map(b => b.scene).filter(Boolean))];
+      if (scenes.length === 1) {
+        targetSceneId = scenes[0];
+      }
+    } else if (sceneId) {
+      // 如果书签数组为空但提供了sceneId，也使用合并模式（用于清空某个场景）
+      targetSceneId = sceneId;
+    }
+    
+    // 如果确定是某个场景的书签，需要合并而不是覆盖
+    if (targetSceneId) {
+      // 读取所有场景的书签
+      const allData = await this.getBookmarks();
+      const allBookmarks = allData.bookmarks || [];
+      
+      // 移除该场景的旧书签，保留其他场景的书签
+      const otherSceneBookmarks = allBookmarks.filter(b => b.scene !== targetSceneId);
+      
+      // 合并书签：其他场景的书签 + 当前场景的新书签
+      const mergedBookmarks = [...otherSceneBookmarks, ...(bookmarks || [])];
+      
+      // 合并文件夹列表：收集所有场景的文件夹
+      const otherSceneFolders = otherSceneBookmarks.map(b => b.folder).filter(Boolean);
+      const allFoldersSet = new Set([...otherSceneFolders, ...(folders || [])]);
+      const mergedFolders = [...allFoldersSet].filter(Boolean);
+      
+      const data = {
+        bookmarks: mergedBookmarks,
+        folders: mergedFolders,
+        lastSync: Date.now()
+      };
 
-    return new Promise((resolve, reject) => {
-      this.storage.set({ [this.bookmarksKey]: data }, () => {
-        if (this.hasError()) {
-          reject(new Error(this.getError()));
-        } else {
-          resolve(data);
-        }
+      return new Promise((resolve, reject) => {
+        this.storage.set({ [this.bookmarksKey]: data }, () => {
+          if (this.hasError()) {
+            reject(new Error(this.getError()));
+          } else {
+            resolve(data);
+          }
+        });
       });
-    });
+    } else {
+      // 如果无法确定场景，或者书签来自多个场景，直接保存（覆盖模式，用于初始化或全量更新）
+      const data = {
+        bookmarks: bookmarks || [],
+        folders: folders || [],
+        lastSync: Date.now()
+      };
+
+      return new Promise((resolve, reject) => {
+        this.storage.set({ [this.bookmarksKey]: data }, () => {
+          if (this.hasError()) {
+            reject(new Error(this.getError()));
+          } else {
+            resolve(data);
+          }
+        });
+      });
+    }
   }
 
   /**
