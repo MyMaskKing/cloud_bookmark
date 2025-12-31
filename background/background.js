@@ -628,28 +628,15 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     
-    // 如果传递了当前页面信息，直接打开添加书签页面
+    // 构建 popup URL，如果悬浮球传递了当前页面信息，通过 URL 参数传递
+    let popupUrl = runtimeAPI.getURL('popup/popup.html');
     if (request.currentUrl && request.currentTitle) {
       const params = new URLSearchParams({
-        action: 'add',
         url: request.currentUrl,
         title: request.currentTitle,
         source: 'floating-ball'
       });
-      const targetUrl = runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
-      
-      if (typeof browser !== 'undefined' && browser.tabs) {
-        tabsAPI.create({ url: targetUrl }).then(() => {
-          sendResponse({ success: true });
-        }).catch(error => {
-          console.error('[后台] 打开添加书签页面失败:', error);
-          sendResponse({ success: false, error: error.message });
-        });
-      } else {
-        tabsAPI.create({ url: targetUrl });
-        sendResponse({ success: true });
-      }
-      return true;
+      popupUrl = runtimeAPI.getURL(`popup/popup.html?${params.toString()}`);
     }
     
     console.log('[后台] windowsAPI 存在:', !!windowsAPI, 'tabsAPI 存在:', !!tabsAPI);
@@ -658,7 +645,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     if (!windowsAPI || !windowsAPI.create) {
       console.log('[后台] windows API 不存在，使用 tabs.create 打开标签页');
       tabsAPI.create({
-        url: runtimeAPI.getURL('popup/popup.html')
+        url: popupUrl
       }).then(() => {
         console.log('[后台] tabs.create 成功');
         sendResponse({ success: true });
@@ -706,7 +693,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     
     const createCenteredPopup = (left, top) => {
       const popupOptions = {
-        url: runtimeAPI.getURL('popup/popup.html'),
+        url: popupUrl,
         type: 'popup',
         width: popupWidth,
         height: popupHeight,
@@ -721,7 +708,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         }).catch(error => {
           // 如果 popup 类型失败，回退到普通标签页
           tabsAPI.create({
-            url: runtimeAPI.getURL('popup/popup.html')
+            url: popupUrl
           }).then(() => {
             sendResponse({ success: true });
           }).catch(err => {
@@ -735,7 +722,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
             if (chrome.runtime.lastError) {
               // 如果 popup 类型失败，回退到普通标签页
               tabsAPI.create({
-                url: runtimeAPI.getURL('popup/popup.html')
+                url: popupUrl
               }, () => {
                 sendResponse({ success: true });
                 resolve();
@@ -783,22 +770,13 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'openBookmarksPage') {
-    console.log('[后台] 收到 openBookmarksPage 请求', { hasCurrentUrl: !!request.currentUrl, hasCurrentTitle: !!request.currentTitle });
+    console.log('[后台] 收到 openBookmarksPage 请求');
     // 打开完整书签管理页面
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
     
-    // 如果传递了当前页面信息，打开添加书签页面；否则打开完整管理页面
-    let targetUrl = runtimeAPI.getURL('pages/bookmarks.html');
-    if (request.currentUrl && request.currentTitle) {
-      const params = new URLSearchParams({
-        action: 'add',
-        url: request.currentUrl,
-        title: request.currentTitle,
-        source: 'floating-ball'
-      });
-      targetUrl = runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
-    }
+    // 总是打开完整管理页面
+    const targetUrl = runtimeAPI.getURL('pages/bookmarks.html');
     
     if (typeof browser !== 'undefined' && browser.tabs) {
       // Firefox: 使用 Promise
@@ -1156,7 +1134,54 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
     // 云端文件缺失(404)的处理：避免误删本地数据
     if (cloudData && cloudData._notFound) {
       const hasLocal = localSceneBookmarks.length > 0;
-      if (isSceneSynced || hasLocal) {
+      if (hasLocal) {
+        // 如果本地有数据，先上传所有场景的本地数据到云端（保存设置时应该覆盖云端）
+        console.log('[SYNC] cloud file missing but local has data -> upload all scenes to cloud', { sceneId: currentSceneId, localCount: localSceneBookmarks.length });
+        try {
+          // 获取所有场景列表
+          const scenes = await storage.getScenes();
+          
+          // 为所有场景上传数据
+          for (const scene of scenes) {
+            const sceneData = await storage.getBookmarks(scene.id);
+            const sceneBookmarks = sceneData.bookmarks || [];
+            const sceneFolders = sceneData.folders || [];
+            
+            // 上传该场景的数据到云端
+            await webdav.writeBookmarks(
+              { bookmarks: sceneBookmarks, folders: sceneFolders },
+              scene.id
+            );
+            
+            // 标记该场景为已同步
+            await storage.addSyncedScene(scene.id);
+            
+            console.log('[SYNC] uploaded scene to cloud', { sceneId: scene.id, bookmarks: sceneBookmarks.length, folders: sceneFolders.length });
+          }
+          
+          await storage.saveSyncStatus({
+            status: 'success',
+            lastSync: Date.now(),
+            error: null
+          });
+          
+          // 通知所有打开的页面更新
+          runtimeAPI.sendMessage({ action: 'bookmarksUpdated' }).catch(() => {});
+          
+          return { success: true };
+        } catch (e) {
+          const errorMsg = `云端场景文件不存在，且上传本地数据失败：${e?.message || e}`;
+          console.warn('[SYNC] upload local data failed -> fail', { sceneId: currentSceneId, error: e?.message || e });
+          await storage.saveSyncStatus({
+            status: 'error',
+            lastSync: Date.now(),
+            error: errorMsg
+          });
+          await showSyncErrorNotification(errorMsg);
+          return { success: false, error: errorMsg, code: 'CLOUD_FILE_UPLOAD_FAILED' };
+        }
+      } else if (isSceneSynced) {
+        // 如果本地没有数据但场景已同步过，说明云端文件可能被删除，报错
         const filePath = cloudData._filePath || `${currentSceneId}_bookmarks.json`;
         const errorMsg = `云端场景文件不存在（可能被删除）：${filePath}`;
         console.warn('[SYNC] cloud file missing -> fail', { sceneId: currentSceneId, isSceneSynced, localCount: localSceneBookmarks.length, filePath });
@@ -1169,8 +1194,8 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
         await showSyncErrorNotification(errorMsg);
         return { success: false, error: errorMsg, code: 'CLOUD_FILE_MISSING' };
       } else {
+        // 本地没有数据且场景未同步过，创建空文件
         console.log('[SYNC] cloud file missing but scene not synced and local empty -> treat as empty', { sceneId: currentSceneId });
-        // 尝试创建空文件，避免后续继续 404（如果失败，应视为同步失败，否则会误报成功）
         try {
           const r = await webdav.writeBookmarks({ bookmarks: [], folders: [] }, currentSceneId);
           console.log('[SYNC] created empty cloud file', { sceneId: currentSceneId, ok: !!r?.success });

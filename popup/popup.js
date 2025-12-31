@@ -648,19 +648,39 @@ searchInput.addEventListener('input', debounce(async (e) => {
  */
 addCurrentBtn.addEventListener('click', async () => {
   pushOpLog('addCurrent: start');
-  const tab = await getActiveTabSafe();
-  if (tab && tab.url) {
-    pushOpLog(`addCurrent: got tab url=${tab.url}`);
-    // 直接使用获取到的标签页信息，避免在移动端查询不准确
-    tabsAPI.create({
-      url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title || '')}&source=popup`)
-    });
-    // 操作完成后关闭弹窗
-    window.close();
+  
+  // 优先使用 URL 参数中的信息（从悬浮球传递过来的，准确）
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlFromParams = urlParams.get('url');
+  const titleFromParams = urlParams.get('title');
+  
+  let targetUrl, targetTitle;
+  
+  if (urlFromParams && titleFromParams) {
+    // 使用从悬浮球传递过来的信息（从 content script 直接获取，准确）
+    targetUrl = decodeURIComponent(urlFromParams);
+    targetTitle = decodeURIComponent(titleFromParams);
+    pushOpLog(`addCurrent: using params from floating ball url=${targetUrl}`);
   } else {
-    pushOpLog('addCurrent: failed to get active tab');
-    alert('无法获取当前页面，请在支持的浏览器/标签页中重试');
+    // 回退到查询标签页（PC 端或非悬浮球触发的情况）
+    const tab = await getActiveTabSafe();
+    if (tab && tab.url) {
+      targetUrl = tab.url;
+      targetTitle = tab.title || '';
+      pushOpLog(`addCurrent: got tab url=${targetUrl}`);
+    } else {
+      pushOpLog('addCurrent: failed to get active tab');
+      alert('无法获取当前页面，请在支持的浏览器/标签页中重试');
+      return;
+    }
   }
+  
+  // 打开添加书签页面
+  tabsAPI.create({
+    url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(targetTitle || '')}&source=popup`)
+  });
+  // 操作完成后关闭弹窗
+  window.close();
 });
 
 function isExtensionUrl(url) {
