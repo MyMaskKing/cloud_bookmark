@@ -78,9 +78,14 @@ class StorageManager {
       // 合并书签：其他场景的书签 + 当前场景的新书签
       const mergedBookmarks = [...otherSceneBookmarks, ...(bookmarks || [])];
       
-      // 合并文件夹列表：收集所有场景的文件夹
+      // 合并文件夹列表：
+      // 1. 从其他场景的书签中提取文件夹
       const otherSceneFolders = otherSceneBookmarks.map(b => b.folder).filter(Boolean);
-      const allFoldersSet = new Set([...otherSceneFolders, ...(folders || [])]);
+      // 2. 从当前场景的书签中提取文件夹（确保只包含当前场景实际使用的文件夹）
+      const currentSceneBookmarkFolders = (bookmarks || []).map(b => b.folder).filter(Boolean);
+      // 3. 合并：其他场景的文件夹 + 当前场景传入的文件夹（可能包含空文件夹）+ 当前场景书签中的文件夹
+      // 注意：传入的 folders 参数应该只包含当前场景的文件夹，但为了确保完整性，也合并从书签中提取的文件夹
+      const allFoldersSet = new Set([...otherSceneFolders, ...(folders || []), ...currentSceneBookmarkFolders]);
       const mergedFolders = [...allFoldersSet].filter(Boolean);
       
       const data = {

@@ -475,6 +475,12 @@ function setupEventListeners() {
   
   bookmarkForm.addEventListener('submit', handleSubmit);
   addFolderBtn.addEventListener('click', handleAddFolder);
+  
+  // 绑定创建文件夹按钮（在添加书签表单中）
+  const createFolderBtn = document.getElementById('createFolderBtn');
+  if (createFolderBtn) {
+    createFolderBtn.addEventListener('click', handleCreateFolderInForm);
+  }
 
   // 空状态按钮绑定（Firefox CSP 要求，不能使用内联 onclick）
   const addFirstBookmarkBtn = document.getElementById('addFirstBookmarkBtn');
@@ -640,7 +646,7 @@ async function loadBookmarks() {
     const storedKey = storedFolders.join('|');
     const dedupKey = dedup.join('|');
     if (storedKey !== dedupKey) {
-      await storage.saveBookmarks(currentBookmarks, currentFolders);
+      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     }
 
     renderBookmarks();
@@ -724,7 +730,7 @@ async function loadFolders() {
       const target = row.dataset.folder;
       if (!source || !target || source === target) return;
       reorderFolder(source, target);
-      await storage.saveBookmarks(currentBookmarks, currentFolders);
+      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
       await syncToCloud();
       await loadFolders();
       await loadTags();
@@ -748,7 +754,7 @@ async function loadFolders() {
       const dir = btn.dataset.dir === 'up' ? -1 : 1;
       const moved = moveFolderSameLevel(folder, dir);
       if (!moved) return;
-      await storage.saveBookmarks(currentBookmarks, currentFolders);
+      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
       await syncToCloud();
       await loadFolders();
       await loadTags();
@@ -828,7 +834,7 @@ async function renameFolderPath(oldPath, newPath) {
     return b;
   });
   currentFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
-  await storage.saveBookmarks(currentBookmarks, currentFolders);
+  await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
   await syncToCloud();
 }
 
@@ -845,7 +851,7 @@ async function handleAddFolder() {
   }
   currentFolders.push(normalized);
   currentFolders = [...new Set(currentFolders)];
-  await storage.saveBookmarks(currentBookmarks, currentFolders);
+  await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
   await syncToCloud();
   await loadFolders();
   await loadTags();
@@ -865,7 +871,7 @@ async function deleteFolderPath(folderPath) {
   });
   // 删除文件夹记录
   currentFolders = currentFolders.filter(f => f !== folderPath && !f.startsWith(folderPath + '/'));
-  await storage.saveBookmarks(currentBookmarks, currentFolders);
+  await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
   await syncToCloud();
 }
 
@@ -915,7 +921,7 @@ function openFolderMenu(anchorBtn, folderPath) {
         }
         currentFolders.push(newPath);
         currentFolders = [...new Set(currentFolders)].sort();
-        await storage.saveBookmarks(currentBookmarks, currentFolders);
+        await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
         await syncToCloud();
         await loadFolders();
         await loadTags();
@@ -932,7 +938,7 @@ function openFolderMenu(anchorBtn, folderPath) {
         const dir = action === 'move-up' ? -1 : 1;
         const moved = moveFolderSameLevel(folderPath, dir);
         if (!moved) return;
-        await storage.saveBookmarks(currentBookmarks, currentFolders);
+        await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
         await syncToCloud();
         await loadFolders();
         await loadTags();
@@ -1288,14 +1294,17 @@ function renderFolderTreeOptions(node, level = 0, selected = '') {
 
 /**
  * 加载文件夹选项（优化版：树形结构）
+ * 包含从书签中提取的文件夹和 currentFolders 中的文件夹（确保空文件夹也能显示）
  */
 function loadFolderOptions(selected = '') {
   const select = document.getElementById('bookmarkFolder');
-  const folders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
-  folders.sort();
+  // 合并从书签中提取的文件夹和 currentFolders 中的文件夹
+  const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
+  const allFolders = [...new Set([...bookmarkFolders, ...currentFolders])];
+  allFolders.sort();
   
   // 构建树结构
-  const tree = buildFolderTreeForSelect(folders);
+  const tree = buildFolderTreeForSelect(allFolders);
   
   // 渲染选项
   let html = '<option value="">📁 未分类</option>';
@@ -1303,12 +1312,196 @@ function loadFolderOptions(selected = '') {
   
   select.innerHTML = html;
   
+  // 如果指定了 selected，确保选中
+  if (selected) {
+    select.value = selected;
+  }
+  
   // 添加搜索功能（如果选项很多）
-  if (folders.length > 10) {
+  if (allFolders.length > 10) {
     // 为 select 添加搜索提示
     select.title = '提示：可以输入关键词快速搜索文件夹';
     select.setAttribute('data-searchable', 'true');
   }
+}
+
+/**
+ * 在添加书签表单中创建新文件夹
+ * 新建文件夹时不同步云端，只在保存书签时同步
+ */
+async function handleCreateFolderInForm() {
+  const select = document.getElementById('bookmarkFolder');
+  if (!select) return;
+  
+  // 获取当前选择的文件夹路径（空字符串表示"未分类"）
+  const currentSelectedPath = select.value.trim();
+  
+  // 显示创建文件夹对话框
+  const result = await showCreateFolderDialog(currentSelectedPath);
+  if (!result) {
+    return; // 用户取消
+  }
+  
+  const folderName = result.trim();
+  if (!folderName) {
+    return; // 输入为空
+  }
+  
+  // 构建完整路径
+  let newPath = '';
+  if (currentSelectedPath) {
+    // 在当前选择的文件夹下创建子文件夹
+    newPath = normalizeFolderPath(`${currentSelectedPath}/${folderName}`);
+  } else {
+    // 在根目录创建（"未分类"下不能直接创建子文件夹，只能在根目录创建）
+    newPath = normalizeFolderPath(folderName);
+  }
+  
+  if (!newPath) {
+    alert('文件夹路径不能为空');
+    return;
+  }
+  
+  // 检查文件夹是否已存在
+  const existingFolders = [...new Set([
+    ...currentBookmarks.map(b => b.folder).filter(f => f),
+    ...currentFolders
+  ])];
+  
+  if (existingFolders.includes(newPath)) {
+    alert('该文件夹已存在');
+    // 如果已存在，直接选中它
+    loadFolderOptions(newPath);
+    return;
+  }
+  
+  // 添加到文件夹列表（不排序，保持添加顺序，但去重）
+  if (!currentFolders.includes(newPath)) {
+    currentFolders.push(newPath);
+    currentFolders = [...new Set(currentFolders)];
+    
+    // 保存到本地（但不同步云端）
+    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+    
+    // 重新加载文件夹选项并自动选中新创建的文件夹
+    loadFolderOptions(newPath);
+    
+    // 同时更新侧边栏的文件夹列表（但不同步云端）
+    await loadFolders();
+  } else {
+    // 如果已存在，直接选中它
+    loadFolderOptions(newPath);
+  }
+}
+
+/**
+ * 显示创建文件夹对话框
+ */
+function showCreateFolderDialog(currentSelectedPath) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+    `;
+    const dialog = document.createElement('div');
+    // 检测是否为移动设备
+    const isMobile = window.innerWidth <= 768;
+    dialog.style.cssText = `
+      background: #fff;
+      border-radius: 8px;
+      padding: ${isMobile ? '16px' : '20px'};
+      width: ${isMobile ? '95%' : '480px'};
+      max-width: 90%;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      font-size: ${isMobile ? '16px' : '14px'};
+    `;
+    
+    // 构建提示信息
+    let title = '创建新文件夹';
+    let hintText = '';
+    let placeholderText = '';
+    
+    if (currentSelectedPath) {
+      // 如果已选择了某个文件夹，在该文件夹下创建子文件夹
+      title = '创建子文件夹';
+      hintText = `将在「${escapeHtml(currentSelectedPath)}」下创建子文件夹`;
+      placeholderText = '请输入子文件夹名称';
+    } else {
+      // 如果选择了"未分类"，在根目录创建新文件夹
+      title = '创建新文件夹';
+      hintText = '提示："未分类"不是真正的文件夹，新文件夹将在根目录创建。支持用 / 创建多级文件夹，如：项目/前端/UI';
+      placeholderText = '请输入文件夹名称（支持用/创建多级）';
+    }
+    
+    dialog.innerHTML = `
+      <h3 style="margin: 0 0 12px; font-size: ${isMobile ? '18px' : '16px'}; font-weight: 600;">${title}</h3>
+      ${hintText ? `<div style="margin-bottom: 12px; padding: 10px; background: #f0f7ff; border-left: 3px solid #0066cc; border-radius: 4px; font-size: ${isMobile ? '14px' : '13px'}; color: #333; line-height: 1.5;">
+        ${hintText}
+      </div>` : ''}
+      <div style="margin-bottom: 16px;">
+        <label style="display:block; margin-bottom:6px; font-weight: 500;">文件夹名称</label>
+        <input type="text" id="createFolderNameInput" style="width:100%;padding:${isMobile ? '12px' : '8px 10px'};border:1px solid #ddd;border-radius:6px;font-size:${isMobile ? '16px' : '14px'};box-sizing:border-box;" placeholder="${placeholderText}" autocomplete="off">
+      </div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button id="createFolderCancelBtn" class="btn btn-secondary" style="min-width:${isMobile ? '80px' : '70px'};min-height:${isMobile ? '44px' : 'auto'};font-size:${isMobile ? '16px' : '14px'};">取消</button>
+        <button id="createFolderOkBtn" class="btn btn-primary" style="min-width:${isMobile ? '80px' : '70px'};min-height:${isMobile ? '44px' : 'auto'};font-size:${isMobile ? '16px' : '14px'};">创建</button>
+      </div>
+    `;
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const nameInput = dialog.querySelector('#createFolderNameInput');
+    const cancelBtn = dialog.querySelector('#createFolderCancelBtn');
+    const okBtn = dialog.querySelector('#createFolderOkBtn');
+
+    const cleanup = () => {
+      overlay.remove();
+      document.removeEventListener('keydown', onKeyDown);
+    };
+
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        cleanup();
+        resolve(null);
+      } else if (e.key === 'Enter' && e.ctrlKey) {
+        // Ctrl+Enter 快速确认
+        okBtn.click();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+
+    cancelBtn.onclick = () => {
+      cleanup();
+      resolve(null);
+    };
+
+    okBtn.onclick = () => {
+      const folderName = nameInput.value.trim();
+      if (!folderName) {
+        alert('请输入文件夹名称');
+        nameInput.focus();
+        return;
+      }
+      cleanup();
+      resolve(folderName);
+    };
+
+    // 点击背景关闭
+    overlay.onclick = (e) => {
+      if (e.target === overlay) {
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    nameInput.focus();
+  });
 }
 
 /**
@@ -1437,7 +1630,7 @@ async function handleSubmit(e) {
       currentBookmarks.push(bookmark);
     }
     
-    await storage.saveBookmarks(currentBookmarks, currentFolders);
+    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     
     // 同步到云端（同步当前场景的书签）
     await syncToCloud();
@@ -1490,7 +1683,7 @@ async function toggleStar(bookmarkId) {
     bookmark.updatedAt = Date.now();
     
     try {
-      await storage.saveBookmarks(currentBookmarks, currentFolders);
+      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
       await syncToCloud();
       renderBookmarks();
     } catch (error) {
@@ -1510,7 +1703,7 @@ async function deleteBookmark(bookmarkId) {
   currentBookmarks = currentBookmarks.filter(b => b.id !== bookmarkId);
   
   try {
-    await storage.saveBookmarks(currentBookmarks, currentFolders);
+    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     await syncToCloud();
     await loadBookmarks();
     await loadFolders();
@@ -1932,7 +2125,7 @@ async function batchMoveBookmarks() {
     currentFolders = allFolders;
     
     // 保存到本地
-    await storage.saveBookmarks(currentBookmarks, currentFolders);
+    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     
     // 同步到云端（与单个编辑逻辑一致：使用 syncToCloud）
     await syncToCloud();
@@ -1977,7 +2170,7 @@ async function batchDeleteBookmarks() {
     currentFolders = allFolders;
     
     // 保存到本地
-    await storage.saveBookmarks(currentBookmarks, currentFolders);
+    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     
     // 同步到云端
     await syncToCloud();
@@ -2027,8 +2220,9 @@ function showFolderSelectDialog() {
       flex-direction: column;
     `;
     
-    // 与单个编辑时的 loadFolderOptions 逻辑一致：从书签中提取文件夹
-    const folders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
+    // 与单个编辑时的 loadFolderOptions 逻辑一致：合并从书签中提取的文件夹和 currentFolders 中的文件夹
+    const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
+    const folders = [...new Set([...bookmarkFolders, ...currentFolders])];
     folders.sort();
     
     // 构建树结构

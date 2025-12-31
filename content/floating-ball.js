@@ -536,18 +536,34 @@
     
     console.log('[悬浮球] 开始发送 openPopup 消息');
     
+    // 获取当前页面的URL和标题（直接从content script获取，避免标签页查询问题）
+    const currentUrl = window.location.href;
+    const currentTitle = document.title;
+    
     // 打开书签弹窗（在新窗口中打开popup页面）
-    sendMessageCompat({ action: 'openPopup' }).then(response => {
+    sendMessageCompat({ 
+      action: 'openPopup',
+      currentUrl: currentUrl,
+      currentTitle: currentTitle
+    }).then(response => {
       console.log('[悬浮球] openPopup 响应:', response);
       if (!response || !response.success) {
         console.log('[悬浮球] openPopup 失败，尝试打开完整页面');
-        // 如果无法打开popup，尝试打开完整页面
-        return sendMessageCompat({ action: 'openBookmarksPage' });
+        // 如果无法打开popup，尝试打开完整页面，并传递当前页面信息
+        return sendMessageCompat({ 
+          action: 'openBookmarksPage',
+          currentUrl: currentUrl,
+          currentTitle: currentTitle
+        });
       }
     }).catch((error) => {
       console.error('[悬浮球] openPopup 异常:', error);
-      // 如果打开弹窗失败，尝试打开完整页面
-      sendMessageCompat({ action: 'openBookmarksPage' }).then(() => {
+      // 如果打开弹窗失败，尝试打开完整页面，并传递当前页面信息
+      sendMessageCompat({ 
+        action: 'openBookmarksPage',
+        currentUrl: currentUrl,
+        currentTitle: currentTitle
+      }).then(() => {
         console.log('[悬浮球] openBookmarksPage 成功');
       }).catch((err) => {
         console.error('[悬浮球] openBookmarksPage 也失败:', err);
@@ -644,16 +660,32 @@
       }
       scheduleAutoDock();
       
+      // 获取当前页面的URL和标题（直接从content script获取，避免标签页查询问题）
+      const currentUrl = window.location.href;
+      const currentTitle = document.title;
+      
       // 直接调用点击处理逻辑（移动端）
-      sendMessageCompat({ action: 'openPopup' }).then(response => {
+      sendMessageCompat({ 
+        action: 'openPopup',
+        currentUrl: currentUrl,
+        currentTitle: currentTitle
+      }).then(response => {
         console.log('[悬浮球] openPopup 响应:', response);
         if (!response || !response.success) {
           console.log('[悬浮球] openPopup 失败，尝试打开完整页面');
-          return sendMessageCompat({ action: 'openBookmarksPage' });
+          return sendMessageCompat({ 
+            action: 'openBookmarksPage',
+            currentUrl: currentUrl,
+            currentTitle: currentTitle
+          });
         }
       }).catch((error) => {
         console.error('[悬浮球] openPopup 异常:', error);
-        sendMessageCompat({ action: 'openBookmarksPage' }).then(() => {
+        sendMessageCompat({ 
+          action: 'openBookmarksPage',
+          currentUrl: currentUrl,
+          currentTitle: currentTitle
+        }).then(() => {
           console.log('[悬浮球] openBookmarksPage 成功');
         }).catch((err) => {
           console.error('[悬浮球] openBookmarksPage 也失败:', err);

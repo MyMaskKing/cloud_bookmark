@@ -621,12 +621,36 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'openPopup') {
-    console.log('[后台] 收到 openPopup 请求');
+    console.log('[后台] 收到 openPopup 请求', { hasCurrentUrl: !!request.currentUrl, hasCurrentTitle: !!request.currentTitle });
     // 打开弹窗（在新窗口中打开popup页面）
     // 注意：某些平台如 Firefox Android 可能不支持 windows API 或 type: 'popup'
     const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
     const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+    
+    // 如果传递了当前页面信息，直接打开添加书签页面
+    if (request.currentUrl && request.currentTitle) {
+      const params = new URLSearchParams({
+        action: 'add',
+        url: request.currentUrl,
+        title: request.currentTitle,
+        source: 'floating-ball'
+      });
+      const targetUrl = runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
+      
+      if (typeof browser !== 'undefined' && browser.tabs) {
+        tabsAPI.create({ url: targetUrl }).then(() => {
+          sendResponse({ success: true });
+        }).catch(error => {
+          console.error('[后台] 打开添加书签页面失败:', error);
+          sendResponse({ success: false, error: error.message });
+        });
+      } else {
+        tabsAPI.create({ url: targetUrl });
+        sendResponse({ success: true });
+      }
+      return true;
+    }
     
     console.log('[后台] windowsAPI 存在:', !!windowsAPI, 'tabsAPI 存在:', !!tabsAPI);
     
@@ -759,15 +783,27 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'openBookmarksPage') {
-    console.log('[后台] 收到 openBookmarksPage 请求');
+    console.log('[后台] 收到 openBookmarksPage 请求', { hasCurrentUrl: !!request.currentUrl, hasCurrentTitle: !!request.currentTitle });
     // 打开完整书签管理页面
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
     
+    // 如果传递了当前页面信息，打开添加书签页面；否则打开完整管理页面
+    let targetUrl = runtimeAPI.getURL('pages/bookmarks.html');
+    if (request.currentUrl && request.currentTitle) {
+      const params = new URLSearchParams({
+        action: 'add',
+        url: request.currentUrl,
+        title: request.currentTitle,
+        source: 'floating-ball'
+      });
+      targetUrl = runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
+    }
+    
     if (typeof browser !== 'undefined' && browser.tabs) {
       // Firefox: 使用 Promise
       tabsAPI.create({
-        url: runtimeAPI.getURL('pages/bookmarks.html')
+        url: targetUrl
       }).then(() => {
         console.log('[后台] openBookmarksPage 成功');
         sendResponse({ success: true });
@@ -778,7 +814,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     } else {
       // Chrome: 使用回调
       tabsAPI.create({
-        url: runtimeAPI.getURL('pages/bookmarks.html')
+        url: targetUrl
       });
       console.log('[后台] openBookmarksPage 成功 (Chrome)');
       sendResponse({ success: true });
@@ -1345,7 +1381,12 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
     
     // 只同步指定场景的书签到对应的文件
     const sceneBookmarks = cleaned.bookmarks.filter(b => b.scene === targetSceneId);
-    const sceneFolders = [...new Set(sceneBookmarks.map(b => b.folder).filter(Boolean))];
+    
+    // 合并文件夹：从书签中提取的文件夹 + 传入的文件夹列表（确保空文件夹也能同步）
+    const bookmarkFolders = [...new Set(sceneBookmarks.map(b => b.folder).filter(Boolean))];
+    const passedFolders = cleaned.folders || [];
+    // 合并并去重，确保空文件夹也能同步到云端
+    const sceneFolders = [...new Set([...bookmarkFolders, ...passedFolders])];
     
     await webdav.writeBookmarks(
       { bookmarks: sceneBookmarks, folders: sceneFolders },

@@ -651,8 +651,9 @@ addCurrentBtn.addEventListener('click', async () => {
   const tab = await getActiveTabSafe();
   if (tab && tab.url) {
     pushOpLog(`addCurrent: got tab url=${tab.url}`);
+    // 直接使用获取到的标签页信息，避免在移动端查询不准确
     tabsAPI.create({
-      url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title)}&source=popup`)
+      url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(tab.url)}&title=${encodeURIComponent(tab.title || '')}&source=popup`)
     });
     // 操作完成后关闭弹窗
     window.close();
