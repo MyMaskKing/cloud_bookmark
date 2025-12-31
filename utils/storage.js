@@ -138,10 +138,19 @@ class StorageManager {
           // 如果指定了场景ID，过滤书签和文件夹
           if (sceneId) {
             const filteredBookmarks = (data.bookmarks || []).filter(b => b.scene === sceneId);
-            const filteredFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
+            // 从书签中提取文件夹
+            const bookmarkFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
+            // 使用存储的 folders 顺序（保持创建顺序），然后添加从书签中提取的文件夹
+            const storedFolders = (data.folders || []).filter(Boolean);
+            const bookmarkFoldersSet = new Set(bookmarkFolders);
+            // 合并：保持存储的 folders 顺序，然后添加不在存储列表中的文件夹
+            const mergedFolders = [
+              ...storedFolders.filter(f => bookmarkFoldersSet.has(f)), // 存储的文件夹中，当前场景使用的（保持顺序）
+              ...bookmarkFolders.filter(f => !storedFolders.includes(f)) // 当前场景使用的，但不在存储列表中的
+            ];
             resolve({
               bookmarks: filteredBookmarks,
-              folders: filteredFolders,
+              folders: mergedFolders,
               lastSync: data.lastSync
             });
           } else {

@@ -311,6 +311,7 @@ async function loadBookmarksForPopup() {
     // 按当前场景过滤书签
     const data = await storage.getBookmarks(currentSceneId);
     const bookmarks = data.bookmarks || [];
+    const folders = data.folders || []; // 获取文件夹列表（保持创建顺序）
     pushOpLog(`loadBookmarks success, scene=${currentSceneId}, total=${bookmarks.length}`);
     
     // 显示所有书签，与完整画面保持一致（不再限制数量）
@@ -325,7 +326,7 @@ async function loadBookmarksForPopup() {
     }
 
     lastRenderedBookmarks = sorted;
-    renderBookmarks(sorted, { searchMode: false });
+    renderBookmarks(sorted, { searchMode: false, folders: folders });
   } catch (error) {
     console.error('加载书签失败:', error);
     pushOpLog(`loadBookmarks failed: ${error.message}`);
@@ -335,7 +336,7 @@ async function loadBookmarksForPopup() {
 /**
  * 渲染书签列表
  */
-function renderBookmarks(bookmarks, { searchMode = false } = {}) {
+function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {}) {
   if (bookmarks.length === 0) {
     bookmarkList.innerHTML = '<div class="empty-state">暂无书签</div>';
     return;
@@ -378,7 +379,8 @@ function renderBookmarks(bookmarks, { searchMode = false } = {}) {
     // 已迁移到 loadBookmarksForPopup 中按设置控制
   }
 
-  const tree = buildFolderTree(bookmarks);
+  // 使用传入的 folders 参数（如果提供）来保持文件夹顺序
+  const tree = buildFolderTree(bookmarks, folders);
   bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
 
   // 使用 requestAnimationFrame 确保 DOM 更新完成后再绑定事件
@@ -534,8 +536,28 @@ function saveFolderState() {
   }
 }
 
-function buildFolderTree(bookmarks) {
+function buildFolderTree(bookmarks, folders = null) {
   const root = { name: 'root', path: '', folders: {}, items: [] };
+  
+  // 如果提供了 folders 列表，先按照这个顺序创建文件夹结构（保持创建顺序）
+  if (folders && folders.length > 0) {
+    folders.forEach(folderPath => {
+      const normalized = normalizeFolderPath(folderPath);
+      if (!normalized) return;
+      const parts = normalized.split('/');
+      let node = root;
+      let currentPath = '';
+      parts.forEach(part => {
+        currentPath = currentPath ? `${currentPath}/${part}` : part;
+        if (!node.folders[part]) {
+          node.folders[part] = { name: part, path: currentPath, folders: {}, items: [] };
+        }
+        node = node.folders[part];
+      });
+    });
+  }
+  
+  // 然后添加书签到对应的文件夹
   bookmarks.forEach(b => {
     const folderPath = normalizeFolderPath(b.folder || '');
     if (!folderPath) {
@@ -548,6 +570,7 @@ function buildFolderTree(bookmarks) {
     parts.forEach(part => {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
       if (!node.folders[part]) {
+        // 如果文件夹不存在（可能不在 folders 列表中），创建它
         node.folders[part] = { name: part, path: currentPath, folders: {}, items: [] };
       }
       node = node.folders[part];
@@ -564,7 +587,7 @@ function countSubfolders(node) {
 }
 
 function renderFolderTreeHtml(node, indentPath) {
-  const folderEntries = Object.values(node.folders).sort((a, b) => a.name.localeCompare(b.name));
+  const folderEntries = Object.values(node.folders);
   const items = node.items || [];
 
   const folderHtml = folderEntries.map(child => {
