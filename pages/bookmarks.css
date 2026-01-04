@@ -240,6 +240,13 @@ body {
   color: #4a90e2;
 }
 
+/* 桌面端隐藏展开/折叠按钮（点击文件夹行即可展开/折叠） */
+@media (min-width: 769px) {
+  .folder-expand-toggle {
+    display: none;
+  }
+}
+
 .folder-menu {
   border: none;
   background: transparent;
@@ -979,16 +986,27 @@ body {
 
   /* 移动端文件夹展开/折叠按钮优化 */
   .folder-expand-toggle {
-    min-width: 32px;
-    min-height: 32px;
-    font-size: 14px;
-    padding: 4px 8px;
+    display: block; /* 确保移动端显示 */
+    min-width: 28px;
+    min-height: 28px;
+    font-size: 12px;
+    padding: 2px 4px;
+    flex-shrink: 0;
   }
 
   .folder-menu {
-    min-width: 32px;
-    min-height: 32px;
-    padding: 4px 8px;
+    min-width: 28px;
+    min-height: 28px;
+    padding: 2px 4px;
+    flex-shrink: 0;
+  }
+
+  .folder-actions {
+    gap: 4px; /* 减小按钮间距 */
+  }
+
+  .folder-row {
+    padding: 8px 10px; /* 稍微减小内边距 */
   }
 
   .bookmark-card {
