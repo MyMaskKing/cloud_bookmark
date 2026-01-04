@@ -8,6 +8,7 @@
     "storage",
     "bookmarks",
     "tabs",
+    "windows",
     "contextMenus",
     "alarms",
     "activeTab"

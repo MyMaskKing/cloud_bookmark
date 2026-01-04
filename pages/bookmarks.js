@@ -637,15 +637,17 @@ async function loadBookmarks() {
     // 规范化存储的文件夹列表（保留用户创建的空文件夹）
     const storedFolders = (data.folders || []).map(p => normalizeFolderPath(p || '')).filter(Boolean);
     const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
+    // 合并：保留所有存储的文件夹（包括空文件夹）+ 从书签中提取的文件夹
     const missing = [...new Set(bookmarkFolders)].filter(f => f && !storedFolders.includes(f)).sort();
-    const merged = [...storedFolders, ...missing];
+    const merged = [...storedFolders, ...missing]; // 先保留存储的文件夹，再添加缺失的
     const dedup = [...new Set(merged)];
     currentFolders = dedup;
 
-    // 若与存储数据不一致，回写清理结果
+    // 若与存储数据不一致，回写清理结果（但保留空文件夹）
     const storedKey = storedFolders.join('|');
     const dedupKey = dedup.join('|');
     if (storedKey !== dedupKey) {
+      // 保存时确保保留所有文件夹（包括空文件夹）
       await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     }
 
@@ -675,12 +677,18 @@ async function loadFolders() {
     folderCountMap.set(folder, (folderCountMap.get(folder) || 0) + 1);
   });
 
-  const folders = [...new Set([
-    ...currentFolders,
-    ...Array.from(folderCountMap.keys())
-  ])]
+  // 合并文件夹列表：保留 currentFolders 中的所有文件夹（包括空文件夹），并添加从书签中提取的文件夹
+  // 保持 currentFolders 的顺序，然后添加不在其中的文件夹
+  const bookmarkFolders = Array.from(folderCountMap.keys());
+  // 规范化 currentFolders 并保持顺序
+  const normalizedCurrentFolders = currentFolders.map(normalizeFolderPath).filter(f => f);
+  const normalizedCurrentFoldersSet = new Set(normalizedCurrentFolders);
+  // 规范化 bookmarkFolders 并过滤掉已在 currentFolders 中的
+  const normalizedBookmarkFolders = bookmarkFolders
     .map(normalizeFolderPath)
-    .filter(f => f);
+    .filter(f => f && !normalizedCurrentFoldersSet.has(f));
+  // 合并：先保留 currentFolders 的顺序，然后添加新文件夹
+  const folders = [...normalizedCurrentFolders, ...normalizedBookmarkFolders];
 
   const tree = buildFolderTree(folders);
 
@@ -763,10 +771,10 @@ async function loadFolders() {
 }
 
 /**
- * 构建树结构
+ * 构建树结构（保持文件夹顺序）
  */
 function buildFolderTree(folders) {
-  const root = { name: '', path: '', children: {} };
+  const root = { name: '', path: '', children: {}, order: [] };
   folders.forEach(folder => {
     const parts = folder.split('/');
     let node = root;
@@ -774,7 +782,9 @@ function buildFolderTree(folders) {
     parts.forEach(part => {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
       if (!node.children[part]) {
-        node.children[part] = { name: part, path: currentPath, children: {} };
+        node.children[part] = { name: part, path: currentPath, children: {}, order: [] };
+        // 维护子节点的顺序
+        node.order.push(part);
       }
       node = node.children[part];
     });
@@ -783,10 +793,13 @@ function buildFolderTree(folders) {
 }
 
 /**
- * 渲染树结构为HTML
+ * 渲染树结构为HTML（保持文件夹顺序）
  */
 function renderFolderTree(children, folderCountMap = new Map(), rootNode = null) {
-  const entries = Object.values(children);
+  // 如果没有 order 数组，回退到 Object.values（兼容旧代码）
+  const entries = rootNode && rootNode.order 
+    ? rootNode.order.map(key => children[key]).filter(Boolean)
+    : Object.values(children);
   if (entries.length === 0) return '';
 
   return `
@@ -796,6 +809,7 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null)
         const bookmarkCount = folderCountMap.get(child.path) || 0;
         const subfolderCount = countSubfoldersInTree(child);
         const totalCount = bookmarkCount + subfolderCount;
+        // 即使没有书签和子文件夹，也显示文件夹（空文件夹显示 0）
         return `
         <li class="folder-node">
           <div class="folder-row" data-folder="${escapeHtml(child.path)}">
@@ -805,7 +819,7 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null)
             </span>
             <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
           </div>
-          ${renderFolderTree(child.children, folderCountMap, rootNode)}
+          ${renderFolderTree(child.children, folderCountMap, child)}
         </li>
       `;
       }).join('')}
@@ -833,7 +847,21 @@ async function renameFolderPath(oldPath, newPath) {
     }
     return b;
   });
-  currentFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
+  
+  // 更新文件夹列表：保留所有现有文件夹（包括空文件夹），并更新重命名的文件夹路径
+  const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
+  currentFolders = currentFolders.map(f => {
+    if (f === oldPath) {
+      return newPath; // 重命名文件夹
+    }
+    if (f.startsWith(oldPath + '/')) {
+      return newPath + f.slice(oldPath.length); // 重命名子文件夹
+    }
+    return f; // 保留其他文件夹
+  });
+  // 合并：更新后的文件夹列表 + 从书签中提取的文件夹（确保不丢失）
+  currentFolders = [...new Set([...currentFolders, ...bookmarkFolders])];
+  
   await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
   await syncToCloud();
 }
@@ -885,19 +913,50 @@ function openFolderMenu(anchorBtn, folderPath) {
 
   const menu = document.createElement('div');
   menu.className = 'folder-menu-popup';
-  menu.style.cssText = 'position:absolute; background:white; border:1px solid #ddd; border-radius:6px; box-shadow:0 4px 12px rgba(0,0,0,0.15); padding:6px 0; z-index:2000; min-width:160px;';
   menu.innerHTML = `
-    <div class="folder-menu-item" data-action="add">新增子文件夹</div>
-    <div class="folder-menu-item" data-action="rename">重命名/移动</div>
-    <div class="folder-menu-item" data-action="move-up">上移（同层级）</div>
-    <div class="folder-menu-item" data-action="move-down">下移（同层级）</div>
-    <div class="folder-menu-item danger" data-action="delete">删除文件夹（含书签）</div>
+    <div class="folder-menu-item" data-action="add">
+      <span style="font-size: 16px;">📁</span>
+      <span>新增子文件夹</span>
+    </div>
+    <div class="folder-menu-item" data-action="rename">
+      <span style="font-size: 16px;">✏️</span>
+      <span>重命名/移动</span>
+    </div>
+    <div class="folder-menu-item" data-action="move-up">
+      <span style="font-size: 16px;">⬆️</span>
+      <span>上移（同层级）</span>
+    </div>
+    <div class="folder-menu-item" data-action="move-down">
+      <span style="font-size: 16px;">⬇️</span>
+      <span>下移（同层级）</span>
+    </div>
+    <div style="height: 1px; background: #e0e0e0; margin: 6px 0;"></div>
+    <div class="folder-menu-item danger" data-action="delete">
+      <span style="font-size: 16px;">🗑️</span>
+      <span>删除文件夹（含书签）</span>
+    </div>
   `;
 
   document.body.appendChild(menu);
   const rect = anchorBtn.getBoundingClientRect();
-  menu.style.top = `${rect.bottom + window.scrollY + 4}px`;
-  menu.style.left = `${rect.left + window.scrollX - 40}px`;
+  const menuRect = menu.getBoundingClientRect();
+  
+  // 计算菜单位置，确保不会超出视口
+  let top = rect.bottom + window.scrollY + 4;
+  let left = rect.left + window.scrollX - 40;
+  
+  // 检查右边界
+  if (left + menuRect.width > window.innerWidth) {
+    left = window.innerWidth - menuRect.width - 10;
+  }
+  
+  // 检查下边界
+  if (top + menuRect.height > window.innerHeight + window.scrollY) {
+    top = rect.top + window.scrollY - menuRect.height - 4;
+  }
+  
+  menu.style.top = `${top}px`;
+  menu.style.left = `${left}px`;
 
   const closeMenu = (e) => {
     if (!menu.contains(e.target) && e.target !== anchorBtn) {
@@ -920,7 +979,7 @@ function openFolderMenu(anchorBtn, folderPath) {
           return;
         }
         currentFolders.push(newPath);
-        currentFolders = [...new Set(currentFolders)].sort();
+        currentFolders = [...new Set(currentFolders)]; // 去重但保持顺序（不排序，保持用户设置的顺序）
         await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
         await syncToCloud();
         await loadFolders();
@@ -1380,13 +1439,14 @@ async function handleCreateFolderInForm() {
     currentFolders.push(newPath);
     currentFolders = [...new Set(currentFolders)];
     
-    // 保存到本地（但不同步云端）
+    // 保存到本地并同步到云端（确保空文件夹不会丢失）
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+    await syncToCloud();
     
     // 重新加载文件夹选项并自动选中新创建的文件夹
     loadFolderOptions(newPath);
     
-    // 同时更新侧边栏的文件夹列表（但不同步云端）
+    // 同时更新侧边栏的文件夹列表
     await loadFolders();
   } else {
     // 如果已存在，直接选中它
@@ -1400,26 +1460,50 @@ async function handleCreateFolderInForm() {
 function showCreateFolderDialog(currentSelectedPath) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay';
     overlay.style.cssText = `
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.35);
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(4px);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 2000;
+      animation: fadeIn 0.2s ease-out;
     `;
+    
+    // 添加动画样式
+    if (!document.getElementById('dialog-animations')) {
+      const style = document.createElement('style');
+      style.id = 'dialog-animations';
+      style.textContent = `
+        @keyframes fadeIn {
+          from { opacity: 0; }
+          to { opacity: 1; }
+        }
+        @keyframes slideUp {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
     const dialog = document.createElement('div');
+    dialog.className = 'dialog-container';
     // 检测是否为移动设备
     const isMobile = window.innerWidth <= 768;
     dialog.style.cssText = `
-      background: #fff;
-      border-radius: 8px;
-      padding: ${isMobile ? '16px' : '20px'};
-      width: ${isMobile ? '95%' : '480px'};
+      background: #ffffff;
+      border-radius: 12px;
+      padding: ${isMobile ? '20px' : '24px'};
+      width: ${isMobile ? '90%' : '480px'};
       max-width: 90%;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05);
       font-size: ${isMobile ? '16px' : '14px'};
+      animation: slideUp 0.3s ease-out;
+      position: relative;
     `;
     
     // 构建提示信息
@@ -1440,17 +1524,22 @@ function showCreateFolderDialog(currentSelectedPath) {
     }
     
     dialog.innerHTML = `
-      <h3 style="margin: 0 0 12px; font-size: ${isMobile ? '18px' : '16px'}; font-weight: 600;">${title}</h3>
-      ${hintText ? `<div style="margin-bottom: 12px; padding: 10px; background: #f0f7ff; border-left: 3px solid #0066cc; border-radius: 4px; font-size: ${isMobile ? '14px' : '13px'}; color: #333; line-height: 1.5;">
-        ${hintText}
-      </div>` : ''}
-      <div style="margin-bottom: 16px;">
-        <label style="display:block; margin-bottom:6px; font-weight: 500;">文件夹名称</label>
-        <input type="text" id="createFolderNameInput" style="width:100%;padding:${isMobile ? '12px' : '8px 10px'};border:1px solid #ddd;border-radius:6px;font-size:${isMobile ? '16px' : '14px'};box-sizing:border-box;" placeholder="${placeholderText}" autocomplete="off">
+      <div style="margin-bottom: 20px;">
+        <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 24px;">📁</span>
+          <span>${title}</span>
+        </h3>
       </div>
-      <div style="display:flex; justify-content:flex-end; gap:10px;">
-        <button id="createFolderCancelBtn" class="btn btn-secondary" style="min-width:${isMobile ? '80px' : '70px'};min-height:${isMobile ? '44px' : 'auto'};font-size:${isMobile ? '16px' : '14px'};">取消</button>
-        <button id="createFolderOkBtn" class="btn btn-primary" style="min-width:${isMobile ? '80px' : '70px'};min-height:${isMobile ? '44px' : 'auto'};font-size:${isMobile ? '16px' : '14px'};">创建</button>
+      ${hintText ? `<div style="margin-bottom: 16px; padding: 12px; background: linear-gradient(135deg, #e3f2fd 0%, #f0f7ff 100%); border-left: 4px solid #2196f3; border-radius: 6px; font-size: ${isMobile ? '14px' : '13px'}; color: #1976d2; line-height: 1.6;">
+        <span style="display: inline-block; margin-right: 6px;">💡</span>${hintText}
+      </div>` : ''}
+      <div style="margin-bottom: 20px;">
+        <label style="display: block; margin-bottom: 8px; font-weight: 500; color: #333; font-size: ${isMobile ? '15px' : '14px'};">文件夹名称</label>
+        <input type="text" id="createFolderNameInput" style="width: 100%; padding: ${isMobile ? '12px 14px' : '10px 12px'}; border: 2px solid #e0e0e0; border-radius: 8px; font-size: ${isMobile ? '16px' : '14px'}; box-sizing: border-box; transition: border-color 0.2s; outline: none;" placeholder="${placeholderText}" autocomplete="off">
+      </div>
+      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 24px;">
+        <button id="createFolderCancelBtn" class="btn btn-secondary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500;">取消</button>
+        <button id="createFolderOkBtn" class="btn btn-primary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500;">创建</button>
       </div>
     `;
     overlay.appendChild(dialog);
@@ -1460,8 +1549,19 @@ function showCreateFolderDialog(currentSelectedPath) {
     const cancelBtn = dialog.querySelector('#createFolderCancelBtn');
     const okBtn = dialog.querySelector('#createFolderOkBtn');
 
+    // 输入框焦点样式
+    nameInput.addEventListener('focus', () => {
+      nameInput.style.borderColor = '#4a90e2';
+      nameInput.style.boxShadow = '0 0 0 3px rgba(74, 144, 226, 0.1)';
+    });
+    nameInput.addEventListener('blur', () => {
+      nameInput.style.borderColor = '#e0e0e0';
+      nameInput.style.boxShadow = 'none';
+    });
+
     const cleanup = () => {
-      overlay.remove();
+      overlay.style.animation = 'fadeIn 0.2s ease-out reverse';
+      setTimeout(() => overlay.remove(), 200);
       document.removeEventListener('keydown', onKeyDown);
     };
 
@@ -1484,8 +1584,11 @@ function showCreateFolderDialog(currentSelectedPath) {
     okBtn.onclick = () => {
       const folderName = nameInput.value.trim();
       if (!folderName) {
-        alert('请输入文件夹名称');
+        nameInput.style.borderColor = '#f44336';
         nameInput.focus();
+        setTimeout(() => {
+          nameInput.style.borderColor = '#e0e0e0';
+        }, 2000);
         return;
       }
       cleanup();
@@ -2119,10 +2222,13 @@ async function batchMoveBookmarks() {
       bookmark.updatedAt = Date.now();
     });
     
-    // 更新 currentFolders：从所有书签中提取文件夹（与 loadBookmarks 逻辑一致）
+    // 更新 currentFolders：保留现有顺序，添加新文件夹
     const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
-    const allFolders = [...new Set(bookmarkFolders)].sort();
-    currentFolders = allFolders;
+    const bookmarkFoldersSet = new Set(bookmarkFolders);
+    // 保留 currentFolders 中存在的文件夹（保持顺序），然后添加新文件夹
+    const existingFolders = currentFolders.filter(f => bookmarkFoldersSet.has(f));
+    const newFolders = bookmarkFolders.filter(f => !currentFolders.includes(f));
+    currentFolders = [...existingFolders, ...newFolders];
     
     // 保存到本地
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
@@ -2164,10 +2270,11 @@ async function batchDeleteBookmarks() {
     // 删除选中的书签
     currentBookmarks = currentBookmarks.filter(b => !selectedBookmarkIds.has(b.id));
     
-    // 更新文件夹列表（从剩余书签中提取）
+    // 更新文件夹列表：保留现有顺序，移除不再使用的文件夹
     const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
-    const allFolders = [...new Set(bookmarkFolders)].sort();
-    currentFolders = allFolders;
+    const bookmarkFoldersSet = new Set(bookmarkFolders);
+    // 保留 currentFolders 中仍然有书签使用的文件夹（保持顺序）
+    currentFolders = currentFolders.filter(f => bookmarkFoldersSet.has(f));
     
     // 保存到本地
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
@@ -2195,29 +2302,36 @@ async function batchDeleteBookmarks() {
 function showFolderSelectDialog() {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay';
     overlay.style.cssText = `
       position: fixed;
       inset: 0;
-      background: rgba(0,0,0,0.35);
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(4px);
       display: flex;
       align-items: center;
       justify-content: center;
       z-index: 2000;
+      animation: fadeIn 0.2s ease-out;
     `;
+    
     const dialog = document.createElement('div');
+    dialog.className = 'dialog-container';
     // 检测是否为移动设备
     const isMobile = window.innerWidth <= 768;
     dialog.style.cssText = `
-      background: #fff;
-      border-radius: 8px;
-      padding: ${isMobile ? '16px' : '20px'};
-      width: ${isMobile ? '95%' : '420px'};
+      background: #ffffff;
+      border-radius: 12px;
+      padding: ${isMobile ? '20px' : '24px'};
+      width: ${isMobile ? '90%' : '480px'};
       max-width: 90%;
       max-height: ${isMobile ? '85vh' : '80vh'};
-      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05);
       font-size: ${isMobile ? '16px' : '14px'};
       display: flex;
       flex-direction: column;
+      animation: slideUp 0.3s ease-out;
+      position: relative;
     `;
     
     // 与单个编辑时的 loadFolderOptions 逻辑一致：合并从书签中提取的文件夹和 currentFolders 中的文件夹
@@ -2240,18 +2354,23 @@ function showFolderSelectDialog() {
     const maxHeight = isMobile ? '50vh' : '400px';
     
     dialog.innerHTML = `
-      <h3 style="margin: 0 0 12px; font-size: ${isMobile ? '18px' : '16px'}; font-weight: 600;">选择目标文件夹</h3>
-      <div style="margin-bottom: 12px;">
-        <input type="text" id="folderSearchInput" placeholder="搜索文件夹..." style="width:100%;padding:${inputPadding};border:1px solid #ddd;border-radius:6px;font-size:${inputFontSize};box-sizing:border-box;-webkit-appearance:none;">
+      <div style="margin-bottom: 20px;">
+        <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a; display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 24px;">📂</span>
+          <span>选择目标文件夹</span>
+        </h3>
       </div>
-      <div style="margin-bottom: 16px; flex: 1; min-height: ${minHeight}; max-height: ${maxHeight}; overflow-y: auto; border: 1px solid #eee; border-radius: 6px; padding: 8px; background: #fafafa;">
-        <select id="targetFolderSelect" size="${selectSize}" style="width:100%;border:none;font-size:${selectFontSize};outline:none;background:transparent;">
+      <div style="margin-bottom: 16px;">
+        <input type="text" id="folderSearchInput" placeholder="🔍 搜索文件夹..." style="width: 100%; padding: ${inputPadding}; border: 2px solid #e0e0e0; border-radius: 8px; font-size: ${inputFontSize}; box-sizing: border-box; -webkit-appearance: none; transition: border-color 0.2s; outline: none;" autocomplete="off">
+      </div>
+      <div style="margin-bottom: 20px; flex: 1; min-height: ${minHeight}; max-height: ${maxHeight}; overflow-y: auto; border: 2px solid #e0e0e0; border-radius: 8px; padding: 8px; background: #fafafa;">
+        <select id="targetFolderSelect" size="${selectSize}" style="width: 100%; border: none; font-size: ${selectFontSize}; outline: none; background: transparent; color: #333;">
           ${folderOptions}
         </select>
       </div>
-      <div style="display:flex; justify-content:flex-end; gap:10px; margin-top: auto;">
-        <button id="folderSelectCancelBtn" class="btn btn-secondary" style="min-width:${isMobile ? '80px' : '70px'};min-height:${isMobile ? '44px' : 'auto'};font-size:${isMobile ? '16px' : '14px'};">取消</button>
-        <button id="folderSelectOkBtn" class="btn btn-primary" style="min-width:${isMobile ? '80px' : '70px'};min-height:${isMobile ? '44px' : 'auto'};font-size:${isMobile ? '16px' : '14px'};">确定</button>
+      <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: auto;">
+        <button id="folderSelectCancelBtn" class="btn btn-secondary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500;">取消</button>
+        <button id="folderSelectOkBtn" class="btn btn-primary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500;">确定</button>
       </div>
     `;
     overlay.appendChild(dialog);
@@ -2264,6 +2383,16 @@ function showFolderSelectDialog() {
     
     // 添加搜索功能
     if (searchInput) {
+      // 搜索框焦点样式
+      searchInput.addEventListener('focus', () => {
+        searchInput.style.borderColor = '#4a90e2';
+        searchInput.style.boxShadow = '0 0 0 3px rgba(74, 144, 226, 0.1)';
+      });
+      searchInput.addEventListener('blur', () => {
+        searchInput.style.borderColor = '#e0e0e0';
+        searchInput.style.boxShadow = 'none';
+      });
+      
       const allOptions = Array.from(folderSelect.options);
       searchInput.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase().trim();
@@ -2288,7 +2417,8 @@ function showFolderSelectDialog() {
     }
 
     const cleanup = () => {
-      overlay.remove();
+      overlay.style.animation = 'fadeIn 0.2s ease-out reverse';
+      setTimeout(() => overlay.remove(), 200);
       document.removeEventListener('keydown', onKeyDown);
     };
 

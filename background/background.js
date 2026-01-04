@@ -103,6 +103,9 @@ const storage = new StorageManager();
 let syncInterval = 5 * 60 * 1000; // 默认5分钟
 let syncAlarmName = 'syncBookmarks';
 let currentDevice = null;
+// 防抖变量：用于返回检测时的防抖机制
+let focusCheckTimeout = null;
+let tabActivatedCheckTimeout = null;
 
 function normalizeFolderPath(path) {
   if (!path) return '';
@@ -410,6 +413,119 @@ runtimeAPI.onStartup.addListener(async () => {
   // 尝试同步一次设置，保证设备列表/当前场景及时更新
   await syncSettingsFromCloud().catch(() => {});
 });
+
+/**
+ * 检查是否需要立即同步（当用户回到浏览器时）
+ * 如果距离上次同步的时间超过了设定的时间间隔，则返回true
+ */
+async function shouldSyncOnReturn() {
+  try {
+    const config = await storage.getConfig();
+    if (!config || !config.serverUrl) {
+      // 没有配置，不需要同步
+      return false;
+    }
+
+    // 获取同步状态
+    const syncStatus = await storage.getSyncStatus();
+    
+    // 如果正在同步中，不需要再次触发
+    if (syncStatus.status === 'syncing') {
+      console.log('[返回检测] 同步正在进行中，跳过');
+      return false;
+    }
+
+    if (!syncStatus.lastSync) {
+      // 从未同步过，需要同步
+      return true;
+    }
+
+    // 获取同步间隔（分钟转毫秒）
+    const syncIntervalMinutes = config.syncInterval || 5;
+    const syncIntervalMs = syncIntervalMinutes * 60 * 1000;
+
+    // 计算距离上次同步的时间
+    const timeSinceLastSync = Date.now() - syncStatus.lastSync;
+
+    // 如果超过时间间隔，需要同步
+    if (timeSinceLastSync >= syncIntervalMs) {
+      console.log('[返回检测] 距离上次同步已超过时间间隔，需要立即同步', {
+        lastSync: new Date(syncStatus.lastSync).toLocaleString(),
+        timeSinceLastSync: Math.floor(timeSinceLastSync / 1000 / 60) + '分钟',
+        syncInterval: syncIntervalMinutes + '分钟'
+      });
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error('[返回检测] 检查是否需要同步时出错:', error);
+    return false;
+  }
+}
+
+/**
+ * 当用户回到浏览器时，检查是否需要立即同步
+ */
+async function checkAndSyncOnReturn() {
+  try {
+    const needSync = await shouldSyncOnReturn();
+    if (needSync) {
+      console.log('[返回检测] 触发立即同步');
+      // 触发同步（不跳过设备检测，不清空本地数据）
+      await syncFromCloud().catch(error => {
+        console.error('[返回检测] 同步失败:', error);
+      });
+    }
+  } catch (error) {
+    console.error('[返回检测] 检查并同步时出错:', error);
+  }
+}
+
+// 监听窗口焦点变化（当用户切换回浏览器时）
+const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
+if (windowsAPI && windowsAPI.onFocusChanged && typeof windowsAPI.onFocusChanged.addListener === 'function') {
+  try {
+    windowsAPI.onFocusChanged.addListener(async (windowId) => {
+      // windowId 为 -1 表示所有窗口都失去焦点（用户切换到其他应用）
+      // windowId 为有效数字时，表示有窗口获得焦点（用户回到浏览器）
+      // 注意：某些浏览器可能使用其他值表示无焦点窗口，我们只检查是否为有效正数
+      if (windowId !== -1 && typeof windowId === 'number' && windowId > 0) {
+        // 使用防抖机制，避免频繁触发
+        if (focusCheckTimeout) {
+          clearTimeout(focusCheckTimeout);
+        }
+        // 延迟一小段时间，避免频繁触发
+        focusCheckTimeout = setTimeout(() => {
+          console.log('[返回检测] 检测到窗口获得焦点，检查是否需要同步', { windowId });
+          checkAndSyncOnReturn();
+          focusCheckTimeout = null;
+        }, 1000);
+      }
+    });
+  } catch (e) {
+    console.warn('[返回检测] 注册窗口焦点监听失败（可能当前平台不支持）:', e?.message || e);
+  }
+}
+
+// 监听标签页激活（作为窗口焦点检测的补充）
+if (tabsAPI && tabsAPI.onActivated && typeof tabsAPI.onActivated.addListener === 'function') {
+  try {
+    tabsAPI.onActivated.addListener(async (activeInfo) => {
+      // 使用防抖机制，避免频繁触发
+      if (tabActivatedCheckTimeout) {
+        clearTimeout(tabActivatedCheckTimeout);
+      }
+      // 延迟检查，避免频繁触发
+      tabActivatedCheckTimeout = setTimeout(() => {
+        checkAndSyncOnReturn();
+        tabActivatedCheckTimeout = null;
+      }, 2000);
+    });
+  } catch (e) {
+    console.warn('[返回检测] 注册标签页激活监听失败（可能当前平台不支持）:', e?.message || e);
+  }
+}
 
 // 监听右键菜单点击（仅在支持 contextMenus 的平台生效）
 if (contextMenusAPI && contextMenusAPI.onClicked && typeof contextMenusAPI.onClicked.addListener === 'function') {
@@ -1304,13 +1420,17 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
       // 定时同步或首次同步无冲突：云端数据直接覆盖本地当前场景
       const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
       
-      // 合并文件夹
+      // 合并文件夹：保留所有本地文件夹（包括空文件夹）+ 云端的文件夹
+      // 从其他场景的书签中提取文件夹
+      const otherSceneFolders = [...new Set(otherSceneBookmarks.map(b => b.folder).filter(Boolean))];
+      // 保留所有本地存储的文件夹（包括空文件夹），然后合并云端的文件夹
       const allFolders = [...new Set([
-        ...(allBookmarks.folders || []),
-        ...cleaned.folders
+        ...(allBookmarks.folders || []),  // 保留所有本地文件夹（包括空文件夹）
+        ...otherSceneFolders,  // 其他场景的文件夹（从书签中提取，作为补充）
+        ...cleaned.folders  // 云端的文件夹
       ])];
       
-      // 保存数据（云端覆盖本地）
+      // 保存数据（保留空文件夹）
       await storage.saveBookmarks(mergedBookmarks, allFolders);
     }
 

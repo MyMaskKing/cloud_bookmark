@@ -140,17 +140,19 @@ class StorageManager {
             const filteredBookmarks = (data.bookmarks || []).filter(b => b.scene === sceneId);
             // 从书签中提取文件夹
             const bookmarkFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
-            // 使用存储的 folders 顺序（保持创建顺序），然后添加从书签中提取的文件夹
+            // 使用存储的 folders 顺序（保持创建顺序），保留所有存储的文件夹（包括空文件夹）
             const storedFolders = (data.folders || []).filter(Boolean);
-            const bookmarkFoldersSet = new Set(bookmarkFolders);
-            // 合并：保持存储的 folders 顺序，然后添加不在存储列表中的文件夹
+            // 合并：保留所有存储的文件夹（包括空文件夹）+ 从书签中提取但不在存储列表中的文件夹
+            // 注意：空文件夹（没有书签使用）也应该被保留
             const mergedFolders = [
-              ...storedFolders.filter(f => bookmarkFoldersSet.has(f)), // 存储的文件夹中，当前场景使用的（保持顺序）
+              ...storedFolders, // 保留所有存储的文件夹（包括空文件夹），保持顺序
               ...bookmarkFolders.filter(f => !storedFolders.includes(f)) // 当前场景使用的，但不在存储列表中的
             ];
+            // 去重（虽然理论上不应该有重复，但为了安全）
+            const dedupFolders = [...new Set(mergedFolders)];
             resolve({
               bookmarks: filteredBookmarks,
-              folders: mergedFolders,
+              folders: dedupFolders,
               lastSync: data.lastSync
             });
           } else {
