@@ -533,6 +533,164 @@ function setupEventListeners() {
   if (sidebarOverlay) {
     sidebarOverlay.addEventListener('click', () => closeSidebarMobile());
   }
+
+  // 使用事件委托处理文件夹相关事件（避免重复绑定导致内存泄漏）
+  if (foldersList) {
+    // 文件夹行点击事件（筛选和展开/折叠）
+    foldersList.addEventListener('click', async (e) => {
+      const row = e.target.closest('.folder-row');
+      if (!row) return;
+
+      // 如果点击的是操作按钮，不处理
+      if (e.target.closest('.folder-menu')) {
+        return;
+      }
+      // 如果点击的是展开/折叠按钮，不处理（由单独的事件处理）
+      if (e.target.closest('.folder-expand-toggle')) {
+        return;
+      }
+      // 如果点击的是文件夹中的书签链接，不处理（避免事件冒泡）
+      if (e.target.closest('.bookmark-in-folder')) {
+        return;
+      }
+      
+      // 获取文件夹路径（从 dataset 中读取，确保与渲染时使用的路径一致）
+      const folderPath = row.dataset.folder || '';
+      const isMobile = window.innerWidth <= 768;
+      console.log('[文件夹点击] 点击文件夹:', { folderPath, isMobile, expandedFoldersBefore: Array.from(expandedFolders) });
+      
+      // 保存文件夹路径用于后续筛选（在重新渲染前保存）
+      const normalizedFolderPath = normalizeFolderPath(folderPath);
+      
+      if (isMobile) {
+        // 移动端：只执行筛选操作，不展开/折叠文件夹树
+        // 设置筛选
+        currentFilter = 'folder:' + normalizedFolderPath;
+        console.log('[文件夹点击] 移动端设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
+        
+        // 更新激活状态
+        foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
+        const label = row.querySelector('.folder-label');
+        if (label) {
+          label.classList.add('active');
+        }
+        
+        // 渲染书签列表
+        renderBookmarks();
+        
+        // 关闭侧边栏
+        closeSidebarIfMobile();
+      } else {
+        // 桌面端：既展开又筛选（保持原有行为）
+        // 切换展开/折叠状态
+        if (expandedFolders.has(folderPath)) {
+          expandedFolders.delete(folderPath);
+          console.log('[文件夹点击] 桌面端折叠:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
+        } else {
+          expandedFolders.add(folderPath);
+          console.log('[文件夹点击] 桌面端展开:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
+        }
+        
+        // 保存展开状态到本地存储
+        saveFolderState();
+        
+        // 重新渲染文件夹树
+        await loadFolders();
+        console.log('[文件夹点击] 桌面端渲染完成，验证展开状态:', { folderPath, isExpanded: expandedFolders.has(folderPath), expandedFolders: Array.from(expandedFolders) });
+        
+        // 同时执行筛选操作
+        const escapedPath = folderPath.replace(/"/g, '\\"');
+        const newRow = foldersList.querySelector(`[data-folder="${escapedPath}"]`);
+        if (newRow) {
+          const label = newRow.querySelector('.folder-label');
+          if (label) {
+            foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
+            label.classList.add('active');
+          }
+        }
+        currentFilter = 'folder:' + normalizedFolderPath;
+        console.log('[文件夹点击] 桌面端设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
+        renderBookmarks();
+      }
+    });
+
+    // 展开/折叠按钮点击事件（移动端和桌面端都可用）
+    foldersList.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.folder-expand-toggle');
+      if (!btn) return;
+
+      e.stopPropagation(); // 阻止事件冒泡到文件夹行
+      const folderPath = btn.dataset.folder || '';
+      console.log('[展开/折叠按钮] 点击:', { folderPath, expandedFoldersBefore: Array.from(expandedFolders) });
+      
+      // 切换展开/折叠状态
+      if (expandedFolders.has(folderPath)) {
+        expandedFolders.delete(folderPath);
+        console.log('[展开/折叠按钮] 折叠:', { folderPath });
+      } else {
+        expandedFolders.add(folderPath);
+        console.log('[展开/折叠按钮] 展开:', { folderPath });
+      }
+      
+      // 保存展开状态到本地存储
+      saveFolderState();
+      
+      // 重新渲染文件夹树
+      await loadFolders();
+    });
+
+    // 文件夹操作菜单按钮点击事件
+    foldersList.addEventListener('click', (e) => {
+      const btn = e.target.closest('.folder-menu');
+      if (!btn) return;
+
+      e.stopPropagation();
+      const folderPath = btn.dataset.folder;
+      openFolderMenu(btn, folderPath);
+    });
+
+    // 文件夹中书签链接点击事件
+    foldersList.addEventListener('click', (e) => {
+      const link = e.target.closest('.bookmark-in-folder a');
+      if (!link) return;
+
+      e.preventDefault();
+      e.stopPropagation(); // 阻止事件冒泡到文件夹行
+      const url = link.closest('.bookmark-in-folder')?.dataset.url;
+      if (url) {
+        tabsAPI.create({ url });
+      }
+    });
+
+    // 拖拽排序事件
+    foldersList.addEventListener('dragstart', (e) => {
+      const row = e.target.closest('.folder-row');
+      if (!row) return;
+      row.setAttribute('draggable', 'true');
+      e.dataTransfer.setData('text/plain', row.dataset.folder);
+    });
+
+    foldersList.addEventListener('dragover', (e) => {
+      const row = e.target.closest('.folder-row');
+      if (row) {
+        e.preventDefault();
+      }
+    });
+
+    foldersList.addEventListener('drop', async (e) => {
+      const row = e.target.closest('.folder-row');
+      if (!row) return;
+      e.preventDefault();
+      const source = e.dataTransfer.getData('text/plain');
+      const target = row.dataset.folder;
+      if (!source || !target || source === target) return;
+      reorderFolder(source, target);
+      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+      await syncToCloud();
+      await loadFolders();
+      await loadTags();
+    });
+  }
 }
 
 /**
@@ -870,163 +1028,13 @@ async function loadFolders() {
     foldersInitialized = true; // 标记已初始化
   }
 
-  // 绑定点击事件（筛选和展开/折叠）
-  // 移动端：点击文件夹只筛选，不展开；桌面端：点击文件夹既展开又筛选
-  foldersList.querySelectorAll('.folder-row').forEach(row => {
-    row.addEventListener('click', async (e) => {
-      // 如果点击的是操作按钮，不处理
-      if (e.target.closest('.folder-menu')) {
-        return;
-      }
-      // 如果点击的是展开/折叠按钮，不处理（由单独的事件处理）
-      if (e.target.closest('.folder-expand-toggle')) {
-        return;
-      }
-      // 如果点击的是文件夹中的书签链接，不处理（避免事件冒泡）
-      if (e.target.closest('.bookmark-in-folder')) {
-        return;
-      }
-      
-      // 获取文件夹路径（从 dataset 中读取，确保与渲染时使用的路径一致）
-      const folderPath = row.dataset.folder || '';
-      const isMobile = window.innerWidth <= 768;
-      console.log('[文件夹点击] 点击文件夹:', { folderPath, isMobile, expandedFoldersBefore: Array.from(expandedFolders) });
-      
-      // 保存文件夹路径用于后续筛选（在重新渲染前保存）
-      const normalizedFolderPath = normalizeFolderPath(folderPath);
-      
-      if (isMobile) {
-        // 移动端：只执行筛选操作，不展开/折叠文件夹树
-        // 设置筛选
-        currentFilter = 'folder:' + normalizedFolderPath;
-        console.log('[文件夹点击] 移动端设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
-        
-        // 更新激活状态
-        foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
-        const label = row.querySelector('.folder-label');
-        if (label) {
-          label.classList.add('active');
-        }
-        
-        // 渲染书签列表
-        renderBookmarks();
-        
-        // 关闭侧边栏
-        closeSidebarIfMobile();
-      } else {
-        // 桌面端：既展开又筛选（保持原有行为）
-        // 切换展开/折叠状态
-        if (expandedFolders.has(folderPath)) {
-          expandedFolders.delete(folderPath);
-          console.log('[文件夹点击] 桌面端折叠:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
-        } else {
-          expandedFolders.add(folderPath);
-          console.log('[文件夹点击] 桌面端展开:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
-        }
-        
-        // 保存展开状态到本地存储
-        saveFolderState();
-        
-        // 重新渲染文件夹树
-        await loadFolders();
-        console.log('[文件夹点击] 桌面端渲染完成，验证展开状态:', { folderPath, isExpanded: expandedFolders.has(folderPath), expandedFolders: Array.from(expandedFolders) });
-        
-        // 同时执行筛选操作
-        const escapedPath = folderPath.replace(/"/g, '\\"');
-        const newRow = foldersList.querySelector(`[data-folder="${escapedPath}"]`);
-        if (newRow) {
-          const label = newRow.querySelector('.folder-label');
-          if (label) {
-            foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
-            label.classList.add('active');
-          }
-        }
-        currentFilter = 'folder:' + normalizedFolderPath;
-        console.log('[文件夹点击] 桌面端设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
-        renderBookmarks();
-      }
-    });
-  });
-  
-  // 绑定展开/折叠按钮点击事件（移动端和桌面端都可用）
-  foldersList.querySelectorAll('.folder-expand-toggle').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation(); // 阻止事件冒泡到文件夹行
-      const folderPath = btn.dataset.folder || '';
-      console.log('[展开/折叠按钮] 点击:', { folderPath, expandedFoldersBefore: Array.from(expandedFolders) });
-      
-      // 切换展开/折叠状态
-      if (expandedFolders.has(folderPath)) {
-        expandedFolders.delete(folderPath);
-        console.log('[展开/折叠按钮] 折叠:', { folderPath });
-      } else {
-        expandedFolders.add(folderPath);
-        console.log('[展开/折叠按钮] 展开:', { folderPath });
-      }
-      
-      // 保存展开状态到本地存储
-      saveFolderState();
-      
-      // 重新渲染文件夹树
-      await loadFolders();
-    });
-  });
-
-  // 拖拽排序
+  // 设置拖拽属性（事件委托已在 setupEventListeners 中处理）
   foldersList.querySelectorAll('.folder-row').forEach(row => {
     row.setAttribute('draggable', 'true');
-    row.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', row.dataset.folder);
-    });
-    row.addEventListener('dragover', (e) => e.preventDefault());
-    row.addEventListener('drop', async (e) => {
-      e.preventDefault();
-      const source = e.dataTransfer.getData('text/plain');
-      const target = row.dataset.folder;
-      if (!source || !target || source === target) return;
-      reorderFolder(source, target);
-      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-      await syncToCloud();
-      await loadFolders();
-      await loadTags();
-    });
   });
 
-  // 绑定文件夹操作菜单
-  foldersList.querySelectorAll('.folder-menu').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const folderPath = btn.dataset.folder;
-      openFolderMenu(btn, folderPath);
-    });
-  });
-
-  // 绑定上下移动按钮（同级排序）
-  foldersList.querySelectorAll('.folder-move').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const folder = btn.dataset.folder;
-      const dir = btn.dataset.dir === 'up' ? -1 : 1;
-      const moved = moveFolderSameLevel(folder, dir);
-      if (!moved) return;
-      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-      await syncToCloud();
-      await loadFolders();
-      await loadTags();
-    });
-  });
-
-  // 绑定文件夹中书签的点击事件
-  foldersList.querySelectorAll('.bookmark-in-folder a').forEach(link => {
-    link.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation(); // 阻止事件冒泡到文件夹行
-      const url = link.closest('.bookmark-in-folder')?.dataset.url;
-      if (url) {
-        tabsAPI.create({ url });
-      }
-    });
-  });
+  // 注意：上下移动功能通过文件夹菜单（.folder-menu）中的菜单项处理，
+  // 不需要在这里绑定事件（菜单项的事件在 openFolderMenu 函数中处理）
 }
 
 /**
