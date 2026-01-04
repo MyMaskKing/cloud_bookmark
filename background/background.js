@@ -937,8 +937,14 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         tabsAPI.remove(tabId, () => {
           const lastError = chrome.runtime.lastError;
           if (lastError) {
-            console.error('[后台] closeCurrentTab 失败:', lastError.message);
-            sendResponse({ success: false, error: lastError.message });
+            // 忽略标签页不存在的错误（可能已经被关闭）
+            if (lastError.message && lastError.message.includes('No tab with id')) {
+              console.log('[后台] closeCurrentTab: 标签页已不存在（可能已被关闭）');
+              sendResponse({ success: true });
+            } else {
+              console.error('[后台] closeCurrentTab 失败:', lastError.message);
+              sendResponse({ success: false, error: lastError.message });
+            }
           } else {
             console.log('[后台] closeCurrentTab 成功');
             sendResponse({ success: true });

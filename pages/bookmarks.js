@@ -140,6 +140,9 @@ let currentFilter = 'all';
 let currentSort = 'created-desc';
 let editingBookmarkId = null;
 let currentSceneId = null;
+// 文件夹展开状态（Set，存储展开的文件夹路径）
+let expandedFolders = new Set(['']); // 默认展开根节点
+let foldersInitialized = false; // 标记文件夹是否已初始化展开状态
 let batchMode = false;
 let selectedBookmarkIds = new Set();
 let pageSource = null; // 记录页面来源（popup/floating-ball等）
@@ -666,15 +669,77 @@ function countSubfoldersInTree(node) {
 }
 
 /**
+ * 检查文件夹是否有内容（子文件夹或书签）
+ * 只要有内容就可以展开，不限于子文件夹
+ */
+function checkFolderHasChildren(folderPath) {
+  // 规范化文件夹路径
+  const normalizedPath = normalizeFolderPath(folderPath || '');
+  
+  // 检查是否有书签（只要有书签就算有内容）
+  const hasBookmarks = currentBookmarks.some(b => {
+    const bFolder = normalizeFolderPath(b.folder || '');
+    const matches = bFolder === normalizedPath;
+    if (matches) {
+      console.log('[文件夹检查] 找到书签:', { folderPath: normalizedPath, bookmarkTitle: b.title });
+    }
+    return matches;
+  });
+  
+  console.log('[文件夹检查] 检查文件夹:', { folderPath: normalizedPath, hasBookmarks, totalBookmarks: currentBookmarks.length });
+  
+  // 合并所有文件夹（包括从书签中提取的）
+  const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
+  const allFolders = [...new Set([...currentFolders, ...bookmarkFolders])];
+  
+  // 构建临时树结构来检查是否有子文件夹
+  const tree = buildFolderTree(allFolders);
+  
+  // 如果 folderPath 为空，检查根节点
+  if (!normalizedPath) {
+    const hasSubfolders = Object.keys(tree.children || {}).length > 0;
+    const result = hasSubfolders || hasBookmarks;
+    console.log('[文件夹检查] 根节点检查:', { hasSubfolders, hasBookmarks, result });
+    return result;
+  }
+  
+  // 查找对应的节点
+  const parts = normalizedPath.split('/');
+  let node = tree;
+  for (const part of parts) {
+    if (!node.children || !node.children[part]) {
+      // 如果找不到节点，只检查是否有书签
+      console.log('[文件夹检查] 找不到节点，只检查书签:', { folderPath: normalizedPath, hasBookmarks });
+      return hasBookmarks;
+    }
+    node = node.children[part];
+  }
+  
+  // 检查该节点是否有子文件夹
+  const hasSubfolders = Object.keys(node.children || {}).length > 0;
+  const result = hasSubfolders || hasBookmarks;
+  
+  console.log('[文件夹检查] 最终结果:', { folderPath: normalizedPath, hasSubfolders, hasBookmarks, result });
+  
+  // 只要有子文件夹或书签，就算有内容
+  return result;
+}
+
+/**
  * 加载文件夹列表
  */
 async function loadFolders() {
-  // 统计每个文件夹下的书签数量
+  // 统计每个文件夹下的书签数量，并预先按文件夹分组书签（用于性能优化）
   const folderCountMap = new Map();
+  const folderBookmarksMap = new Map(); // 按文件夹路径分组书签
   currentBookmarks.forEach(b => {
     const folder = normalizeFolderPath(b.folder || '');
     if (!folder) return;
     folderCountMap.set(folder, (folderCountMap.get(folder) || 0) + 1);
+    if (!folderBookmarksMap.has(folder)) {
+      folderBookmarksMap.set(folder, []);
+    }
+    folderBookmarksMap.get(folder).push(b);
   });
 
   // 合并文件夹列表：保留 currentFolders 中的所有文件夹（包括空文件夹），并添加从书签中提取的文件夹
@@ -710,16 +775,92 @@ async function loadFolders() {
     `;
   }
 
-  html += renderFolderTree(tree.children, folderCountMap, tree);
+  html += renderFolderTree(tree.children, folderCountMap, tree, folderBookmarksMap);
   foldersList.innerHTML = html;
+  
+  // 初始化时，如果 expandedFolders 只有根节点且未初始化过，默认展开所有第一层文件夹
+  if (!foldersInitialized && expandedFolders.size === 1 && expandedFolders.has('')) {
+    const firstLevelFolders = Object.keys(tree.children || {});
+    firstLevelFolders.forEach(key => {
+      const child = tree.children[key];
+      if (child && child.path) {
+        // 完全按照弹窗逻辑：直接使用 child.path，不做规范化
+        expandedFolders.add(child.path);
+      }
+    });
+    // 如果添加了第一层文件夹，重新渲染
+    if (firstLevelFolders.length > 0) {
+      html = '';
+      if (uncategorizedCount > 0) {
+        html += `
+          <ul class="folder-tree">
+            <li class="folder-node">
+              <div class="folder-row" data-folder="">
+                <span class="folder-label" data-folder="" title="未分类">
+                  <span class="folder-label-text">📁 未分类</span>
+                  <span class="folder-count">${uncategorizedCount}</span>
+                </span>
+              </div>
+            </li>
+          </ul>
+        `;
+      }
+      html += renderFolderTree(tree.children, folderCountMap, tree, folderBookmarksMap);
+      foldersList.innerHTML = html;
+    }
+    foldersInitialized = true; // 标记已初始化
+  }
 
-  // 绑定点击事件（筛选）
-  foldersList.querySelectorAll('.folder-label').forEach(label => {
-    label.addEventListener('click', () => {
-      foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
-      label.classList.add('active');
-      const folderPath = label.dataset.folder;
-      currentFilter = 'folder:' + folderPath;
+  // 绑定点击事件（筛选和展开/折叠）
+  // 完全按照弹窗的逻辑：点击文件夹行总是可以展开/折叠，不管有没有内容
+  foldersList.querySelectorAll('.folder-row').forEach(row => {
+    row.addEventListener('click', async (e) => {
+      // 如果点击的是操作按钮，不处理
+      if (e.target.closest('.folder-menu')) {
+        return;
+      }
+      // 如果点击的是文件夹中的书签链接，不处理（避免事件冒泡）
+      if (e.target.closest('.bookmark-in-folder')) {
+        return;
+      }
+      
+      // 获取文件夹路径（从 dataset 中读取，确保与渲染时使用的路径一致）
+      const folderPath = row.dataset.folder || '';
+      console.log('[文件夹点击] 点击文件夹:', { folderPath, expandedFoldersBefore: Array.from(expandedFolders) });
+      
+      // 只要点击文件夹就展开，不管里面是否有子文件夹或书签
+      // 切换展开/折叠状态（与弹窗完全一致，不管有没有内容）
+      if (expandedFolders.has(folderPath)) {
+        expandedFolders.delete(folderPath);
+        console.log('[文件夹点击] 折叠:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
+      } else {
+        expandedFolders.add(folderPath);
+        console.log('[文件夹点击] 展开:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
+      }
+      
+      // 保存文件夹路径用于后续筛选（在重新渲染前保存）
+      const normalizedFolderPath = normalizeFolderPath(folderPath);
+      
+      // 重新渲染文件夹树（与弹窗一致）
+      await loadFolders();
+      console.log('[文件夹点击] 渲染完成，验证展开状态:', { folderPath, isExpanded: expandedFolders.has(folderPath), expandedFolders: Array.from(expandedFolders) });
+      
+      // 同时执行筛选操作（因为完全画面中，点击文件夹应该筛选书签）
+      // 注意：loadFolders() 重新渲染后，row 元素已被替换，需要重新查找
+      // 使用 CSS 属性选择器查找，注意路径中可能包含特殊字符，需要转义
+      const escapedPath = folderPath.replace(/"/g, '\\"');
+      const newRow = foldersList.querySelector(`[data-folder="${escapedPath}"]`);
+      if (newRow) {
+        const label = newRow.querySelector('.folder-label');
+        if (label) {
+          foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
+          label.classList.add('active');
+        }
+      }
+      // 无论是否找到新的 row，都设置筛选（确保书签列表更新）
+      // 确保路径规范化，以便与书签的 folder 路径匹配
+      currentFilter = 'folder:' + normalizedFolderPath;
+      console.log('[文件夹点击] 设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
       renderBookmarks();
       closeSidebarIfMobile();
     });
@@ -768,6 +909,18 @@ async function loadFolders() {
       await loadTags();
     });
   });
+
+  // 绑定文件夹中书签的点击事件
+  foldersList.querySelectorAll('.bookmark-in-folder a').forEach(link => {
+    link.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // 阻止事件冒泡到文件夹行
+      const url = link.closest('.bookmark-in-folder')?.dataset.url;
+      if (url) {
+        tabsAPI.create({ url });
+      }
+    });
+  });
 }
 
 /**
@@ -776,7 +929,11 @@ async function loadFolders() {
 function buildFolderTree(folders) {
   const root = { name: '', path: '', children: {}, order: [] };
   folders.forEach(folder => {
-    const parts = folder.split('/');
+    // 确保路径是规范化的（虽然传入的应该已经是规范化的，但为了安全再次规范化）
+    const normalizedFolder = normalizeFolderPath(folder);
+    if (!normalizedFolder) return;
+    
+    const parts = normalizedFolder.split('/');
     let node = root;
     let currentPath = '';
     parts.forEach(part => {
@@ -793,9 +950,13 @@ function buildFolderTree(folders) {
 }
 
 /**
- * 渲染树结构为HTML（保持文件夹顺序）
+ * 渲染树结构为HTML（保持文件夹顺序，支持折叠/展开）
+ * @param {Object} children - 子节点对象
+ * @param {Map} folderCountMap - 文件夹书签数量映射
+ * @param {Object} rootNode - 根节点
+ * @param {Map} folderBookmarksMap - 按文件夹路径分组的书签映射（用于性能优化）
  */
-function renderFolderTree(children, folderCountMap = new Map(), rootNode = null) {
+function renderFolderTree(children, folderCountMap = new Map(), rootNode = null, folderBookmarksMap = new Map()) {
   // 如果没有 order 数组，回退到 Object.values（兼容旧代码）
   const entries = rootNode && rootNode.order 
     ? rootNode.order.map(key => children[key]).filter(Boolean)
@@ -809,17 +970,51 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null)
         const bookmarkCount = folderCountMap.get(child.path) || 0;
         const subfolderCount = countSubfoldersInTree(child);
         const totalCount = bookmarkCount + subfolderCount;
-        // 即使没有书签和子文件夹，也显示文件夹（空文件夹显示 0）
+        // 检查是否有子文件夹（仅用于决定是否显示子文件夹内容）
+        const hasSubfolders = Object.keys(child.children).length > 0;
+        // 检查展开状态：只要 expandedFolders 中包含该路径，就展开，不管是否有子文件夹或书签
+        const expanded = expandedFolders.has(child.path);
+        
+        // 根据展开状态选择图标（展开用📂，折叠用📁）
+        const icon = expanded ? '📂' : '📁';
+        
+        // 展开时，获取该文件夹下的书签并渲染
+        let bookmarksHtml = '';
+        if (expanded && bookmarkCount > 0) {
+          // 从预构建的 Map 中获取书签（性能优化：避免每次展开都过滤所有书签）
+          const normalizedPath = normalizeFolderPath(child.path);
+          const folderBookmarks = folderBookmarksMap.get(normalizedPath) || [];
+          
+          // 渲染书签列表
+          bookmarksHtml = folderBookmarks.map(b => `
+            <li class="bookmark-in-folder" data-url="${escapeHtml(b.url)}">
+              <a href="${escapeHtml(b.url)}" target="_blank" title="${escapeHtml(b.title || b.url)}">
+                <span class="bookmark-title">${escapeHtml(b.title || '无标题')}</span>
+                <span class="bookmark-url">${escapeHtml(b.url)}</span>
+              </a>
+            </li>
+          `).join('');
+        }
+        
+        // 展开时显示子文件夹内容
+        const childContent = expanded ? renderFolderTree(child.children, folderCountMap, child, folderBookmarksMap) : '';
+        
+        // 只要展开就显示内容区域：先显示书签，再显示子文件夹
+        const expandedContent = expanded ? `
+          ${bookmarksHtml ? `<ul class="bookmarks-in-folder">${bookmarksHtml}</ul>` : ''}
+          ${hasSubfolders ? childContent : (bookmarksHtml ? '' : '<ul class="folder-tree"></ul>')}
+        ` : '';
+        
         return `
         <li class="folder-node">
           <div class="folder-row" data-folder="${escapeHtml(child.path)}">
             <span class="folder-label" data-folder="${escapeHtml(child.path)}" title="${escapeHtml(child.path)}">
-              <span class="folder-label-text">📁 ${escapeHtml(child.name)}</span>
+              <span class="folder-label-text">${icon} ${escapeHtml(child.name)}</span>
               <span class="folder-count">${totalCount}</span>
             </span>
             <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
           </div>
-          ${renderFolderTree(child.children, folderCountMap, child)}
+          ${expandedContent}
         </li>
       `;
       }).join('')}
@@ -1097,8 +1292,12 @@ function renderBookmarks() {
   } else if (currentFilter.startsWith('folder:')) {
     const folder = currentFilter.replace('folder:', '');
     if (folder) {
-      // 正常文件夹：匹配指定路径
-      filtered = filtered.filter(b => b.folder === folder);
+      // 正常文件夹：匹配指定路径（确保路径规范化）
+      const normalizedFolder = normalizeFolderPath(folder);
+      filtered = filtered.filter(b => {
+        const bFolder = normalizeFolderPath(b.folder || '');
+        return bFolder === normalizedFolder;
+      });
     } else {
       // 特殊情况：未分类入口，筛选没有folder字段的书签
       filtered = filtered.filter(b => !b.folder);
