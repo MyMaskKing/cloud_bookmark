@@ -871,11 +871,15 @@ async function loadFolders() {
   }
 
   // 绑定点击事件（筛选和展开/折叠）
-  // 完全按照弹窗的逻辑：点击文件夹行总是可以展开/折叠，不管有没有内容
+  // 移动端：点击文件夹只筛选，不展开；桌面端：点击文件夹既展开又筛选
   foldersList.querySelectorAll('.folder-row').forEach(row => {
     row.addEventListener('click', async (e) => {
       // 如果点击的是操作按钮，不处理
       if (e.target.closest('.folder-menu')) {
+        return;
+      }
+      // 如果点击的是展开/折叠按钮，不处理（由单独的事件处理）
+      if (e.target.closest('.folder-expand-toggle')) {
         return;
       }
       // 如果点击的是文件夹中的书签链接，不处理（避免事件冒泡）
@@ -885,46 +889,86 @@ async function loadFolders() {
       
       // 获取文件夹路径（从 dataset 中读取，确保与渲染时使用的路径一致）
       const folderPath = row.dataset.folder || '';
-      console.log('[文件夹点击] 点击文件夹:', { folderPath, expandedFoldersBefore: Array.from(expandedFolders) });
+      const isMobile = window.innerWidth <= 768;
+      console.log('[文件夹点击] 点击文件夹:', { folderPath, isMobile, expandedFoldersBefore: Array.from(expandedFolders) });
       
-      // 只要点击文件夹就展开，不管里面是否有子文件夹或书签
-      // 切换展开/折叠状态（与弹窗完全一致，不管有没有内容）
+      // 保存文件夹路径用于后续筛选（在重新渲染前保存）
+      const normalizedFolderPath = normalizeFolderPath(folderPath);
+      
+      if (isMobile) {
+        // 移动端：只执行筛选操作，不展开/折叠文件夹树
+        // 设置筛选
+        currentFilter = 'folder:' + normalizedFolderPath;
+        console.log('[文件夹点击] 移动端设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
+        
+        // 更新激活状态
+        foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
+        const label = row.querySelector('.folder-label');
+        if (label) {
+          label.classList.add('active');
+        }
+        
+        // 渲染书签列表
+        renderBookmarks();
+        
+        // 关闭侧边栏
+        closeSidebarIfMobile();
+      } else {
+        // 桌面端：既展开又筛选（保持原有行为）
+        // 切换展开/折叠状态
+        if (expandedFolders.has(folderPath)) {
+          expandedFolders.delete(folderPath);
+          console.log('[文件夹点击] 桌面端折叠:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
+        } else {
+          expandedFolders.add(folderPath);
+          console.log('[文件夹点击] 桌面端展开:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
+        }
+        
+        // 保存展开状态到本地存储
+        saveFolderState();
+        
+        // 重新渲染文件夹树
+        await loadFolders();
+        console.log('[文件夹点击] 桌面端渲染完成，验证展开状态:', { folderPath, isExpanded: expandedFolders.has(folderPath), expandedFolders: Array.from(expandedFolders) });
+        
+        // 同时执行筛选操作
+        const escapedPath = folderPath.replace(/"/g, '\\"');
+        const newRow = foldersList.querySelector(`[data-folder="${escapedPath}"]`);
+        if (newRow) {
+          const label = newRow.querySelector('.folder-label');
+          if (label) {
+            foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
+            label.classList.add('active');
+          }
+        }
+        currentFilter = 'folder:' + normalizedFolderPath;
+        console.log('[文件夹点击] 桌面端设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
+        renderBookmarks();
+      }
+    });
+  });
+  
+  // 绑定展开/折叠按钮点击事件（移动端和桌面端都可用）
+  foldersList.querySelectorAll('.folder-expand-toggle').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation(); // 阻止事件冒泡到文件夹行
+      const folderPath = btn.dataset.folder || '';
+      console.log('[展开/折叠按钮] 点击:', { folderPath, expandedFoldersBefore: Array.from(expandedFolders) });
+      
+      // 切换展开/折叠状态
       if (expandedFolders.has(folderPath)) {
         expandedFolders.delete(folderPath);
-        console.log('[文件夹点击] 折叠:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
+        console.log('[展开/折叠按钮] 折叠:', { folderPath });
       } else {
         expandedFolders.add(folderPath);
-        console.log('[文件夹点击] 展开:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
+        console.log('[展开/折叠按钮] 展开:', { folderPath });
       }
       
       // 保存展开状态到本地存储
       saveFolderState();
       
-      // 保存文件夹路径用于后续筛选（在重新渲染前保存）
-      const normalizedFolderPath = normalizeFolderPath(folderPath);
-      
-      // 重新渲染文件夹树（与弹窗一致）
+      // 重新渲染文件夹树
       await loadFolders();
-      console.log('[文件夹点击] 渲染完成，验证展开状态:', { folderPath, isExpanded: expandedFolders.has(folderPath), expandedFolders: Array.from(expandedFolders) });
-      
-      // 同时执行筛选操作（因为完全画面中，点击文件夹应该筛选书签）
-      // 注意：loadFolders() 重新渲染后，row 元素已被替换，需要重新查找
-      // 使用 CSS 属性选择器查找，注意路径中可能包含特殊字符，需要转义
-      const escapedPath = folderPath.replace(/"/g, '\\"');
-      const newRow = foldersList.querySelector(`[data-folder="${escapedPath}"]`);
-      if (newRow) {
-        const label = newRow.querySelector('.folder-label');
-        if (label) {
-          foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
-          label.classList.add('active');
-        }
-      }
-      // 无论是否找到新的 row，都设置筛选（确保书签列表更新）
-      // 确保路径规范化，以便与书签的 folder 路径匹配
-      currentFilter = 'folder:' + normalizedFolderPath;
-      console.log('[文件夹点击] 设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
-      renderBookmarks();
-      closeSidebarIfMobile();
     });
   });
 
@@ -1074,7 +1118,12 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
               <span class="folder-label-text">${icon} ${escapeHtml(child.name)}</span>
               <span class="folder-count">${totalCount}</span>
             </span>
-            <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
+            <div class="folder-actions">
+              <button class="folder-expand-toggle" data-folder="${escapeHtml(child.path)}" title="${expanded ? '折叠' : '展开'}">
+                ${expanded ? '▼' : '▶'}
+              </button>
+              <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
+            </div>
           </div>
           ${expandedContent}
         </li>
