@@ -5,11 +5,15 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  font-family: 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'WenQuanYi Micro Hei', 'SimSun', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   background: #f5f5f5;
   color: #333;
   min-height: 100vh;
   overflow: auto;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-size: 14px;
+  line-height: 1.6;
 }
 
 .app-container {
@@ -149,10 +153,12 @@ body {
   justify-content: space-between;
   gap: 6px;
   font-size: 14px;
+  line-height: 1.5;
   color: #333;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-weight: 400;
 }
 
 .folder-label.active {
@@ -196,19 +202,24 @@ body {
 }
 
 .bookmark-in-folder .bookmark-title {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.7;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  color: #1a1a1a;
+  letter-spacing: 0;
 }
 
 .bookmark-in-folder .bookmark-url {
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.6;
   color: #666;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 400;
 }
 
 .folder-menu {
@@ -568,11 +579,13 @@ body {
 }
 
 .bookmark-title {
-  font-weight: 600;
-  font-size: 16px;
-  margin-bottom: 4px;
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 1.7;
+  margin-bottom: 8px;
   color: #1a1a1a;
   overflow: hidden;
+  letter-spacing: 0;
   text-overflow: ellipsis;
   display: -webkit-box;
   /* line clamp intentionally limited to 2 lines; standard line-clamp not used for compatibility warnings */
@@ -580,11 +593,13 @@ body {
 }
 
 .bookmark-url {
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.6;
   color: #666;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 400;
 }
 
 .bookmark-star {
@@ -599,34 +614,42 @@ body {
 
 .bookmark-description {
   font-size: 14px;
+  line-height: 1.7;
   color: #666;
   margin-bottom: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
+  font-weight: 400;
+  letter-spacing: 0;
   /* line clamp intentionally limited to 2 lines; standard line-clamp not used for compatibility warnings */
   -webkit-box-orient: vertical;
 }
 
 .bookmark-notes {
   font-size: 13px;
-  color: #999;
+  line-height: 1.7;
+  color: #888;
   font-style: italic;
   margin-bottom: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
+  font-weight: 400;
+  letter-spacing: 0;
   /* line clamp intentionally limited to 2 lines; standard line-clamp not used for compatibility warnings */
   -webkit-box-orient: vertical;
 }
 
 .bookmark-folder {
   font-size: 13px;
+  line-height: 1.4;
   color: #666;
   margin-bottom: 8px;
   display: flex;
   align-items: center;
   gap: 4px;
+  font-weight: 400;
 }
 
 .bookmark-tags {
@@ -641,7 +664,9 @@ body {
   background: #f0f0f0;
   border-radius: 4px;
   font-size: 12px;
+  line-height: 1.4;
   color: #666;
+  font-weight: 400;
 }
 
 .bookmark-actions {

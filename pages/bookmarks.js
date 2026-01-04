@@ -346,6 +346,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadCurrentScene();
   await loadScenes();
   await loadBookmarks();
+  await loadFolderState(); // 先加载文件夹展开状态
   await loadFolders();
   await loadTags();
   await updateSyncErrorBanner();
@@ -726,6 +727,62 @@ function checkFolderHasChildren(folderPath) {
 }
 
 /**
+ * 加载文件夹展开状态（从本地存储）
+ */
+async function loadFolderState() {
+  try {
+    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+    const result = typeof browser !== 'undefined' && browser.storage
+      ? await browser.storage.local.get(['bookmarksPageFolderState'])
+      : await new Promise(resolve => {
+          chrome.storage.local.get(['bookmarksPageFolderState'], resolve);
+        });
+    const state = result && result.bookmarksPageFolderState;
+
+    if (state && Array.isArray(state.expanded) && state.expanded.length) {
+      expandedFolders = new Set(state.expanded);
+      if (!expandedFolders.has('')) expandedFolders.add(''); // 保证根存在
+      // 如果只有根节点，允许按默认规则展开第一层
+      if (expandedFolders.size === 1) {
+        foldersInitialized = false; // 允许初始化时展开第一层
+      } else {
+        foldersInitialized = true; // 已有展开状态，不再自动展开
+      }
+    } else {
+      expandedFolders = new Set(['']);
+      foldersInitialized = false; // 首次加载，允许初始化时展开第一层
+    }
+  } catch (e) {
+    expandedFolders = new Set(['']);
+    foldersInitialized = false;
+  }
+}
+
+/**
+ * 保存文件夹展开状态（到本地存储）
+ */
+function saveFolderState() {
+  try {
+    const expanded = Array.from(expandedFolders);
+    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+    const state = {
+      bookmarksPageFolderState: {
+        expanded
+      }
+    };
+    if (typeof browser !== 'undefined' && browser.storage) {
+      // Firefox: 使用 Promise
+      browser.storage.local.set(state);
+    } else {
+      // Chrome/Edge: 使用回调
+      chrome.storage.local.set(state, () => {});
+    }
+  } catch (e) {
+    console.warn('保存文件夹展开状态失败', e);
+  }
+}
+
+/**
  * 加载文件夹列表
  */
 async function loadFolders() {
@@ -807,6 +864,8 @@ async function loadFolders() {
       }
       html += renderFolderTree(tree.children, folderCountMap, tree, folderBookmarksMap);
       foldersList.innerHTML = html;
+      // 保存自动展开的第一层文件夹状态
+      saveFolderState();
     }
     foldersInitialized = true; // 标记已初始化
   }
@@ -837,6 +896,9 @@ async function loadFolders() {
         expandedFolders.add(folderPath);
         console.log('[文件夹点击] 展开:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
       }
+      
+      // 保存展开状态到本地存储
+      saveFolderState();
       
       // 保存文件夹路径用于后续筛选（在重新渲染前保存）
       const normalizedFolderPath = normalizeFolderPath(folderPath);
