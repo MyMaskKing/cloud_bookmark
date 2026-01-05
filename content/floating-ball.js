@@ -254,33 +254,49 @@
   // 启动（或重置）自动贴边计时器
   function scheduleAutoDock() {
     clearAutoDockTimer();
-    autoDockTimer = setTimeout(() => {
-      dockToNearestEdge();
+    autoDockTimer = setTimeout(async () => {
+      await dockToNearestEdge();
     }, 2000); // 2 秒无操作自动贴边
   }
 
-  // 贴近最近的左右边缘
-  function dockToNearestEdge() {
+  // 贴近最近的左右边缘（根据设置决定靠左、靠右或自动）
+  async function dockToNearestEdge() {
     if (!floatingBall) return;
+
+    // 获取设置
+    const settings = await getSettings();
+    const floatingBallSettings = (settings && settings.floatingBall) || {};
+    const defaultPosition = floatingBallSettings.defaultPosition || 'auto';
 
     const rect = floatingBall.getBoundingClientRect();
     const viewportWidth = window.innerWidth;
 
-    const distanceToLeft = rect.left;
-    const distanceToRight = viewportWidth - (rect.left + rect.width);
-
     // 使用平滑动画
     floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 0.2s, box-shadow 0.2s, opacity 0.2s';
 
-    // 仅在左右居中时才需要重新贴边；否则直接根据更近的边来贴
-    if (distanceToLeft <= distanceToRight) {
-      // 贴左边
+    // 根据设置决定靠左、靠右或自动
+    if (defaultPosition === 'left') {
+      // 强制靠左
       floatingBall.style.left = '0px';
       floatingBall.style.right = 'auto';
-    } else {
-      // 贴右边
+    } else if (defaultPosition === 'right') {
+      // 强制靠右
       floatingBall.style.right = '0px';
       floatingBall.style.left = 'auto';
+    } else {
+      // 自动：根据距离最近的边缘贴边
+      const distanceToLeft = rect.left;
+      const distanceToRight = viewportWidth - (rect.left + rect.width);
+      
+      if (distanceToLeft <= distanceToRight) {
+        // 贴左边
+        floatingBall.style.left = '0px';
+        floatingBall.style.right = 'auto';
+      } else {
+        // 贴右边
+        floatingBall.style.right = '0px';
+        floatingBall.style.left = 'auto';
+      }
     }
 
     // 贴边后降低一点透明度，减少遮挡感

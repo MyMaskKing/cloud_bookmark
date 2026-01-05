@@ -91,6 +91,8 @@ const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
 const enableDeviceDetection = document.getElementById('enableDeviceDetection');
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const enableFloatingBall = document.getElementById('enableFloatingBall');
+const floatingBallPositionGroup = document.getElementById('floatingBallPositionGroup');
+const floatingBallDefaultPosition = document.getElementById('floatingBallDefaultPosition');
 const enableSyncErrorNotification = document.getElementById('enableSyncErrorNotification');
 const stickySyncErrorToast = document.getElementById('stickySyncErrorToast');
 const sceneList = document.getElementById('sceneList');
@@ -1011,9 +1013,17 @@ async function loadFloatingBallSetting() {
     const settings = await storage.getSettings();
     const floatingBall = (settings && settings.floatingBall) || {};
     enableFloatingBall.checked = !!floatingBall.enabled;
+    
+    // 加载默认位置设置（默认值为 'auto'）
+    floatingBallDefaultPosition.value = floatingBall.defaultPosition || 'auto';
+    
+    // 根据是否启用悬浮球显示/隐藏默认位置选择器
+    floatingBallPositionGroup.style.display = enableFloatingBall.checked ? 'block' : 'none';
   } catch (e) {
     console.warn('加载悬浮球设置失败', e);
     enableFloatingBall.checked = false;
+    floatingBallDefaultPosition.value = 'auto';
+    floatingBallPositionGroup.style.display = 'none';
   }
 }
 
@@ -1023,9 +1033,18 @@ async function loadFloatingBallSetting() {
 enableFloatingBall.addEventListener('change', async () => {
   try {
     const settings = await storage.getSettings();
-    const floatingBall = { enabled: enableFloatingBall.checked };
+    const floatingBall = (settings && settings.floatingBall) || {};
+    floatingBall.enabled = enableFloatingBall.checked;
+    // 保留默认位置设置（如果存在）
+    if (!floatingBall.defaultPosition) {
+      floatingBall.defaultPosition = 'auto';
+    }
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
+    
+    // 显示/隐藏默认位置选择器
+    floatingBallPositionGroup.style.display = enableFloatingBall.checked ? 'block' : 'none';
+    
     // 立即同步到云端
     await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
     // 通知所有标签页更新悬浮球状态
@@ -1039,6 +1058,36 @@ enableFloatingBall.addEventListener('change', async () => {
       // 忽略错误
     }
     showMessage('悬浮球设置已保存（已同步至云端）', 'success');
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+});
+
+/**
+ * 悬浮球默认位置变更
+ */
+floatingBallDefaultPosition.addEventListener('change', async () => {
+  try {
+    const settings = await storage.getSettings();
+    const floatingBall = (settings && settings.floatingBall) || {};
+    floatingBall.defaultPosition = floatingBallDefaultPosition.value;
+    const newSettings = { ...(settings || {}), floatingBall };
+    await storage.saveSettings(newSettings);
+    
+    // 立即同步到云端
+    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+    
+    // 通知所有标签页更新悬浮球状态
+    const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+    try {
+      const tabs = await tabsAPI.query({});
+      tabs.forEach(tab => {
+        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => {});
+      });
+    } catch (e) {
+      // 忽略错误
+    }
+    showMessage('悬浮球默认位置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
