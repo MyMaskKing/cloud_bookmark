@@ -1678,9 +1678,11 @@ function renderFolderTreeOptions(node, level = 0, selected = '') {
 /**
  * 加载文件夹选项（优化版：树形结构）
  * 包含从书签中提取的文件夹和 currentFolders 中的文件夹（确保空文件夹也能显示）
+ * 注意：只显示当前场景的文件夹，不显示其他场景的文件夹
  */
 function loadFolderOptions(selected = '') {
   const select = document.getElementById('bookmarkFolder');
+  // 只使用当前场景的书签和文件夹（currentBookmarks 和 currentFolders 已经是当前场景的数据）
   // 合并从书签中提取的文件夹和 currentFolders 中的文件夹
   const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
   const allFolders = [...new Set([...bookmarkFolders, ...currentFolders])];

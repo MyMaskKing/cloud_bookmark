@@ -189,10 +189,23 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
       // 同步场景列表
       if (cloud.scenes && Array.isArray(cloud.scenes) && cloud.scenes.length > 0) {
         await storage.saveScenes(cloud.scenes);
+        // 如果当前场景不在新场景列表中，重置为第一个场景
+        const currentSceneId = await storage.getCurrentScene();
+        const sceneIds = cloud.scenes.map(s => s.id);
+        if (!sceneIds.includes(currentSceneId)) {
+          const defaultSceneId = cloud.scenes[0]?.id || 'home';
+          await storage.saveCurrentScene(defaultSceneId);
+          console.log('[设置同步] 当前场景不在新场景列表中，已重置为:', defaultSceneId);
+        }
       } else if (forceClear) {
         // 非首次保存时，如果云端没有场景列表，清空本地场景列表
         // 但getScenes会自动创建默认场景，所以这里不需要手动创建
         await storage.saveScenes([]);
+        // 重置当前场景为默认场景
+        const scenes = await storage.getScenes();
+        const defaultSceneId = scenes && scenes.length > 0 ? scenes[0].id : 'home';
+        await storage.saveCurrentScene(defaultSceneId);
+        console.log('[设置同步] 场景列表已清空，当前场景已重置为:', defaultSceneId);
       }
       // 注意：currentScene 不从云端同步，每个设备独立维护当前场景
     } else if (forceClear) {
@@ -203,6 +216,11 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
       }
       // 清空场景列表，确保使用新的云端数据
       await storage.saveScenes([]);
+      // 重置当前场景为默认场景
+      const scenes = await storage.getScenes();
+      const defaultSceneId = scenes && scenes.length > 0 ? scenes[0].id : 'home';
+      await storage.saveCurrentScene(defaultSceneId);
+      console.log('[设置同步] 场景列表已清空，当前场景已重置为:', defaultSceneId);
     }
   } catch (e) {
     // 忽略设置读取失败，不影响书签同步
@@ -1045,7 +1063,28 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         // 清空已同步场景列表
         await storage.clearSyncedScenes();
         
-        console.log('[清空本地数据] 清空完成');
+        // 清空场景文件夹列表（sceneFolders）
+        // 使用 StorageManager 的 key 保持一致
+        const sceneFoldersKey = 'sceneFolders';
+        const sceneFoldersMap = {};
+        const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+        if (storageAPI && storageAPI.local) {
+          if (typeof browser !== 'undefined' && browser.storage) {
+            await storageAPI.local.set({ [sceneFoldersKey]: sceneFoldersMap });
+          } else {
+            await new Promise(resolve => {
+              chrome.storage.local.set({ [sceneFoldersKey]: sceneFoldersMap }, resolve);
+            });
+          }
+        }
+        
+        // 重置当前场景为默认场景（等待场景列表从云端同步后再设置）
+        // 先获取场景列表，如果为空则设置为 'home'
+        const scenes = await storage.getScenes();
+        const defaultSceneId = scenes && scenes.length > 0 ? scenes[0].id : 'home';
+        await storage.saveCurrentScene(defaultSceneId);
+        
+        console.log('[清空本地数据] 清空完成，当前场景已重置为:', defaultSceneId);
         sendResponse({ success: true, message: '清空完成' });
       } catch (error) {
         console.error('[清空本地数据] 清空过程出错:', error);
