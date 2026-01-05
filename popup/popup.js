@@ -110,6 +110,44 @@ const runtimeErrors = [];
 const consoleLogs = [];
 const opLogs = [];
 
+// 使用全局事件委托（捕获阶段），确保首次同步后渲染的书签也能响应点击
+document.addEventListener('click', (e) => {
+  try {
+    // 先检查是否点击了文件夹或其他元素，避免误触发
+    if (e.target.closest('.folder-row')) {
+      return; // 文件夹点击由专门的处理器处理
+    }
+    if (e.target.closest('.scene-menu-item')) {
+      return; // 场景菜单项点击由专门的处理器处理
+    }
+    
+    const item = e.target.closest('.bookmark-item');
+    if (!item) {
+      // 调试日志：记录点击了什么
+      console.log('[弹窗] 全局委托点击：未找到书签项，点击目标:', e.target, 'closest结果:', e.target.closest('.bookmark-item'));
+      return;
+    }
+    // 确保事件来自当前弹窗文档
+    if (item.ownerDocument !== document) {
+      console.log('[弹窗] 全局委托点击：事件来自其他文档');
+      return;
+    }
+
+    const url = item.dataset.url;
+    console.log('[弹窗] 全局委托点击：书签项被点击', url, '元素:', item);
+    if (!url) {
+      console.error('[弹窗] URL为空，无法打开，元素:', item);
+      return;
+    }
+    e.preventDefault();
+    e.stopPropagation();
+    tabsAPI.create({ url });
+    window.close();
+  } catch (err) {
+    console.error('[弹窗] 全局委托点击处理失败:', err);
+  }
+}, true);
+
 function pushOpLog(message) {
   opLogs.push({ t: new Date().toISOString(), m: message });
   if (opLogs.length > 200) opLogs.shift();
@@ -269,25 +307,44 @@ async function loadScenes() {
           // WebDAV配置有效且该场景从未同步过，需要执行云端同步
           if (hasValidConfig && !isSceneSynced) {
             try {
-              await sendMessageCompat({ action: 'sync', sceneId });
-            } catch (e) {
-              // 忽略单次同步失败，继续后续逻辑
-            }
-            const afterSync = await storage.getBookmarks(sceneId);
-            const hasAfter = (afterSync.bookmarks && afterSync.bookmarks.length) || (afterSync.folders && afterSync.folders.length);
-            if (!hasAfter) {
-              // 云端也没有，创建一个空文件以便后续同步
-              try {
-                await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
-              } catch (e) {
-                // 忽略，等待用户后续添加书签再同步
+              console.log('[弹窗] 切换场景：开始同步场景', sceneId);
+              const syncResult = await sendMessageCompat({ action: 'sync', sceneId });
+              console.log('[弹窗] 切换场景：同步完成', syncResult);
+              
+              // 等待同步完成后再读取数据，确保数据是最新的
+              // 使用轮询方式等待数据更新（最多等待3秒）
+              let retries = 30;
+              let hasData = false;
+              while (retries > 0 && !hasData) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                const afterSync = await storage.getBookmarks(sceneId);
+                hasData = (afterSync.bookmarks && afterSync.bookmarks.length > 0) || 
+                          (afterSync.folders && afterSync.folders.length > 0);
+                retries--;
               }
+              
+              if (!hasData) {
+                // 云端也没有，创建一个空文件以便后续同步
+                try {
+                  await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
+                } catch (e) {
+                  // 忽略，等待用户后续添加书签再同步
+                }
+              }
+            } catch (e) {
+              console.error('[弹窗] 切换场景：同步失败', e);
+              // 忽略单次同步失败，继续后续逻辑
             }
             // 场景切换不同步到云端，只保存在本地
           }
           await loadCurrentScene();
           await loadScenes();
+          // 确保 DOM 更新完成后再加载书签
+          await new Promise(resolve => requestAnimationFrame(resolve));
           await loadBookmarksForPopup();
+          // 再次确保 DOM 更新完成，给事件委托足够的时间绑定
+          await new Promise(resolve => requestAnimationFrame(resolve));
+          console.log('[弹窗] 切换场景：书签加载完成，当前书签项数量:', document.querySelectorAll('.bookmark-item').length);
         }
         sceneMenu.style.display = 'none';
       });
@@ -454,26 +511,9 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
     });
   }
 
-  function bindBookmarkClick() {
-    console.log('[弹窗] bindBookmarkClick 被调用');
-    const items = bookmarkList.querySelectorAll('.bookmark-item');
-    console.log('[弹窗] 找到书签项数量:', items.length);
-    
-    items.forEach((item, index) => {
-      console.log(`[弹窗] 绑定书签项 ${index}:`, item.dataset.url);
-      item.addEventListener('click', (e) => {
-        console.log('[弹窗] 书签项被点击:', item.dataset.url);
-        e.stopPropagation();
-        const url = item.dataset.url;
-        if (url) {
-          console.log('[弹窗] 打开URL:', url);
-          tabsAPI.create({ url });
-          window.close();
-        } else {
-          console.error('[弹窗] URL为空，无法打开');
-        }
-      });
-    });
+  // 保留空函数占位，实际点击逻辑通过事件委托统一处理
+  function bindBookmarkClick(retry = 0) {
+    console.log('[弹窗] bindBookmarkClick 调用（事件委托模式），retry =', retry);
   }
 }
 
