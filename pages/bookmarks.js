@@ -815,15 +815,6 @@ async function loadBookmarks() {
       return storedFoldersSet.has(f) || currentSceneBookmarkFoldersSet.has(f);
     });
 
-    // 始终更新场景特定的文件夹列表，确保空文件夹被正确保存
-    // 这样即使刷新页面，空文件夹也不会丢失
-    // 注意：currentFolders 应该只包含当前场景的文件夹
-    await storage.saveSceneFolders(currentSceneId, currentFolders);
-    
-    // 注意：loadBookmarks 只负责读取和显示书签，不应该保存书签
-    // 如果文件夹列表不一致，只更新 sceneFolders，不保存书签
-    // 书签的保存应该由用户操作（添加、编辑、删除）或同步操作触发
-
     renderBookmarks();
   } catch (error) {
     console.error('加载书签失败:', error);
