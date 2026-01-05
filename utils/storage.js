@@ -25,6 +25,7 @@ class StorageManager {
     this.scenesKey = 'scenes'; // 场景列表
     this.currentSceneKey = 'currentScene'; // 当前选中场景
     this.syncedScenesKey = 'syncedScenes'; // 已完成云端同步的场景列表
+    this.sceneFoldersKey = 'sceneFolders'; // 每个场景的文件夹列表（用于保存空文件夹）
   }
   
   /**
@@ -79,14 +80,17 @@ class StorageManager {
       const mergedBookmarks = [...otherSceneBookmarks, ...(bookmarks || [])];
       
       // 合并文件夹列表：
-      // 1. 从其他场景的书签中提取文件夹
+      // 1. 从其他场景的书签中提取文件夹（只保留其他场景实际使用的文件夹）
       const otherSceneFolders = otherSceneBookmarks.map(b => b.folder).filter(Boolean);
       // 2. 从当前场景的书签中提取文件夹（确保只包含当前场景实际使用的文件夹）
       const currentSceneBookmarkFolders = (bookmarks || []).map(b => b.folder).filter(Boolean);
-      // 3. 合并：其他场景的文件夹 + 当前场景传入的文件夹（可能包含空文件夹）+ 当前场景书签中的文件夹
-      // 注意：传入的 folders 参数应该只包含当前场景的文件夹，但为了确保完整性，也合并从书签中提取的文件夹
+      // 3. 合并：其他场景实际使用的文件夹 + 当前场景传入的文件夹（可能包含空文件夹）+ 当前场景书签中的文件夹
+      // 注意：传入的 folders 参数应该只包含当前场景的文件夹（包括空文件夹），这样每个场景的文件夹是隔离的
       const allFoldersSet = new Set([...otherSceneFolders, ...(folders || []), ...currentSceneBookmarkFolders]);
       const mergedFolders = [...allFoldersSet].filter(Boolean);
+      
+      // 保存当前场景的文件夹列表（包括空文件夹）到场景特定的存储中
+      await this.saveSceneFolders(targetSceneId, folders || []);
       
       const data = {
         bookmarks: mergedBookmarks,
@@ -138,23 +142,22 @@ class StorageManager {
           // 如果指定了场景ID，过滤书签和文件夹
           if (sceneId) {
             const filteredBookmarks = (data.bookmarks || []).filter(b => b.scene === sceneId);
-            // 从书签中提取文件夹
+            // 从书签中提取文件夹（只保留当前场景实际使用的文件夹）
             const bookmarkFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
-            // 使用存储的 folders 顺序（保持创建顺序），保留所有存储的文件夹（包括空文件夹）
-            const storedFolders = (data.folders || []).filter(Boolean);
-            // 合并：保留所有存储的文件夹（包括空文件夹）+ 从书签中提取但不在存储列表中的文件夹
-            // 注意：空文件夹（没有书签使用）也应该被保留
-            const mergedFolders = [
-              ...storedFolders, // 保留所有存储的文件夹（包括空文件夹），保持顺序
-              ...bookmarkFolders.filter(f => !storedFolders.includes(f)) // 当前场景使用的，但不在存储列表中的
-            ];
-            // 去重（虽然理论上不应该有重复，但为了安全）
-            const dedupFolders = [...new Set(mergedFolders)];
-            resolve({
-              bookmarks: filteredBookmarks,
-              folders: dedupFolders,
-              lastSync: data.lastSync
-            });
+            // 获取该场景保存的文件夹列表（包括空文件夹）
+            this.getSceneFolders(sceneId).then(sceneFolders => {
+              // 合并：场景保存的文件夹（包括空文件夹）+ 从书签中提取的文件夹
+              // 先保留场景保存的文件夹（保持顺序，包括空文件夹），然后添加从书签中提取的文件夹
+              const sceneFoldersSet = new Set(sceneFolders);
+              const missingBookmarkFolders = bookmarkFolders.filter(f => !sceneFoldersSet.has(f));
+              const allSceneFolders = [...sceneFolders, ...missingBookmarkFolders];
+              // 不排序，保持文件夹的创建顺序（包括空文件夹）
+              resolve({
+                bookmarks: filteredBookmarks,
+                folders: allSceneFolders,
+                lastSync: data.lastSync
+              });
+            }).catch(reject);
           } else {
             resolve(data);
           }
@@ -404,7 +407,8 @@ class StorageManager {
       this.scenesKey,
       this.currentSceneKey,
       this.syncStatusKey,
-      this.syncedScenesKey
+      this.syncedScenesKey,
+      this.sceneFoldersKey
     ];
     return new Promise((resolve, reject) => {
       this.storage.remove(keys, () => {
@@ -543,6 +547,8 @@ class StorageManager {
     const filtered = scenes.filter(s => s.id !== sceneId);
     // 同时从已同步列表中移除
     await this.removeSyncedScene(sceneId);
+    // 删除该场景的文件夹列表
+    await this.deleteSceneFolders(sceneId);
     return await this.saveScenes(filtered);
   }
 
@@ -616,6 +622,73 @@ class StorageManager {
           reject(new Error(this.getError()));
         } else {
           resolve([]);
+        }
+      });
+    });
+  }
+
+  /**
+   * 保存场景的文件夹列表（包括空文件夹）
+   * @param {String} sceneId - 场景ID
+   * @param {Array} folders - 文件夹数组
+   */
+  async saveSceneFolders(sceneId, folders) {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.sceneFoldersKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          const sceneFoldersMap = result[this.sceneFoldersKey] || {};
+          sceneFoldersMap[sceneId] = folders || [];
+          this.storage.set({ [this.sceneFoldersKey]: sceneFoldersMap }, () => {
+            if (this.hasError()) {
+              reject(new Error(this.getError()));
+            } else {
+              resolve(sceneFoldersMap);
+            }
+          });
+        }
+      });
+    });
+  }
+
+  /**
+   * 获取场景的文件夹列表（包括空文件夹）
+   * @param {String} sceneId - 场景ID
+   * @returns {Array} 文件夹数组
+   */
+  async getSceneFolders(sceneId) {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.sceneFoldersKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          const sceneFoldersMap = result[this.sceneFoldersKey] || {};
+          resolve(sceneFoldersMap[sceneId] || []);
+        }
+      });
+    });
+  }
+
+  /**
+   * 删除场景的文件夹列表
+   * @param {String} sceneId - 场景ID
+   */
+  async deleteSceneFolders(sceneId) {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.sceneFoldersKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          const sceneFoldersMap = result[this.sceneFoldersKey] || {};
+          delete sceneFoldersMap[sceneId];
+          this.storage.set({ [this.sceneFoldersKey]: sceneFoldersMap }, () => {
+            if (this.hasError()) {
+              reject(new Error(this.getError()));
+            } else {
+              resolve();
+            }
+          });
         }
       });
     });
