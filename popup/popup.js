@@ -308,11 +308,35 @@ sceneSwitchBtn.addEventListener('click', (e) => {
  */
 async function loadBookmarksForPopup() {
   try {
-    // 按当前场景过滤书签
+    // 按当前场景过滤书签（与主页面使用相同的逻辑）
     const data = await storage.getBookmarks(currentSceneId);
-    const bookmarks = data.bookmarks || [];
-    const folders = data.folders || []; // 获取文件夹列表（保持创建顺序）
-    pushOpLog(`loadBookmarks success, scene=${currentSceneId}, total=${bookmarks.length}`);
+    const rawBookmarks = data.bookmarks || [];
+    // 规范化书签文件夹路径
+    const bookmarks = rawBookmarks.map(b => {
+      if (!b.folder) return b;
+      return { ...b, folder: normalizeFolderPath(b.folder) };
+    });
+
+    // 规范化存储的文件夹列表（保留用户创建的空文件夹，保持顺序）
+    // data.folders 应该只包含当前场景的文件夹（从 getBookmarks 返回的）
+    const storedFolders = (data.folders || []).map(p => normalizeFolderPath(p || '')).filter(Boolean);
+    const bookmarkFolders = bookmarks.map(b => b.folder).filter(Boolean);
+    // 合并：保留所有存储的文件夹（包括空文件夹，保持顺序）+ 从书签中提取的文件夹
+    const storedFoldersSet = new Set(storedFolders);
+    const missing = [...new Set(bookmarkFolders)].filter(f => f && !storedFoldersSet.has(f));
+    // 先保留存储的文件夹（保持顺序，包括空文件夹），再添加缺失的文件夹（不排序，保持顺序）
+    const merged = [...storedFolders, ...missing];
+    const dedup = [...new Set(merged)];
+    // 确保 folders 只包含当前场景的文件夹（防御性编程）
+    // 从当前场景的书签中提取文件夹，确保不会包含其他场景的文件夹
+    const currentSceneBookmarkFoldersSet = new Set(bookmarkFolders);
+    const folders = dedup.filter(f => {
+      // 保留：1) 在存储的文件夹列表中（这些应该是当前场景的）
+      //       2) 在当前场景的书签中使用的文件夹
+      return storedFoldersSet.has(f) || currentSceneBookmarkFoldersSet.has(f);
+    });
+    
+    pushOpLog(`loadBookmarks success, scene=${currentSceneId}, total=${bookmarks.length}, folders=${folders.length}`);
     
     // 显示所有书签，与完整画面保持一致（不再限制数量）
     const sorted = bookmarks
@@ -537,20 +561,29 @@ function saveFolderState() {
 }
 
 function buildFolderTree(bookmarks, folders = null) {
-  const root = { name: 'root', path: '', folders: {}, items: [] };
+  const root = { name: 'root', path: '', folders: {}, order: [], items: [] };
+  
+  // 从书签中提取文件夹集合，用于验证文件夹是否属于当前场景
+  const bookmarkFoldersSet = new Set(
+    bookmarks.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean)
+  );
   
   // 如果提供了 folders 列表，先按照这个顺序创建文件夹结构（保持创建顺序）
   if (folders && folders.length > 0) {
     folders.forEach(folderPath => {
       const normalized = normalizeFolderPath(folderPath);
       if (!normalized) return;
+      // 确保文件夹在当前场景的书签中使用，或者是空文件夹（在 folders 列表中）
+      // 注意：folders 参数应该已经过滤了，这里再次验证以确保安全
       const parts = normalized.split('/');
       let node = root;
       let currentPath = '';
       parts.forEach(part => {
         currentPath = currentPath ? `${currentPath}/${part}` : part;
         if (!node.folders[part]) {
-          node.folders[part] = { name: part, path: currentPath, folders: {}, items: [] };
+          node.folders[part] = { name: part, path: currentPath, folders: {}, order: [], items: [] };
+          // 维护子节点的顺序
+          node.order.push(part);
         }
         node = node.folders[part];
       });
@@ -564,18 +597,29 @@ function buildFolderTree(bookmarks, folders = null) {
       root.items.push(b);
       return;
     }
+    // 确保文件夹在 folders 列表中（防御性编程）
+    // 如果不在 folders 列表中，说明可能是其他场景的文件夹，不应该显示
     const parts = folderPath.split('/');
     let node = root;
     let currentPath = '';
     parts.forEach(part => {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
       if (!node.folders[part]) {
-        // 如果文件夹不存在（可能不在 folders 列表中），创建它
-        node.folders[part] = { name: part, path: currentPath, folders: {}, items: [] };
+        // 如果文件夹不存在，创建它（但只创建在当前场景书签中使用的文件夹）
+        if (bookmarkFoldersSet.has(currentPath)) {
+          node.folders[part] = { name: part, path: currentPath, folders: {}, order: [], items: [] };
+          // 维护子节点的顺序
+          node.order.push(part);
+        } else {
+          // 如果文件夹不在当前场景的书签中，跳过（不应该发生，但防御性编程）
+          return;
+        }
       }
       node = node.folders[part];
     });
-    node.items.push(b);
+    if (node) {
+      node.items.push(b);
+    }
   });
   return root;
 }
@@ -587,7 +631,8 @@ function countSubfolders(node) {
 }
 
 function renderFolderTreeHtml(node, indentPath) {
-  const folderEntries = Object.values(node.folders);
+  // 按照 order 数组的顺序获取文件夹，保持创建顺序
+  const folderEntries = (node.order || []).map(key => node.folders[key]).filter(Boolean);
   const items = node.items || [];
 
   const folderHtml = folderEntries.map(child => {
