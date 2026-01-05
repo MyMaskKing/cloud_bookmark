@@ -1375,7 +1375,12 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
     }
 
     const cleaned = normalizeData(cloudData.bookmarks || [], cloudData.folders || []);
-    console.log('[SYNC] cloud data loaded', { sceneId: currentSceneId, cloudBookmarks: cleaned.bookmarks.length, cloudFolders: cleaned.folders.length });
+    console.log('[SYNC] cloud data loaded', { 
+      sceneId: currentSceneId, 
+      cloudBookmarks: cleaned.bookmarks.length, 
+      cloudFolders: cleaned.folders.length,
+      cloudFoldersList: cleaned.folders 
+    });
     
     // 检查本地书签是否已经包含在云端书签中（避免重复合并）
     // 通过比较书签ID来判断是否已经合并过
@@ -1401,6 +1406,14 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
         const currentSceneFoldersSet = new Set(cleaned.folders || []);
         const missingBookmarkFolders = currentSceneBookmarkFolders.filter(f => f && !currentSceneFoldersSet.has(f));
         const currentSceneFolders = [...(cleaned.folders || []), ...missingBookmarkFolders];
+        
+        console.log('[SYNC] saving scene folders (no archive)', {
+          sceneId: currentSceneId,
+          cloudFolders: cleaned.folders,
+          bookmarkFolders: currentSceneBookmarkFolders,
+          missingFolders: missingBookmarkFolders,
+          finalSceneFolders: currentSceneFolders
+        });
         
         // 合并所有场景的文件夹（用于全局存储）
         const otherSceneFolders = [...new Set(otherSceneBookmarks.map(b => b.folder).filter(Boolean))];
@@ -1465,6 +1478,15 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
         const missingBookmarkFolders = currentSceneBookmarkFolders.filter(f => f && !allCurrentSceneFoldersSet.has(f));
         const currentSceneFolders = [...(cleaned.folders || []), ...archiveFoldersArray, ...missingBookmarkFolders];
         
+        console.log('[SYNC] saving scene folders (with archive)', {
+          sceneId: currentSceneId,
+          cloudFolders: cleaned.folders,
+          archiveFolders: archiveFoldersArray,
+          bookmarkFolders: currentSceneBookmarkFolders,
+          missingFolders: missingBookmarkFolders,
+          finalSceneFolders: currentSceneFolders
+        });
+        
         // 保存合并后的数据
         // 注意：传入 sceneId 参数和当前场景的文件夹列表（只包含当前场景的文件夹）
         // saveBookmarks 会保存当前场景的文件夹列表到场景特定的存储中，并合并所有场景的文件夹到全局存储
@@ -1489,6 +1511,14 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
       const currentSceneFoldersSet = new Set(cleaned.folders || []);
       const missingBookmarkFolders = currentSceneBookmarkFolders.filter(f => f && !currentSceneFoldersSet.has(f));
       const currentSceneFolders = [...(cleaned.folders || []), ...missingBookmarkFolders];
+      
+      console.log('[SYNC] saving scene folders (no conflict)', {
+        sceneId: currentSceneId,
+        cloudFolders: cleaned.folders,
+        bookmarkFolders: currentSceneBookmarkFolders,
+        missingFolders: missingBookmarkFolders,
+        finalSceneFolders: currentSceneFolders
+      });
       
       // 保存数据（保留空文件夹）
       // 注意：传入 sceneId 参数和当前场景的文件夹列表（只包含当前场景的文件夹）

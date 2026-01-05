@@ -56,15 +56,15 @@ class StorageManager {
     
     // 检测传入的书签是否属于同一个场景
     let targetSceneId = null;
-    if (bookmarks && bookmarks.length > 0) {
-      // 检查所有书签的scene字段是否一致
+    // 如果明确提供了 sceneId 参数，优先使用它（用于同步时明确指定场景）
+    if (sceneId) {
+      targetSceneId = sceneId;
+    } else if (bookmarks && bookmarks.length > 0) {
+      // 如果没有提供 sceneId，检查所有书签的scene字段是否一致
       const scenes = [...new Set(bookmarks.map(b => b.scene).filter(Boolean))];
       if (scenes.length === 1) {
         targetSceneId = scenes[0];
       }
-    } else if (sceneId) {
-      // 如果书签数组为空但提供了sceneId，也使用合并模式（用于清空某个场景）
-      targetSceneId = sceneId;
     }
     
     // 如果确定是某个场景的书签，需要合并而不是覆盖
@@ -90,6 +90,7 @@ class StorageManager {
       const mergedFolders = [...allFoldersSet].filter(Boolean);
       
       // 保存当前场景的文件夹列表（包括空文件夹）到场景特定的存储中
+      console.log('[Storage] saveSceneFolders', { sceneId: targetSceneId, folders: folders || [] });
       await this.saveSceneFolders(targetSceneId, folders || []);
       
       const data = {
@@ -147,12 +148,21 @@ class StorageManager {
             // 获取该场景保存的文件夹列表（包括空文件夹）
             // 注意：getSceneFolders 只返回当前场景的文件夹，不包含其他场景的文件夹
             this.getSceneFolders(sceneId).then(sceneFolders => {
+              console.log('[Storage] getBookmarks - sceneFolders loaded', { 
+                sceneId, 
+                sceneFolders, 
+                bookmarkFolders 
+              });
               // 确保 sceneFolders 只包含当前场景的文件夹（防御性编程）
               // 合并：场景保存的文件夹（包括空文件夹）+ 从书签中提取的文件夹
               // 先保留场景保存的文件夹（保持顺序，包括空文件夹），然后添加从书签中提取的文件夹
               const sceneFoldersSet = new Set(sceneFolders);
               const missingBookmarkFolders = bookmarkFolders.filter(f => f && !sceneFoldersSet.has(f));
               const allSceneFolders = [...sceneFolders, ...missingBookmarkFolders];
+              console.log('[Storage] getBookmarks - merged folders', { 
+                sceneId, 
+                allSceneFolders 
+              });
               // 不排序，保持文件夹的创建顺序（包括空文件夹）
               // 确保返回的 folders 只包含当前场景的文件夹
               resolve({
