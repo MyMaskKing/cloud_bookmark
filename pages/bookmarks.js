@@ -797,6 +797,7 @@ async function loadBookmarks() {
     });
 
     // 规范化存储的文件夹列表（保留用户创建的空文件夹，保持顺序）
+    // data.folders 应该只包含当前场景的文件夹（从 getBookmarks 返回的）
     const storedFolders = (data.folders || []).map(p => normalizeFolderPath(p || '')).filter(Boolean);
     const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
     // 合并：保留所有存储的文件夹（包括空文件夹，保持顺序）+ 从书签中提取的文件夹
@@ -805,10 +806,18 @@ async function loadBookmarks() {
     // 先保留存储的文件夹（保持顺序，包括空文件夹），再添加缺失的文件夹（不排序，保持顺序）
     const merged = [...storedFolders, ...missing];
     const dedup = [...new Set(merged)];
-    currentFolders = dedup;
+    // 确保 currentFolders 只包含当前场景的文件夹（防御性编程）
+    // 从当前场景的书签中提取文件夹，确保不会包含其他场景的文件夹
+    const currentSceneBookmarkFoldersSet = new Set(bookmarkFolders);
+    currentFolders = dedup.filter(f => {
+      // 保留：1) 在存储的文件夹列表中（这些应该是当前场景的）
+      //       2) 在当前场景的书签中使用的文件夹
+      return storedFoldersSet.has(f) || currentSceneBookmarkFoldersSet.has(f);
+    });
 
     // 始终更新场景特定的文件夹列表，确保空文件夹被正确保存
     // 这样即使刷新页面，空文件夹也不会丢失
+    // 注意：currentFolders 应该只包含当前场景的文件夹
     await storage.saveSceneFolders(currentSceneId, currentFolders);
     
     // 若与存储数据不一致，回写清理结果（但保留空文件夹）

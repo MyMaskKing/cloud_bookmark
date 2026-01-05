@@ -145,16 +145,19 @@ class StorageManager {
             // 从书签中提取文件夹（只保留当前场景实际使用的文件夹）
             const bookmarkFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
             // 获取该场景保存的文件夹列表（包括空文件夹）
+            // 注意：getSceneFolders 只返回当前场景的文件夹，不包含其他场景的文件夹
             this.getSceneFolders(sceneId).then(sceneFolders => {
+              // 确保 sceneFolders 只包含当前场景的文件夹（防御性编程）
               // 合并：场景保存的文件夹（包括空文件夹）+ 从书签中提取的文件夹
               // 先保留场景保存的文件夹（保持顺序，包括空文件夹），然后添加从书签中提取的文件夹
               const sceneFoldersSet = new Set(sceneFolders);
-              const missingBookmarkFolders = bookmarkFolders.filter(f => !sceneFoldersSet.has(f));
+              const missingBookmarkFolders = bookmarkFolders.filter(f => f && !sceneFoldersSet.has(f));
               const allSceneFolders = [...sceneFolders, ...missingBookmarkFolders];
               // 不排序，保持文件夹的创建顺序（包括空文件夹）
+              // 确保返回的 folders 只包含当前场景的文件夹
               resolve({
                 bookmarks: filteredBookmarks,
-                folders: allSceneFolders,
+                folders: allSceneFolders, // 只包含当前场景的文件夹
                 lastSync: data.lastSync
               });
             }).catch(reject);

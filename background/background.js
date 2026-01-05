@@ -1394,11 +1394,24 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
         // 本地书签已经全部在云端，直接使用云端数据（避免重复合并）
         // 云端数据已经包含了所有本地书签，不需要再次归档
         const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
+        
+        // 提取当前场景的文件夹列表（包括空文件夹）
+        const currentSceneBookmarkFolders = [...new Set(cleaned.bookmarks.map(b => b.folder).filter(Boolean))];
+        // 合并：云端的文件夹列表（包括空文件夹）+ 从当前场景的书签中提取的文件夹
+        const currentSceneFoldersSet = new Set(cleaned.folders || []);
+        const missingBookmarkFolders = currentSceneBookmarkFolders.filter(f => f && !currentSceneFoldersSet.has(f));
+        const currentSceneFolders = [...(cleaned.folders || []), ...missingBookmarkFolders];
+        
+        // 合并所有场景的文件夹（用于全局存储）
+        const otherSceneFolders = [...new Set(otherSceneBookmarks.map(b => b.folder).filter(Boolean))];
         const allFolders = [...new Set([
-          ...(allBookmarks.folders || []),
-          ...cleaned.folders
+          ...otherSceneFolders,
+          ...currentSceneFolders
         ])];
-        await storage.saveBookmarks(mergedBookmarks, allFolders);
+        
+        // 注意：传入 sceneId 参数和当前场景的文件夹列表（只包含当前场景的文件夹）
+        // saveBookmarks 会保存当前场景的文件夹列表到场景特定的存储中，并合并所有场景的文件夹到全局存储
+        await storage.saveBookmarks(mergedBookmarks, currentSceneFolders, currentSceneId);
       } else {
         // 需要归档：本地有书签不在云端（需要归档）
         const timestamp = new Date().toISOString().slice(0, 10).replace(/-/g, ''); // 如 20240115
@@ -1443,14 +1456,19 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
           }
         });
         
-        const allFolders = [...new Set([
-          ...(allBookmarks.folders || []),
-          ...cleaned.folders,
-          ...Array.from(archiveFolders)
-        ])];
+        // 提取当前场景的文件夹列表（包括空文件夹和归档文件夹）
+        const currentSceneBookmarkFolders = [...new Set(mergedSceneBookmarks.map(b => b.folder).filter(Boolean))];
+        // 合并：云端的文件夹列表（包括空文件夹）+ 归档文件夹 + 从当前场景的书签中提取的文件夹
+        const archiveFoldersArray = Array.from(archiveFolders);
+        // 先保留云端的文件夹列表（包括空文件夹），然后添加归档文件夹，最后添加从书签中提取的文件夹
+        const allCurrentSceneFoldersSet = new Set([...(cleaned.folders || []), ...archiveFoldersArray]);
+        const missingBookmarkFolders = currentSceneBookmarkFolders.filter(f => f && !allCurrentSceneFoldersSet.has(f));
+        const currentSceneFolders = [...(cleaned.folders || []), ...archiveFoldersArray, ...missingBookmarkFolders];
         
         // 保存合并后的数据
-        await storage.saveBookmarks(mergedBookmarks, allFolders);
+        // 注意：传入 sceneId 参数和当前场景的文件夹列表（只包含当前场景的文件夹）
+        // saveBookmarks 会保存当前场景的文件夹列表到场景特定的存储中，并合并所有场景的文件夹到全局存储
+        await storage.saveBookmarks(mergedBookmarks, currentSceneFolders, currentSceneId);
         
         // 同步合并后的数据到云端
         const sceneFolders = allFolders.filter(f => {
@@ -1465,18 +1483,17 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
       // 定时同步或首次同步无冲突：云端数据直接覆盖本地当前场景
       const mergedBookmarks = [...otherSceneBookmarks, ...cleaned.bookmarks];
       
-      // 合并文件夹：保留所有本地文件夹（包括空文件夹）+ 云端的文件夹
-      // 从其他场景的书签中提取文件夹
-      const otherSceneFolders = [...new Set(otherSceneBookmarks.map(b => b.folder).filter(Boolean))];
-      // 保留所有本地存储的文件夹（包括空文件夹），然后合并云端的文件夹
-      const allFolders = [...new Set([
-        ...(allBookmarks.folders || []),  // 保留所有本地文件夹（包括空文件夹）
-        ...otherSceneFolders,  // 其他场景的文件夹（从书签中提取，作为补充）
-        ...cleaned.folders  // 云端的文件夹
-      ])];
+      // 提取当前场景的文件夹列表（包括空文件夹）
+      const currentSceneBookmarkFolders = [...new Set(cleaned.bookmarks.map(b => b.folder).filter(Boolean))];
+      // 合并：云端的文件夹列表（包括空文件夹）+ 从当前场景的书签中提取的文件夹
+      const currentSceneFoldersSet = new Set(cleaned.folders || []);
+      const missingBookmarkFolders = currentSceneBookmarkFolders.filter(f => f && !currentSceneFoldersSet.has(f));
+      const currentSceneFolders = [...(cleaned.folders || []), ...missingBookmarkFolders];
       
       // 保存数据（保留空文件夹）
-      await storage.saveBookmarks(mergedBookmarks, allFolders);
+      // 注意：传入 sceneId 参数和当前场景的文件夹列表（只包含当前场景的文件夹）
+      // saveBookmarks 会保存当前场景的文件夹列表到场景特定的存储中，并合并所有场景的文件夹到全局存储
+      await storage.saveBookmarks(mergedBookmarks, currentSceneFolders, currentSceneId);
     }
 
     // 更新设备上次同步时间
