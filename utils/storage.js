@@ -74,10 +74,31 @@ class StorageManager {
       const allBookmarks = allData.bookmarks || [];
       
       // 移除该场景的旧书签，保留其他场景的书签
-      const otherSceneBookmarks = allBookmarks.filter(b => b.scene !== targetSceneId);
+      // 注意：只保留明确属于其他场景的书签（有 scene 字段且不等于 targetSceneId）
+      // 如果书签没有 scene 字段，说明是旧数据，应该被保留并添加 scene 字段（兼容旧数据）
+      const otherSceneBookmarks = allBookmarks.filter(b => {
+        // 如果书签没有 scene 字段，移除它（旧数据会被 bookmarks 参数中的书签覆盖，如果 bookmarks 中没有则会被丢失）
+        // 但为了安全，我们保留它，让 Map 去重逻辑处理
+        if (!b.scene) return false;
+        // 如果书签的 scene 字段不等于 targetSceneId，保留它（其他场景的书签）
+        return b.scene !== targetSceneId;
+      });
       
       // 合并书签：其他场景的书签 + 当前场景的新书签
-      const mergedBookmarks = [...otherSceneBookmarks, ...(bookmarks || [])];
+      // 使用 Map 按 ID 去重，避免重复（保留最后出现的书签，即当前场景的书签）
+      const bookmarkMap = new Map();
+      // 先添加其他场景的书签
+      otherSceneBookmarks.forEach(b => {
+        bookmarkMap.set(b.id, b);
+      });
+      // 再添加当前场景的新书签（会覆盖同 ID 的书签，避免重复）
+      // 注意：bookmarks 参数中的书签应该已经通过第54行添加了 scene 字段
+      (bookmarks || []).forEach(b => {
+        // 确保书签有 scene 字段（防御性编程）
+        const bookmarkWithScene = b.scene ? b : { ...b, scene: targetSceneId };
+        bookmarkMap.set(bookmarkWithScene.id, bookmarkWithScene);
+      });
+      const mergedBookmarks = Array.from(bookmarkMap.values());
       
       // 合并文件夹列表：
       // 1. 从其他场景的书签中提取文件夹（只保留其他场景实际使用的文件夹）

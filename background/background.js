@@ -1051,21 +1051,8 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
       try {
         console.log('[清空本地数据] 开始清空本地书签、设备列表、设置');
         
-        // 清空书签
-        await storage.saveBookmarks([], []);
-        
-        // 清空设备列表
-        await storage.saveDevices([]);
-        
-        // 清空设置（但保留deviceInfo，因为它是本地生成的）
-        await storage.saveSettings({});
-        
-        // 清空已同步场景列表
-        await storage.clearSyncedScenes();
-        
-        // 清空场景文件夹列表（sceneFolders）
-        // 使用 StorageManager 的 key 保持一致
-        const sceneFoldersKey = 'sceneFolders';
+        // 清空场景文件夹列表（sceneFolders）- 必须先清空，避免 saveBookmarks 时使用旧数据
+        const sceneFoldersKey = storage.sceneFoldersKey || 'sceneFolders';
         const sceneFoldersMap = {};
         const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
         if (storageAPI && storageAPI.local) {
@@ -1077,6 +1064,24 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
             });
           }
         }
+        console.log('[清空本地数据] 已清空场景文件夹列表');
+        
+        // 清空书签（使用覆盖模式，清空所有场景的书签）
+        // 注意：不传入 sceneId，使用覆盖模式清空所有数据
+        await storage.saveBookmarks([], []);
+        console.log('[清空本地数据] 已清空书签');
+        
+        // 清空设备列表
+        await storage.saveDevices([]);
+        console.log('[清空本地数据] 已清空设备列表');
+        
+        // 清空设置（但保留deviceInfo，因为它是本地生成的）
+        await storage.saveSettings({});
+        console.log('[清空本地数据] 已清空设置');
+        
+        // 清空已同步场景列表
+        await storage.clearSyncedScenes();
+        console.log('[清空本地数据] 已清空已同步场景列表');
         
         // 重置当前场景为默认场景（等待场景列表从云端同步后再设置）
         // 先获取场景列表，如果为空则设置为 'home'

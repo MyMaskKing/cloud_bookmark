@@ -820,13 +820,9 @@ async function loadBookmarks() {
     // 注意：currentFolders 应该只包含当前场景的文件夹
     await storage.saveSceneFolders(currentSceneId, currentFolders);
     
-    // 若与存储数据不一致，回写清理结果（但保留空文件夹）
-    const storedKey = storedFolders.join('|');
-    const dedupKey = dedup.join('|');
-    if (storedKey !== dedupKey) {
-      // 保存时确保保留所有文件夹（包括空文件夹）
-      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-    }
+    // 注意：loadBookmarks 只负责读取和显示书签，不应该保存书签
+    // 如果文件夹列表不一致，只更新 sceneFolders，不保存书签
+    // 书签的保存应该由用户操作（添加、编辑、删除）或同步操作触发
 
     renderBookmarks();
   } catch (error) {
