@@ -93,8 +93,12 @@ const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const enableFloatingBall = document.getElementById('enableFloatingBall');
 const floatingBallPositionGroup = document.getElementById('floatingBallPositionGroup');
 const floatingBallDefaultPosition = document.getElementById('floatingBallDefaultPosition');
+const floatingBallActionGroup = document.getElementById('floatingBallActionGroup');
+const floatingBallClickAction = document.getElementById('floatingBallClickAction');
 const enableSyncErrorNotification = document.getElementById('enableSyncErrorNotification');
 const stickySyncErrorToast = document.getElementById('stickySyncErrorToast');
+const shortcutDisplayWin = document.getElementById('shortcutDisplayWin');
+const shortcutDisplayMac = document.getElementById('shortcutDisplayMac');
 const sceneList = document.getElementById('sceneList');
 const currentSceneName = document.getElementById('currentSceneName');
 const addSceneBtn = document.getElementById('addSceneBtn');
@@ -123,6 +127,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadUiSettings();
   await loadDeviceDetectionSetting();
   await loadFloatingBallSetting();
+  await loadShortcutDisplay();
   await loadScenes();
   
   // 定时更新同步状态
@@ -736,6 +741,62 @@ expandFirstLevelCheckbox.addEventListener('change', async () => {
 });
 
 /**
+ * 加载快捷键显示（动态读取 commands 配置）
+ */
+async function loadShortcutDisplay() {
+  const setText = (el, text) => {
+    if (!el) return;
+    el.textContent = text;
+  };
+
+  // 默认值
+  setText(shortcutDisplayWin, 'Windows / Linux：Ctrl + Shift + V');
+  setText(shortcutDisplayMac, 'macOS：Command + Shift + V');
+
+  try {
+    const cmds = await getCommandsCompat();
+    if (!cmds || !Array.isArray(cmds)) return;
+    const addCmd = cmds.find(c => c.name === 'add-bookmark');
+    if (addCmd && addCmd.shortcut) {
+      // Firefox 返回如 "Ctrl+Shift+V"
+      const shortcut = addCmd.shortcut.replace(/\+/g, ' + ');
+      setText(shortcutDisplayWin, `Windows / Linux：${shortcut}`);
+      setText(shortcutDisplayMac, `macOS：${shortcut.replace(/^Ctrl/, 'Command')}`);
+    } else {
+      setText(shortcutDisplayWin, '未设置（请在 about:addons 设置）');
+      setText(shortcutDisplayMac, '未设置（请在 about:addons 设置）');
+    }
+  } catch (e) {
+    console.warn('加载快捷键配置失败', e);
+  }
+}
+
+/**
+ * 兼容获取 commands 列表（Firefox/Chrome, MV2/MV3）
+ */
+function getCommandsCompat() {
+  return new Promise((resolve) => {
+    try {
+      if (typeof browser !== 'undefined' && browser.commands && browser.commands.getAll) {
+        browser.commands.getAll().then(resolve).catch(() => resolve(null));
+        return;
+      }
+      if (typeof chrome !== 'undefined' && chrome.commands && chrome.commands.getAll) {
+        chrome.commands.getAll((cmds) => {
+          if (chrome.runtime && chrome.runtime.lastError) {
+            resolve(null);
+          } else {
+            resolve(cmds);
+          }
+        });
+        return;
+      }
+    } catch (_) {}
+    resolve(null);
+  });
+}
+
+/**
  * 显示场景选择对话框
  * @returns {Promise<String|null>} 返回选中的场景ID，取消返回null
  */
@@ -1016,14 +1077,20 @@ async function loadFloatingBallSetting() {
     
     // 加载默认位置设置（默认值为 'auto'）
     floatingBallDefaultPosition.value = floatingBall.defaultPosition || 'auto';
+    // 加载点击行为设置（默认值为 popup）
+    floatingBallClickAction.value = floatingBall.clickAction || 'popup';
     
     // 根据是否启用悬浮球显示/隐藏默认位置选择器
-    floatingBallPositionGroup.style.display = enableFloatingBall.checked ? 'block' : 'none';
+    const visible = enableFloatingBall.checked;
+    floatingBallPositionGroup.style.display = visible ? 'block' : 'none';
+    floatingBallActionGroup.style.display = visible ? 'block' : 'none';
   } catch (e) {
     console.warn('加载悬浮球设置失败', e);
     enableFloatingBall.checked = false;
     floatingBallDefaultPosition.value = 'auto';
+    floatingBallClickAction.value = 'popup';
     floatingBallPositionGroup.style.display = 'none';
+    floatingBallActionGroup.style.display = 'none';
   }
 }
 
@@ -1039,11 +1106,16 @@ enableFloatingBall.addEventListener('change', async () => {
     if (!floatingBall.defaultPosition) {
       floatingBall.defaultPosition = 'auto';
     }
+    if (!floatingBall.clickAction) {
+      floatingBall.clickAction = 'popup';
+    }
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
     
     // 显示/隐藏默认位置选择器
-    floatingBallPositionGroup.style.display = enableFloatingBall.checked ? 'block' : 'none';
+    const visible = enableFloatingBall.checked;
+    floatingBallPositionGroup.style.display = visible ? 'block' : 'none';
+    floatingBallActionGroup.style.display = visible ? 'block' : 'none';
     
     // 立即同步到云端
     await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
@@ -1088,6 +1160,36 @@ floatingBallDefaultPosition.addEventListener('change', async () => {
       // 忽略错误
     }
     showMessage('悬浮球默认位置已保存（已同步至云端）', 'success');
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+});
+
+/**
+ * 悬浮球点击行为变更
+ */
+floatingBallClickAction.addEventListener('change', async () => {
+  try {
+    const settings = await storage.getSettings();
+    const floatingBall = (settings && settings.floatingBall) || {};
+    floatingBall.clickAction = floatingBallClickAction.value || 'popup';
+    const newSettings = { ...(settings || {}), floatingBall };
+    await storage.saveSettings(newSettings);
+    
+    // 立即同步到云端
+    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+    
+    // 通知所有标签页更新悬浮球状态
+    const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+    try {
+      const tabs = await tabsAPI.query({});
+      tabs.forEach(tab => {
+        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => {});
+      });
+    } catch (e) {
+      // 忽略错误
+    }
+    showMessage('悬浮球点击行为已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }

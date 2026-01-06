@@ -123,6 +123,20 @@
           </select>
           <small>选择悬浮球的默认位置。选择"自动"时，悬浮球会根据位置自动靠到最近的边缘；选择"靠左"或"靠右"时，悬浮球会在2秒后自动靠到指定边缘。</small>
         </div>
+        <div class="form-group" id="floatingBallActionGroup" style="display: none;">
+          <label for="floatingBallClickAction">悬浮球点击行为</label>
+          <select id="floatingBallClickAction">
+            <option value="popup">打开弹窗（默认）</option>
+            <option value="quickSave">一键保存当前页面</option>
+          </select>
+          <small>选择点击悬浮球时的行为。默认打开弹窗；一键保存会直接把当前页面加入当前场景书签。</small>
+        </div>
+        <div class="form-group">
+          <label>保存书签快捷键</label>
+          <div id="shortcutDisplayWin" style="font-weight:600;">Windows / Linux：加载中…</div>
+          <div id="shortcutDisplayMac" style="font-weight:600;">macOS：加载中…</div>
+          <small>Firefox 请在 “about:addons → 管理扩展快捷键” 中确认/修改；如有冲突可在此页面重设。</small>
+        </div>
         <div class="form-group checkbox-row">
           <label>
             <input type="checkbox" id="enableSyncErrorNotification">

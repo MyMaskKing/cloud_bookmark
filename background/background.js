@@ -904,13 +904,29 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'openBookmarksPage') {
-    console.log('[后台] 收到 openBookmarksPage 请求');
-    // 打开完整书签管理页面
+    console.log('[后台] 收到 openBookmarksPage 请求', {
+      hasCurrentUrl: !!request.currentUrl,
+      hasCurrentTitle: !!request.currentTitle
+    });
+    // 打开完整书签管理页面（可选：直接进入添加当前页面模式）
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
     
-    // 总是打开完整管理页面
-    const targetUrl = runtimeAPI.getURL('pages/bookmarks.html');
+    let targetUrl;
+    if (request.currentUrl) {
+      // 直接跳转到「添加书签」页面，等价于弹窗里的「添加当前页面」/ 快捷键添加
+      // 使用 source=shortcut，让页面表现与快捷键完全一致（背景、高亮等统一）
+      const params = new URLSearchParams({
+        action: 'add',
+        url: request.currentUrl,
+        title: request.currentTitle || '',
+        source: 'shortcut'
+      });
+      targetUrl = runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
+    } else {
+      // 回退：仅打开管理页面
+      targetUrl = runtimeAPI.getURL('pages/bookmarks.html');
+    }
     
     if (typeof browser !== 'undefined' && browser.tabs) {
       // Firefox: 使用 Promise
@@ -931,6 +947,47 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
       console.log('[后台] openBookmarksPage 成功 (Chrome)');
       sendResponse({ success: true });
     }
+    return true;
+  }
+
+  // 悬浮球快捷保存当前页面为书签
+  if (request.action === 'quickAddBookmark') {
+    (async () => {
+      try {
+        const sceneId = await storage.getCurrentScene();
+        const data = await storage.getBookmarks(sceneId);
+        const existing = data.bookmarks || [];
+        const now = Date.now();
+        const url = request.currentUrl || '';
+        const title = request.currentTitle || url || '未命名';
+
+        if (!url) {
+          sendResponse({ success: false, error: '缺少URL' });
+          return;
+        }
+
+        const newBookmark = {
+          id: `fb_${now}_${Math.random().toString(36).slice(2, 8)}`,
+          title,
+          url,
+          description: '',
+          notes: '',
+          tags: [],
+          folder: '',
+          scene: sceneId,
+          starred: false,
+          createdAt: now,
+          updatedAt: now,
+          favicon: ''
+        };
+
+        await storage.saveBookmarks([...existing, newBookmark], data.folders || [], sceneId);
+        sendResponse({ success: true, bookmarkId: newBookmark.id });
+      } catch (error) {
+        console.error('[后台] quickAddBookmark 失败:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
     return true;
   }
   
