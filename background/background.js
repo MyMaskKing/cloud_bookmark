@@ -1498,7 +1498,8 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
         await storage.saveBookmarks(mergedBookmarks, currentSceneFolders, currentSceneId);
         
         // 同步合并后的数据到云端
-        const sceneFolders = allFolders.filter(f => {
+        // 使用当前场景的文件夹列表，过滤出实际在书签中使用的文件夹
+        const sceneFolders = currentSceneFolders.filter(f => {
           return mergedSceneBookmarks.some(b => {
             const bFolder = b.folder || '';
             return bFolder === f || (bFolder.startsWith(f + '/'));

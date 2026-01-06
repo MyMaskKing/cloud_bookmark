@@ -46,8 +46,8 @@
   "commands": {
     "add-bookmark": {
       "suggested_key": {
-        "default": "Ctrl+Shift+H",
-        "mac": "Command+Shift+H"
+        "default": "Ctrl+Shift+V",
+        "mac": "Command+Shift+V"
       },
       "description": "添加当前页面为书签"
     }
