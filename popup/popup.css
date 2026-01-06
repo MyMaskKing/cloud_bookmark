@@ -173,14 +173,15 @@ body {
 .action-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 12px 14px;
   background: #f8f9fa;
   border: 1px solid #e9ecef;
   border-radius: 6px;
   cursor: pointer;
   font-size: 14px;
   transition: all 0.2s;
+  justify-content: flex-start;
 }
 
 .action-btn:hover {
@@ -189,6 +190,150 @@ body {
 
 .action-btn .icon {
   font-size: 18px;
+  width: 28px;
+  height: 28px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #f1f3f5;
+}
+
+.action-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+
+.action-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.action-subtitle {
+  font-size: 12px;
+  color: #5f6a86;
+}
+
+.primary-action {
+  background: linear-gradient(135deg, #4a90e2, #3573c5);
+  border: none;
+  color: #fff;
+  box-shadow: 0 8px 20px rgba(53, 115, 197, 0.25);
+}
+
+.primary-action .icon {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.primary-action .action-title {
+  color: #fff;
+}
+
+.primary-action .action-subtitle {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.primary-action:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(53, 115, 197, 0.3);
+  background: linear-gradient(135deg, #3f82d0, #2f65b1);
+}
+
+.secondary-action {
+  border: 1px solid #dbe7ff;
+  background: #f7faff;
+  color: #1a1a1a;
+  box-shadow: 0 4px 14px rgba(74, 144, 226, 0.12);
+}
+
+.secondary-action .icon {
+  background: #e7f0ff;
+  color: #3573c5;
+}
+
+.secondary-action .action-title {
+  color: #1f2a44;
+}
+
+.secondary-action .action-subtitle {
+  color: #5f6a86;
+}
+
+.secondary-action:hover {
+  transform: translateY(-1px);
+  border-color: #c5d9ff;
+  box-shadow: 0 8px 18px rgba(74, 144, 226, 0.18);
+}
+
+/* 移动端优化：更紧凑但保持清晰度 */
+@media (max-width: 360px) {
+  body {
+    width: 320px;
+    font-size: 13px;
+  }
+
+  .popup-header {
+    padding: 12px;
+  }
+
+  .popup-content {
+    padding: 10px;
+  }
+
+  .search-box input {
+    padding: 8px 10px;
+    font-size: 13px;
+  }
+
+  .action-btn {
+    padding: 11px 12px;
+    gap: 8px;
+  }
+
+  .action-btn .icon {
+    width: 26px;
+    height: 26px;
+    font-size: 16px;
+  }
+
+  .action-title {
+    font-size: 13px;
+  }
+
+  .action-subtitle {
+    font-size: 11px;
+  }
+
+  .recent-bookmarks h3 {
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+
+  .bookmark-item {
+    padding: 9px;
+  }
+
+  .bookmark-item-title {
+    font-size: 13px;
+  }
+
+  .bookmark-item-url,
+  .bookmark-item-folder {
+    font-size: 11px;
+  }
+
+  .footer-actions {
+    gap: 6px;
+  }
+
+  .footer-btn {
+    padding: 7px;
+    font-size: 13px;
+  }
 }
 
 .recent-bookmarks h3 {
