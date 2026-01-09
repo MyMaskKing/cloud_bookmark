@@ -1183,6 +1183,58 @@ async function renameFolderPath(oldPath, newPath) {
 }
 
 /**
+ * 只重命名文件夹名称（不改变父级路径）
+ */
+async function renameFolderName(folderPath, newName) {
+  if (!folderPath || !newName || !newName.trim()) return;
+  
+  // 提取父级路径和当前文件夹名称
+  const lastSlashIndex = folderPath.lastIndexOf('/');
+  const parentPath = lastSlashIndex >= 0 ? folderPath.substring(0, lastSlashIndex) : '';
+  const newPath = parentPath ? `${parentPath}/${newName.trim()}` : newName.trim();
+  const normalizedNewPath = normalizeFolderPath(newPath);
+  
+  if (normalizedNewPath === folderPath) return; // 名称未改变
+  
+  if (currentBookmarks.some(b => b.folder === normalizedNewPath)) {
+    const proceed = confirm('目标路径已存在同名文件夹，是否继续重命名？');
+    if (!proceed) return;
+  }
+  
+  await renameFolderPath(folderPath, normalizedNewPath);
+}
+
+/**
+ * 移动文件夹到新的父级（保持文件夹名称不变）
+ */
+async function moveFolderToParent(folderPath, newParentPath) {
+  if (!folderPath) return;
+  
+  // 提取当前文件夹名称
+  const lastSlashIndex = folderPath.lastIndexOf('/');
+  const folderName = lastSlashIndex >= 0 ? folderPath.substring(lastSlashIndex + 1) : folderPath;
+  
+  // 构建新路径
+  const newPath = newParentPath ? `${newParentPath}/${folderName}` : folderName;
+  const normalizedNewPath = normalizeFolderPath(newPath);
+  
+  if (normalizedNewPath === folderPath) return; // 位置未改变
+  
+  // 检查是否移动到自己的子文件夹中（不允许）
+  if (normalizedNewPath.startsWith(folderPath + '/')) {
+    alert('不能将文件夹移动到自己的子文件夹中');
+    return;
+  }
+  
+  if (currentBookmarks.some(b => b.folder === normalizedNewPath)) {
+    const proceed = confirm('目标路径已存在同名文件夹，是否继续移动？');
+    if (!proceed) return;
+  }
+  
+  await renameFolderPath(folderPath, normalizedNewPath);
+}
+
+/**
  * 新增文件夹
  */
 async function handleAddFolder() {
@@ -1236,7 +1288,11 @@ function openFolderMenu(anchorBtn, folderPath) {
     </div>
     <div class="folder-menu-item" data-action="rename">
       <span style="font-size: 16px;">✏️</span>
-      <span>重命名/移动</span>
+      <span>重命名</span>
+    </div>
+    <div class="folder-menu-item" data-action="move">
+      <span style="font-size: 16px;">📂</span>
+      <span>移动到</span>
     </div>
     <div class="folder-menu-item" data-action="move-up">
       <span style="font-size: 16px;">⬆️</span>
@@ -1301,14 +1357,37 @@ function openFolderMenu(anchorBtn, folderPath) {
         await loadFolders();
         await loadTags();
       } else if (action === 'rename') {
-        const newPath = prompt('输入新路径（支持修改父级，用/分隔，例如：项目/前端/UI）', folderPath) || '';
-        const normalized = normalizeFolderPath(newPath);
-        if (!normalized) return;
-        if (normalized === folderPath) return;
-        await renameFolderPath(folderPath, normalized);
+        // 只重命名文件夹名称，不改变父级
+        const lastSlashIndex = folderPath.lastIndexOf('/');
+        const currentName = lastSlashIndex >= 0 ? folderPath.substring(lastSlashIndex + 1) : folderPath;
+        const newName = prompt('请输入新的文件夹名称', currentName) || '';
+        if (!newName.trim() || newName.trim() === currentName) return;
+        await renameFolderName(folderPath, newName.trim());
         await loadBookmarks();
         await loadFolders();
         await loadTags();
+      } else if (action === 'move') {
+        // 移动到新的父级文件夹
+        menu.remove();
+        document.removeEventListener('click', closeMenu);
+        
+        // 获取当前文件夹的父级路径
+        const lastSlashIndex = folderPath.lastIndexOf('/');
+        const currentParentPath = lastSlashIndex >= 0 ? folderPath.substring(0, lastSlashIndex) : '';
+        
+        // 显示文件夹选择对话框，排除当前文件夹及其子文件夹
+        const targetParentPath = await showFolderSelectDialog({ excludeFolderPath: folderPath });
+        if (targetParentPath === null) return; // 用户取消
+        
+        // 如果选择的父级路径和当前相同，不执行移动
+        const normalizedTargetParent = targetParentPath.trim() ? normalizeFolderPath(targetParentPath) : '';
+        if (normalizedTargetParent === currentParentPath) return;
+        
+        await moveFolderToParent(folderPath, normalizedTargetParent);
+        await loadBookmarks();
+        await loadFolders();
+        await loadTags();
+        return; // 已经关闭菜单，直接返回
       } else if (action === 'move-up' || action === 'move-down') {
         const dir = action === 'move-up' ? -1 : 1;
         const moved = moveFolderSameLevel(folderPath, dir);
@@ -2620,9 +2699,12 @@ async function batchDeleteBookmarks() {
 
 /**
  * 显示文件夹选择对话框
+ * @param {Object} options - 选项
+ * @param {string} options.excludeFolderPath - 要排除的文件夹路径（及其子文件夹）
  */
-function showFolderSelectDialog() {
+function showFolderSelectDialog(options = {}) {
   return new Promise((resolve) => {
+    const { excludeFolderPath } = options;
     const overlay = document.createElement('div');
     overlay.className = 'dialog-overlay';
     overlay.style.cssText = `
@@ -2658,7 +2740,19 @@ function showFolderSelectDialog() {
     
     // 与单个编辑时的 loadFolderOptions 逻辑一致：合并从书签中提取的文件夹和 currentFolders 中的文件夹
     const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
-    const folders = [...new Set([...bookmarkFolders, ...currentFolders])];
+    let folders = [...new Set([...bookmarkFolders, ...currentFolders])];
+    
+    // 如果指定了要排除的文件夹，过滤掉该文件夹及其子文件夹
+    if (excludeFolderPath) {
+      folders = folders.filter(f => {
+        // 排除完全匹配的文件夹
+        if (f === excludeFolderPath) return false;
+        // 排除子文件夹
+        if (f.startsWith(excludeFolderPath + '/')) return false;
+        return true;
+      });
+    }
+    
     folders.sort();
     
     // 构建树结构
