@@ -1026,6 +1026,28 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
   
   // 存储当前显示的失效网站列表（用于移除操作）
   let currentInvalidBookmarks = [...invalidBookmarks];
+  let hasPendingSync = false; // 标记是否有待同步的更改
+  
+  // 同步到云端的函数（在提交或取消时调用）
+  const syncToCloud = async () => {
+    if (hasPendingSync) {
+      console.log('[失效网站移除] 开始同步到云端');
+      try {
+        const response = await sendMessageCompat({
+          action: 'syncSettings'
+        });
+        if (response && response.success) {
+          console.log('[失效网站移除] 同步到云端成功');
+          hasPendingSync = false;
+        } else {
+          console.warn('[失效网站移除] 同步到云端返回失败:', response);
+        }
+      } catch (error) {
+        console.error('[失效网站移除] 同步到云端失败:', error);
+        // 即使同步失败，本地已保存，下次同步时会自动同步
+      }
+    }
+  };
   
   // 移除失效网站项的函数
   const removeInvalidItem = async (index) => {
@@ -1047,15 +1069,19 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         if (!ignoredInvalidUrls[sceneId].includes(removedUrl)) {
           ignoredInvalidUrls[sceneId].push(removedUrl);
           settings.ignoredInvalidUrls = ignoredInvalidUrls;
-          await storage.saveSettings(settings);
           
-          // 同步到云端
-          await sendMessageCompat({
-            action: 'syncSettingsToCloud'
-          });
+          // 只保存到本地，不立即同步（在提交或取消时统一同步）
+          await storage.saveSettings(settings);
+          hasPendingSync = true; // 标记有待同步的更改
+          console.log('[失效网站移除] 已保存到本地，场景ID:', sceneId, 'URL:', removedUrl);
+          
+          // 显示提示信息
+          showMessage('已保存，关闭弹窗时将同步到云端', 'success', 2000);
         }
       } catch (error) {
         console.error('保存已移除的失效网站失败:', error);
+        // 显示错误提示
+        showMessage('保存失败，请重试', 'error', 2000);
       }
       
       // 重新渲染列表
@@ -1219,7 +1245,10 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
   // 初始绑定事件
   bindInvalidBookmarkEvents();
   
-  const cleanup = () => {
+  const cleanup = async () => {
+    // 弹窗关闭时，如果有待同步的更改，立即同步
+    await syncToCloud();
+    
     overlay.style.animation = 'fadeIn 0.2s ease-out reverse';
     setTimeout(() => overlay.remove(), 200);
   };
@@ -1246,7 +1275,10 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       // 保存到本地
       await storage.saveBookmarks(remainingBookmarks, remainingFolders, sceneId);
       
-      // 同步到云端
+      // 先同步已移除列表到云端（如果有待同步的更改）
+      await syncToCloud();
+      
+      // 同步书签到云端
       await sendMessageCompat({
         action: 'syncToCloud',
         bookmarks: remainingBookmarks,
@@ -2055,19 +2087,85 @@ addSceneBtn.addEventListener('click', async () => {
 });
 
 /**
- * 显示消息
+ * 显示冒泡提示（统一使用 toast 样式）
+ * @param {string} message - 提示消息
+ * @param {string} type - 类型：'success', 'error', 'info'（默认）
+ * @param {number} duration - 显示时长（毫秒），默认 3000
  */
-function showMessage(message, type) {
-  const messageEl = document.createElement('div');
-  messageEl.className = `message ${type}`;
-  messageEl.textContent = message;
+function showMessage(message, type = 'info', duration = 3000) {
+  // 确保 DOM 已加载
+  if (!document || !document.body) {
+    // 如果 DOM 未加载，等待加载完成
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        showMessage(message, type, duration);
+      });
+      return;
+    }
+    // 如果 document 不存在，延迟执行
+    setTimeout(() => {
+      if (document && document.body) {
+        showMessage(message, type, duration);
+      }
+    }, 100);
+    return;
+  }
   
-  const section = document.querySelector('.section');
-  section.insertBefore(messageEl, section.firstChild);
+  // 根据类型设置颜色
+  let backgroundColor, textColor;
+  switch (type) {
+    case 'success':
+      backgroundColor = '#28a745';
+      textColor = 'white';
+      break;
+    case 'error':
+      backgroundColor = '#dc3545';
+      textColor = 'white';
+      break;
+    case 'info':
+    default:
+      backgroundColor = '#17a2b8';
+      textColor = 'white';
+      break;
+  }
   
-  setTimeout(() => {
-    messageEl.remove();
-  }, 3000);
+  // 检测是否为移动设备
+  const isMobile = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  
+  const toast = document.createElement('div');
+  toast.textContent = message;
+  toast.style.cssText = `
+    position: fixed;
+    top: ${isMobile ? '10px' : '20px'};
+    left: 50%;
+    transform: translateX(-50%);
+    background: ${backgroundColor};
+    color: ${textColor};
+    padding: ${isMobile ? '10px 16px' : '12px 24px'};
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 10000;
+    font-size: ${isMobile ? '14px' : '14px'};
+    font-weight: 500;
+    animation: fadeInOut ${duration}ms ease-in-out;
+    pointer-events: none;
+    max-width: ${isMobile ? 'calc(100% - 20px)' : '90%'};
+    word-wrap: break-word;
+    text-align: center;
+    line-height: 1.5;
+  `;
+  
+  try {
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+      if (toast && toast.parentNode) {
+        toast.parentNode.removeChild(toast);
+      }
+    }, duration);
+  } catch (error) {
+    console.error('显示提示失败:', error);
+  }
 }
 
 // 接收后台同步失败 toast（扩展页面不是 content script，收不到 tabs.sendMessage）

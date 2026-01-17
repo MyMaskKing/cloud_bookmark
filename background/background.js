@@ -1034,9 +1034,12 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
   
   if (request.action === 'syncSettings') {
+    console.log('[设置同步] 收到同步设置到云端的请求');
     syncSettingsToCloud().then(() => {
+      console.log('[设置同步] 同步设置到云端成功');
       sendResponse({ success: true });
     }).catch(error => {
+      console.error('[设置同步] 同步设置到云端失败:', error);
       sendResponse({ success: false, error: error.message });
     });
     return true;
