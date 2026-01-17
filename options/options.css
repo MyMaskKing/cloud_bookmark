@@ -54,8 +54,18 @@ body {
   margin-bottom: 20px;
 }
 
+.checkbox-row label {
+  display: flex;
+  align-items: center;
+}
+
 .checkbox-row input[type="checkbox"] {
   margin-right: 8px;
+  width: auto !important;
+  min-width: 18px;
+  min-height: 18px;
+  margin-top: 0;
+  vertical-align: middle;
 }
 
 .form-group label {
@@ -459,6 +469,12 @@ body {
 
   .form-group small {
     font-size: 12px;
+  }
+
+  .checkbox-row input[type="checkbox"] {
+    width: auto !important;
+    min-width: 20px;
+    min-height: 20px;
   }
 
   .form-actions {
