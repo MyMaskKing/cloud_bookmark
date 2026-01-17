@@ -83,6 +83,7 @@ const exportJsonBtn = document.getElementById('exportJsonBtn');
 const exportHtmlBtn = document.getElementById('exportHtmlBtn');
 const importBtn = document.getElementById('importBtn');
 const importBrowserBtn = document.getElementById('importBrowserBtn');
+const checkInvalidUrlsBtn = document.getElementById('checkInvalidUrlsBtn');
 const importFile = document.getElementById('importFile');
 const deviceList = document.getElementById('deviceList');
 const currentDeviceName = document.getElementById('currentDeviceName');
@@ -702,6 +703,625 @@ importBrowserBtn.addEventListener('click', async () => {
     showMessage('导入失败: ' + error.message, 'error');
   }
 });
+
+/**
+ * 检测失效网站
+ */
+checkInvalidUrlsBtn.addEventListener('click', async () => {
+  if (!checkInvalidUrlsBtn) return;
+  
+  const originalText = checkInvalidUrlsBtn.textContent;
+  checkInvalidUrlsBtn.disabled = true;
+  checkInvalidUrlsBtn.textContent = '检测中...';
+  
+  try {
+    // 获取当前场景的所有书签
+    const currentSceneId = await storage.getCurrentScene();
+    const data = await storage.getBookmarks(currentSceneId);
+    let bookmarks = data.bookmarks || [];
+    
+    if (bookmarks.length === 0) {
+      showMessage('当前场景没有书签', 'info');
+      checkInvalidUrlsBtn.disabled = false;
+      checkInvalidUrlsBtn.textContent = originalText;
+      return;
+    }
+    
+    // 获取已移除的失效网站列表（按场景存储）
+    const settings = await storage.getSettings();
+    const ignoredInvalidUrls = settings?.ignoredInvalidUrls || {}; // { sceneId: [url1, url2, ...] }
+    const currentSceneIgnoredUrls = new Set(ignoredInvalidUrls[currentSceneId] || []);
+    
+    // 过滤掉已移除的失效网站
+    bookmarks = bookmarks.filter(bookmark => {
+      return !currentSceneIgnoredUrls.has(bookmark.url);
+    });
+    
+    if (bookmarks.length === 0) {
+      showMessage('当前场景没有需要检测的书签（已移除的网站已排除）', 'info');
+      checkInvalidUrlsBtn.disabled = false;
+      checkInvalidUrlsBtn.textContent = originalText;
+      return;
+    }
+    
+    // 检测每个书签的URL是否有效
+    const invalidBookmarks = [];
+    let checkedCount = 0;
+    
+    // 使用 Promise.all 并发检测，但限制并发数量（避免过多请求）
+    const concurrency = 5;
+    const checkUrl = async (bookmark) => {
+      try {
+        // 兼容性：检查 AbortController 是否支持
+        let controller = null;
+        let timeoutId = null;
+        
+        // 直接使用 GET 方法检测（更准确，因为很多网站不支持 HEAD）
+        let fetchOptions = {
+          method: 'GET',
+          mode: 'cors',
+          cache: 'no-cache'
+        };
+        
+        if (typeof AbortController !== 'undefined') {
+          controller = new AbortController();
+          timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+          fetchOptions.signal = controller.signal;
+        } else {
+          timeoutId = setTimeout(() => {
+            throw new Error('请求超时');
+          }, 10000);
+        }
+        
+        let response;
+        try {
+          response = await fetch(bookmark.url, fetchOptions);
+          
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          
+          // 成功获取响应，检查状态码
+          const status = response.status;
+          if ((status >= 200 && status < 400) || status == 403) {
+            // 2xx 和 3xx 状态码视为有效
+            return { bookmark, valid: true, statusCode: status };
+          } else {
+            // 4xx 和 5xx 视为失效
+            return { 
+              bookmark, 
+              valid: false, 
+              statusCode: status,
+              status: `HTTP ${status}`,
+              error: `HTTP ${status} ${response.statusText || ''}`.trim()
+            };
+          }
+        } catch (corsError) {
+          // CORS 错误或其他网络错误，尝试使用 no-cors 模式
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          
+          // 重新设置超时
+          if (typeof AbortController !== 'undefined') {
+            controller = new AbortController();
+            timeoutId = setTimeout(() => controller.abort(), 10000);
+            fetchOptions.signal = controller.signal;
+          }
+          
+          fetchOptions.mode = 'no-cors';
+          try {
+            response = await fetch(bookmark.url, fetchOptions);
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+            }
+            // no-cors 模式下能发起请求说明 URL 基本有效
+            // 注意：某些网站（如豆瓣）可能需要登录或反爬虫，但 URL 本身是有效的
+            return { bookmark, valid: true, statusCode: null, status: 'CORS限制（无法获取状态码）' };
+          } catch (noCorsError) {
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+            }
+            
+            // 检查错误类型：如果是网络错误（如 DNS 失败、连接拒绝），可能是真的失效
+            // 如果是 CORS 相关错误，可能是网站有保护机制，但不一定失效
+            const errorMsg = noCorsError.message || '';
+            const isNetworkError = errorMsg.includes('Failed to fetch') || 
+                                  errorMsg.includes('NetworkError') ||
+                                  errorMsg.includes('ERR_') ||
+                                  errorMsg.includes('aborted');
+            
+            if (isNetworkError) {
+              // 真正的网络错误，可能是失效
+              return { 
+                bookmark, 
+                valid: false, 
+                statusCode: null,
+                status: '无法访问',
+                error: '网络错误：' + (noCorsError.message || '无法连接到服务器')
+              };
+            } else {
+              // 可能是 CORS 或其他限制，但不一定是失效，保守处理：标记为可能有效
+              return { bookmark, valid: true, statusCode: null, status: '检测受限（可能有效）' };
+            }
+          }
+        }
+      } catch (error) {
+        // 其他错误（如超时）
+        return { 
+          bookmark, 
+          valid: false, 
+          statusCode: null,
+          status: '检测失败',
+          error: error.message || '无法访问'
+        };
+      }
+    };
+    
+    // 分批检测
+    for (let i = 0; i < bookmarks.length; i += concurrency) {
+      const batch = bookmarks.slice(i, i + concurrency);
+      const results = await Promise.all(batch.map(checkUrl));
+      
+      results.forEach(({ bookmark, valid, statusCode, status, error }) => {
+        checkedCount++;
+        if (!valid) {
+          invalidBookmarks.push({
+            bookmark,
+            statusCode: statusCode,
+            status: status || error || '无法访问',
+            error: error || '无法访问',
+            folder: bookmark.folder || '未分类'
+          });
+        }
+      });
+      
+      // 更新进度
+      checkInvalidUrlsBtn.textContent = `检测中... (${checkedCount}/${bookmarks.length})`;
+    }
+    
+    checkInvalidUrlsBtn.disabled = false;
+    checkInvalidUrlsBtn.textContent = originalText;
+    
+    if (invalidBookmarks.length === 0) {
+      showMessage('所有网站检测通过，未发现失效网站', 'success');
+      return;
+    }
+    
+    // 显示失效网站确认弹窗
+    showInvalidUrlsDialog(invalidBookmarks, currentSceneId);
+    
+  } catch (error) {
+    checkInvalidUrlsBtn.disabled = false;
+    checkInvalidUrlsBtn.textContent = originalText;
+    showMessage('检测失败: ' + error.message, 'error');
+  }
+});
+
+/**
+ * 显示失效网站确认弹窗
+ */
+function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
+  const overlay = document.createElement('div');
+  overlay.className = 'dialog-overlay';
+  overlay.style.cssText = `
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    animation: fadeIn 0.2s ease-out;
+  `;
+  
+  const dialog = document.createElement('div');
+  dialog.className = 'dialog-container';
+  const isMobile = window.innerWidth <= 768;
+  dialog.style.cssText = `
+    background: #ffffff;
+    border-radius: 12px;
+    padding: ${isMobile ? '20px' : '24px'};
+    width: ${isMobile ? '90%' : '600px'};
+    max-width: 90%;
+    max-height: 85vh;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    font-size: ${isMobile ? '16px' : '14px'};
+    display: flex;
+    flex-direction: column;
+    animation: slideUp 0.3s ease-out;
+  `;
+  
+  const listHtml = invalidBookmarks.map((item, index) => {
+    // 根据状态码确定样式（更明显的样式）
+    let statusStyle = '';
+    let statusText = '';
+    const isMobile = window.innerWidth <= 768;
+    const padding = isMobile ? '6px 10px' : '4px 8px';
+    const fontSize = isMobile ? '13px' : '12px';
+    
+    if (item.statusCode !== null && item.statusCode !== undefined) {
+      if (item.statusCode >= 400 && item.statusCode < 500) {
+        // 4xx 客户端错误 - 黄色警告
+        statusStyle = `background: #fff3cd; color: #856404; border: 2px solid #ffc107; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3);`;
+        statusText = `HTTP ${item.statusCode}`;
+      } else if (item.statusCode >= 500) {
+        // 5xx 服务器错误 - 红色错误
+        statusStyle = `background: #f8d7da; color: #721c24; border: 2px solid #dc3545; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);`;
+        statusText = `HTTP ${item.statusCode}`;
+      } else {
+        // 其他状态码 - 蓝色信息
+        statusStyle = `background: #d1ecf1; color: #0c5460; border: 2px solid #bee5eb; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(190, 229, 235, 0.3);`;
+        statusText = item.status || '未知错误';
+      }
+    } else {
+      // 无状态码（网络错误等）- 灰色
+      statusStyle = `background: #e2e3e5; color: #383d41; border: 2px solid #d6d8db; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(214, 216, 219, 0.3);`;
+      statusText = item.status || '无法访问';
+    }
+    
+    return `
+    <div class="invalid-bookmark-item" data-index="${index}" data-url="${escapeHtml(item.bookmark.url)}" style="
+      padding: 12px;
+      border-bottom: 1px solid #e0e0e0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      position: relative;
+    ">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+        <div style="font-weight: 600; color: #333; flex: 1; min-width: 0;">${escapeHtml(item.bookmark.title || '无标题')}</div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="status-badge" style="${statusStyle}">${escapeHtml(statusText)}</span>
+          <button class="remove-invalid-item-btn" data-index="${index}" style="
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            color: #6c757d;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            transition: all 0.2s;
+            white-space: nowrap;
+          " title="从列表中移除（不删除书签）">移除</button>
+        </div>
+      </div>
+      <a href="${escapeHtml(item.bookmark.url)}" target="_blank" rel="noopener noreferrer" class="invalid-url-link" style="
+        font-size: 12px;
+        color: #0066cc;
+        word-break: break-all;
+        text-decoration: none;
+      ">${escapeHtml(item.bookmark.url)}</a>
+      <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <span style="font-size: 12px; color: #666;">📁 ${escapeHtml(item.folder)}</span>
+        <span style="font-size: 12px; color: #dc3545; font-weight: 500;">${escapeHtml(item.error || item.status)}</span>
+      </div>
+    </div>
+  `;
+  }).join('');
+  
+  dialog.innerHTML = `
+    <div style="margin-bottom: 20px;">
+      <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a;">
+        发现 ${invalidBookmarks.length} 个失效网站
+      </h3>
+    </div>
+    <div id="invalidBookmarksList" style="flex: 1; overflow-y: auto; margin-bottom: 20px; border: 1px solid #e0e0e0; border-radius: 8px; max-height: 400px;">
+      ${listHtml}
+    </div>
+    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+      <button id="cancelDeleteBtn" class="btn btn-secondary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500;">取消</button>
+      <button id="confirmDeleteBtn" class="btn btn-primary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500; background: #dc3545;">删除所有失效网站</button>
+    </div>
+  `;
+  
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+  
+  const cancelBtn = dialog.querySelector('#cancelDeleteBtn');
+  const confirmBtn = dialog.querySelector('#confirmDeleteBtn');
+  
+  // 存储当前显示的失效网站列表（用于移除操作）
+  let currentInvalidBookmarks = [...invalidBookmarks];
+  let hasPendingSync = false; // 标记是否有待同步的更改
+  
+  // 同步到云端的函数（在提交或取消时调用）
+  const syncToCloud = async () => {
+    if (hasPendingSync) {
+      console.log('[失效网站移除] 开始同步到云端');
+      try {
+        const response = await sendMessageCompat({
+          action: 'syncSettings'
+        });
+        if (response && response.success) {
+          console.log('[失效网站移除] 同步到云端成功');
+          hasPendingSync = false;
+        } else {
+          console.warn('[失效网站移除] 同步到云端返回失败:', response);
+        }
+      } catch (error) {
+        console.error('[失效网站移除] 同步到云端失败:', error);
+        // 即使同步失败，本地已保存，下次同步时会自动同步
+      }
+    }
+  };
+  
+  // 移除失效网站项的函数
+  const removeInvalidItem = async (index) => {
+    if (index >= 0 && index < currentInvalidBookmarks.length) {
+      const removedItem = currentInvalidBookmarks[index];
+      const removedUrl = removedItem.bookmark.url;
+      
+      // 从列表中移除
+      currentInvalidBookmarks.splice(index, 1);
+      
+      // 保存到已移除列表（按场景存储）
+      try {
+        const settings = await storage.getSettings();
+        const ignoredInvalidUrls = settings?.ignoredInvalidUrls || {};
+        if (!ignoredInvalidUrls[sceneId]) {
+          ignoredInvalidUrls[sceneId] = [];
+        }
+        // 如果URL不在列表中，添加它
+        if (!ignoredInvalidUrls[sceneId].includes(removedUrl)) {
+          ignoredInvalidUrls[sceneId].push(removedUrl);
+          settings.ignoredInvalidUrls = ignoredInvalidUrls;
+          
+          // 只保存到本地，不立即同步（在提交或取消时统一同步）
+          await storage.saveSettings(settings);
+          hasPendingSync = true; // 标记有待同步的更改
+          console.log('[失效网站移除] 已保存到本地，场景ID:', sceneId, 'URL:', removedUrl);
+          
+          // 显示提示信息
+          showMessage('已保存，关闭弹窗时将同步到云端', 'success', 2000);
+        }
+      } catch (error) {
+        console.error('保存已移除的失效网站失败:', error);
+        // 显示错误提示
+        showMessage('保存失败，请重试', 'error', 2000);
+      }
+      
+      // 重新渲染列表
+      updateInvalidBookmarksList();
+    }
+  };
+  
+  // 更新失效网站列表显示
+  const updateInvalidBookmarksList = () => {
+    const listContainer = dialog.querySelector('#invalidBookmarksList');
+    if (!listContainer) return;
+    
+    // 重新生成列表 HTML
+    const listHtml = currentInvalidBookmarks.map((item, index) => {
+      // 根据状态码确定样式
+      let statusStyle = '';
+      let statusText = '';
+      const isMobile = window.innerWidth <= 768;
+      const padding = isMobile ? '6px 10px' : '4px 8px';
+      const fontSize = isMobile ? '13px' : '12px';
+      
+      if (item.statusCode !== null && item.statusCode !== undefined) {
+        if (item.statusCode >= 400 && item.statusCode < 500) {
+          statusStyle = `background: #fff3cd; color: #856404; border: 2px solid #ffc107; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3);`;
+          statusText = `HTTP ${item.statusCode}`;
+        } else if (item.statusCode >= 500) {
+          statusStyle = `background: #f8d7da; color: #721c24; border: 2px solid #dc3545; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);`;
+          statusText = `HTTP ${item.statusCode}`;
+        } else {
+          statusStyle = `background: #d1ecf1; color: #0c5460; border: 2px solid #bee5eb; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(190, 229, 235, 0.3);`;
+          statusText = item.status || '未知错误';
+        }
+      } else {
+        statusStyle = `background: #e2e3e5; color: #383d41; border: 2px solid #d6d8db; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(214, 216, 219, 0.3);`;
+        statusText = item.status || '无法访问';
+      }
+      
+      return `
+      <div class="invalid-bookmark-item" data-index="${index}" data-url="${escapeHtml(item.bookmark.url)}" style="
+        padding: 12px;
+        border-bottom: 1px solid #e0e0e0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+        position: relative;
+      ">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+          <div style="font-weight: 600; color: #333; flex: 1; min-width: 0;">${escapeHtml(item.bookmark.title || '无标题')}</div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span class="status-badge" style="${statusStyle}">${escapeHtml(statusText)}</span>
+            <button class="remove-invalid-item-btn" data-index="${index}" style="
+              background: #f8f9fa;
+              border: 1px solid #dee2e6;
+              color: #6c757d;
+              cursor: pointer;
+              padding: 4px 8px;
+              border-radius: 4px;
+              font-size: 12px;
+              transition: all 0.2s;
+              white-space: nowrap;
+            " title="从列表中移除（不删除书签）">移除</button>
+          </div>
+        </div>
+        <a href="${escapeHtml(item.bookmark.url)}" target="_blank" rel="noopener noreferrer" class="invalid-url-link" style="
+          font-size: 12px;
+          color: #0066cc;
+          word-break: break-all;
+          text-decoration: none;
+        ">${escapeHtml(item.bookmark.url)}</a>
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <span style="font-size: 12px; color: #666;">📁 ${escapeHtml(item.folder)}</span>
+          <span style="font-size: 12px; color: #dc3545; font-weight: 500;">${escapeHtml(item.error || item.status)}</span>
+        </div>
+      </div>
+    `;
+    }).join('');
+    
+    listContainer.innerHTML = listHtml;
+    
+    // 更新标题
+    const title = dialog.querySelector('h3');
+    if (title) {
+      title.textContent = `发现 ${currentInvalidBookmarks.length} 个失效网站`;
+    }
+    
+    // 更新删除按钮状态
+    if (confirmBtn) {
+      if (currentInvalidBookmarks.length === 0) {
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '没有可删除的网站';
+      } else {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = `删除 ${currentInvalidBookmarks.length} 个失效网站`;
+      }
+    }
+    
+    // 重新绑定事件
+    bindInvalidBookmarkEvents();
+  };
+  
+  // 绑定失效网站项的事件
+  const bindInvalidBookmarkEvents = () => {
+    dialog.querySelectorAll('.invalid-bookmark-item').forEach(item => {
+      // 悬停效果
+      item.addEventListener('mouseenter', () => {
+        item.style.backgroundColor = '#f8f9fa';
+      });
+      item.addEventListener('mouseleave', () => {
+        item.style.backgroundColor = 'transparent';
+      });
+      
+      // 点击打开网站
+      item.addEventListener('click', (e) => {
+        // 如果点击的是链接或移除按钮，不处理
+        if (e.target.tagName === 'A' || e.target.closest('a') || 
+            e.target.classList.contains('remove-invalid-item-btn') || 
+            e.target.closest('.remove-invalid-item-btn')) {
+          return;
+        }
+        const url = item.dataset.url;
+        if (url) {
+          window.open(url, '_blank', 'noopener,noreferrer');
+        }
+      });
+      
+      // 链接点击时阻止事件冒泡
+      const link = item.querySelector('.invalid-url-link');
+      if (link) {
+        link.addEventListener('click', (e) => {
+          e.stopPropagation();
+        });
+      }
+    });
+    
+    // 绑定移除按钮事件
+    dialog.querySelectorAll('.remove-invalid-item-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const index = parseInt(btn.dataset.index);
+        if (!isNaN(index)) {
+          removeInvalidItem(index);
+        }
+      });
+      
+      // 悬停效果
+      btn.addEventListener('mouseenter', () => {
+        btn.style.background = '#e9ecef';
+        btn.style.borderColor = '#adb5bd';
+        btn.style.color = '#495057';
+      });
+      btn.addEventListener('mouseleave', () => {
+        btn.style.background = '#f8f9fa';
+        btn.style.borderColor = '#dee2e6';
+        btn.style.color = '#6c757d';
+      });
+    });
+  };
+  
+  // 初始绑定事件
+  bindInvalidBookmarkEvents();
+  
+  const cleanup = async () => {
+    // 弹窗关闭时，如果有待同步的更改，立即同步
+    await syncToCloud();
+    
+    overlay.style.animation = 'fadeIn 0.2s ease-out reverse';
+    setTimeout(() => overlay.remove(), 200);
+  };
+  
+  cancelBtn.onclick = cleanup;
+  
+  confirmBtn.onclick = async () => {
+    try {
+      // 获取当前场景的所有书签
+      const data = await storage.getBookmarks(sceneId);
+      const allBookmarks = data.bookmarks || [];
+      const allFolders = data.folders || [];
+      
+      // 获取要删除的书签ID（使用更新后的列表）
+      const invalidIds = new Set(currentInvalidBookmarks.map(item => item.bookmark.id));
+      
+      // 删除失效的书签
+      const remainingBookmarks = allBookmarks.filter(b => !invalidIds.has(b.id));
+      
+      // 更新文件夹列表（移除不再使用的文件夹）
+      const bookmarkFolders = new Set(remainingBookmarks.map(b => b.folder).filter(Boolean));
+      const remainingFolders = allFolders.filter(f => bookmarkFolders.has(f));
+      
+      // 保存到本地
+      await storage.saveBookmarks(remainingBookmarks, remainingFolders, sceneId);
+      
+      // 先同步已移除列表到云端（如果有待同步的更改）
+      await syncToCloud();
+      
+      // 同步书签到云端
+      await sendMessageCompat({
+        action: 'syncToCloud',
+        bookmarks: remainingBookmarks,
+        folders: remainingFolders,
+        sceneId
+      });
+      
+      cleanup();
+      showMessage(`已删除 ${currentInvalidBookmarks.length} 个失效网站并同步到云端`, 'success');
+      
+      // 刷新页面（如果是在书签管理页面）
+      if (window.location.pathname.includes('bookmarks.html')) {
+        window.location.reload();
+      }
+    } catch (error) {
+      showMessage('删除失败: ' + error.message, 'error');
+    }
+  };
+  
+  // ESC键关闭
+  const onKeyDown = (e) => {
+    if (e.key === 'Escape') {
+      cleanup();
+      document.removeEventListener('keydown', onKeyDown);
+    }
+  };
+  document.addEventListener('keydown', onKeyDown);
+  
+  // 点击背景关闭
+  overlay.onclick = (e) => {
+    if (e.target === overlay) {
+      cleanup();
+      document.removeEventListener('keydown', onKeyDown);
+    }
+  };
+}
+
+// 工具函数：转义HTML
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
 
 /**
  * 界面设置 - 弹窗默认展开第一层
@@ -1467,19 +2087,85 @@ addSceneBtn.addEventListener('click', async () => {
 });
 
 /**
- * 显示消息
+ * 显示冒泡提示（统一使用 toast 样式）
+ * @param {string} message - 提示消息
+ * @param {string} type - 类型：'success', 'error', 'info'（默认）
+ * @param {number} duration - 显示时长（毫秒），默认 3000
  */
-function showMessage(message, type) {
-  const messageEl = document.createElement('div');
-  messageEl.className = `message ${type}`;
-  messageEl.textContent = message;
+function showMessage(message, type = 'info', duration = 3000) {
+  // 确保 DOM 已加载
+  if (!document || !document.body) {
+    // 如果 DOM 未加载，等待加载完成
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => {
+        showMessage(message, type, duration);
+      });
+      return;
+    }
+    // 如果 document 不存在，延迟执行
+    setTimeout(() => {
+      if (document && document.body) {
+        showMessage(message, type, duration);
+      }
+    }, 100);
+    return;
+  }
   
-  const section = document.querySelector('.section');
-  section.insertBefore(messageEl, section.firstChild);
+  // 根据类型设置颜色
+  let backgroundColor, textColor;
+  switch (type) {
+    case 'success':
+      backgroundColor = '#28a745';
+      textColor = 'white';
+      break;
+    case 'error':
+      backgroundColor = '#dc3545';
+      textColor = 'white';
+      break;
+    case 'info':
+    default:
+      backgroundColor = '#17a2b8';
+      textColor = 'white';
+      break;
+  }
   
-  setTimeout(() => {
-    messageEl.remove();
-  }, 3000);
+  // 检测是否为移动设备
+  const isMobile = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  
+  const toast = document.createElement('div');
+  toast.textContent = message;
+  toast.style.cssText = `
+    position: fixed;
+    top: ${isMobile ? '10px' : '20px'};
+    left: 50%;
+    transform: translateX(-50%);
+    background: ${backgroundColor};
+    color: ${textColor};
+    padding: ${isMobile ? '10px 16px' : '12px 24px'};
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 10000;
+    font-size: ${isMobile ? '14px' : '14px'};
+    font-weight: 500;
+    animation: fadeInOut ${duration}ms ease-in-out;
+    pointer-events: none;
+    max-width: ${isMobile ? 'calc(100% - 20px)' : '90%'};
+    word-wrap: break-word;
+    text-align: center;
+    line-height: 1.5;
+  `;
+  
+  try {
+    document.body.appendChild(toast);
+    
+    setTimeout(() => {
+      if (toast && toast.parentNode) {
+        toast.parentNode.removeChild(toast);
+      }
+    }, duration);
+  } catch (error) {
+    console.error('显示提示失败:', error);
+  }
 }
 
 // 接收后台同步失败 toast（扩展页面不是 content script，收不到 tabs.sendMessage）

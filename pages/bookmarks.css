@@ -1025,5 +1025,56 @@ body {
     height: 44px;
     font-size: 20px;
   }
+
+  /* 移动端按钮优化 */
+  .btn {
+    min-height: 44px;
+    padding: 10px 14px;
+    font-size: 14px;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+  }
+
+  /* 移动端输入框优化 */
+  input[type="text"],
+  input[type="search"],
+  textarea,
+  select {
+    font-size: 16px; /* 防止iOS自动缩放 */
+    padding: 10px 12px;
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+/* 触摸设备通用优化 */
+@media (hover: none) and (pointer: coarse) {
+  /* 移除hover效果，避免触摸后残留 */
+  .bookmark-card:hover,
+  .folder-row:hover,
+  .nav-item:hover {
+    background: inherit;
+  }
+
+  /* 添加active状态反馈 */
+  .bookmark-card:active {
+    background: #f0f0f0;
+    transform: scale(0.98);
+  }
+
+  .folder-row:active,
+  .nav-item:active {
+    background: #e0e0e0;
+  }
+
+  /* 所有可点击元素增加触摸反馈 */
+  button,
+  .bookmark-card,
+  .folder-row,
+  .nav-item,
+  a {
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    touch-action: manipulation;
+  }
 }
 

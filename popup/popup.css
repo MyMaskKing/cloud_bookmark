@@ -4,10 +4,14 @@
   box-sizing: border-box;
 }
 
+html, body {
+  overflow: hidden; /* 防止窗口出现滚动条 */
+}
+
 body {
   display: flex;
   justify-content: center;
-  min-height: 400px;
+  align-items: flex-start;
   margin: 0 auto;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   background: #fff;
@@ -23,7 +27,7 @@ body {
   flex-direction: column;
   width: 360px;
   max-width: 100%;
-  min-height: 100vh;
+  height: 600px; /* 固定高度，与 background.js 中创建窗口的高度一致 */
 }
 
 .popup-header {
@@ -148,6 +152,7 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 12px;
+  min-height: 0; /* 确保 flex 子元素可以缩小，允许滚动 */
 }
 
 .search-box {
@@ -281,7 +286,7 @@ body {
 
   .popup-container {
     max-width: 320px;
-    min-height: 100vh;
+    height: 600px; /* 与桌面端保持一致 */
   }
 
   .popup-header {
@@ -399,6 +404,88 @@ body {
   text-overflow: ellipsis;
   font-weight: 400;
   white-space: nowrap;
+}
+
+.bookmark-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bookmark-item-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.bookmark-delete-btn {
+  background: none;
+  border: none;
+  color: #dc3545;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 14px;
+  opacity: 0.7;
+  transition: opacity 0.2s;
+  flex-shrink: 0;
+  touch-action: manipulation; /* 移动端优化 */
+}
+
+.bookmark-delete-btn:hover {
+  opacity: 1;
+}
+
+.bookmark-delete-btn:active {
+  opacity: 0.9;
+}
+
+/* 移动端优化 */
+@media (max-width: 360px) {
+  .bookmark-delete-btn {
+    padding: 6px 10px;
+    font-size: 16px; /* 移动端增大点击区域 */
+    min-width: 44px; /* 最小触摸目标 */
+    min-height: 44px;
+  }
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+  /* 触摸设备通用优化 */
+  .bookmark-item:hover {
+    background: #fff; /* 移除hover效果 */
+  }
+
+  .bookmark-item:active {
+    background: #f0f0f0;
+  }
+
+  .action-btn:hover {
+    transform: none; /* 移除hover变换 */
+  }
+
+  .action-btn:active {
+    transform: scale(0.98);
+    opacity: 0.9;
+  }
+
+  .footer-btn:hover {
+    background: #f0f0f0;
+  }
+
+  .footer-btn:active {
+    background: #e0e0e0;
+  }
+
+  /* 所有可点击元素增加触摸反馈 */
+  button,
+  .bookmark-item,
+  .folder-row,
+  .scene-switch-btn,
+  .scene-menu-item {
+    -webkit-tap-highlight-color: rgba(0, 0, 0, 0.1);
+    touch-action: manipulation;
+  }
 }
 
 .folder-block {

@@ -360,6 +360,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
   
+  // 监听滚动事件，保存滚动位置
+  const bookmarksContainer = document.querySelector('.bookmarks-container');
+  if (bookmarksContainer) {
+    bookmarksContainer.addEventListener('scroll', debounce(() => {
+      saveBookmarksPageScrollPosition();
+    }, 300));
+  } else {
+    // 如果没有容器，监听window滚动
+    window.addEventListener('scroll', debounce(() => {
+      saveBookmarksPageScrollPosition();
+    }, 300));
+  }
+  
   // 监听消息更新
   runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     if (request && (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged')) {
@@ -1540,6 +1553,13 @@ function renderBookmarks() {
   } else {
     emptyState.style.display = 'none';
     bookmarksGrid.innerHTML = filtered.map(bookmark => renderBookmarkCard(bookmark)).join('');
+    
+    // 恢复滚动位置（延迟执行，确保DOM完全渲染）
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        restoreBookmarksPageScrollPosition();
+      });
+    });
     
     // 添加事件监听
     bookmarksGrid.querySelectorAll('.bookmark-card').forEach(card => {
@@ -2871,5 +2891,90 @@ selectAllBtn.addEventListener('click', toggleSelectAll);
 
 // 全局函数供HTML调用
 window.showAddForm = showAddForm;
+
+/**
+ * 保存滚动位置（书签管理页面）
+ */
+function saveBookmarksPageScrollPosition() {
+  try {
+    const bookmarksContainer = document.querySelector('.bookmarks-container');
+    let scrollTop = 0;
+    
+    if (bookmarksContainer) {
+      scrollTop = bookmarksContainer.scrollTop;
+    } else {
+      scrollTop = window.scrollY || window.pageYOffset || 0;
+    }
+    
+    if (scrollTop === undefined || scrollTop === null || scrollTop < 0) return;
+    
+    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+    const state = {
+      bookmarksPageScrollPosition: scrollTop
+    };
+    if (typeof browser !== 'undefined' && browser.storage) {
+      browser.storage.local.set(state);
+    } else {
+      chrome.storage.local.set(state, () => {});
+    }
+  } catch (e) {
+    console.warn('保存滚动位置失败:', e);
+  }
+}
+
+/**
+ * 恢复滚动位置（书签管理页面）
+ */
+async function restoreBookmarksPageScrollPosition() {
+  try {
+    const bookmarksContainer = document.querySelector('.bookmarks-container');
+    if (!bookmarksContainer) {
+      // 如果没有容器，尝试使用 window
+      const result = typeof browser !== 'undefined' && browser.storage
+        ? await browser.storage.local.get(['bookmarksPageScrollPosition'])
+        : await new Promise(resolve => {
+            chrome.storage.local.get(['bookmarksPageScrollPosition'], resolve);
+          });
+      const scrollTop = result && result.bookmarksPageScrollPosition;
+      if (scrollTop !== undefined && scrollTop !== null && scrollTop >= 0) {
+        window.scrollTo(0, scrollTop);
+      }
+      return;
+    }
+    
+    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+    const result = typeof browser !== 'undefined' && browser.storage
+      ? await browser.storage.local.get(['bookmarksPageScrollPosition'])
+      : await new Promise(resolve => {
+          chrome.storage.local.get(['bookmarksPageScrollPosition'], resolve);
+        });
+    const scrollTop = result && result.bookmarksPageScrollPosition;
+    if (scrollTop !== undefined && scrollTop !== null && scrollTop >= 0) {
+      // 确保元素已渲染且有内容
+      const maxScroll = bookmarksContainer.scrollHeight - bookmarksContainer.clientHeight;
+      const targetScroll = Math.min(scrollTop, maxScroll);
+      
+      // 如果内容高度足够，立即设置；否则等待内容加载
+      if (maxScroll > 0) {
+        bookmarksContainer.scrollTop = targetScroll;
+      } else {
+        // 内容可能还在加载，使用轮询方式等待
+        let retries = 10;
+        const tryRestore = () => {
+          const currentMaxScroll = bookmarksContainer.scrollHeight - bookmarksContainer.clientHeight;
+          if (currentMaxScroll > 0 || retries <= 0) {
+            bookmarksContainer.scrollTop = Math.min(scrollTop, currentMaxScroll);
+          } else {
+            retries--;
+            setTimeout(tryRestore, 50);
+          }
+        };
+        setTimeout(tryRestore, 100);
+      }
+    }
+  } catch (e) {
+    console.warn('恢复滚动位置失败:', e);
+  }
+}
 
 

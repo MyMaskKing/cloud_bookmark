@@ -113,6 +113,18 @@ const opLogs = [];
 // 使用全局事件委托（捕获阶段），确保首次同步后渲染的书签也能响应点击
 document.addEventListener('click', (e) => {
   try {
+    // 先检查是否点击了删除按钮
+    const deleteBtn = e.target.closest('.bookmark-delete-btn');
+    if (deleteBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const bookmarkId = deleteBtn.dataset.id;
+      if (bookmarkId) {
+        handleDeleteBookmark(bookmarkId);
+      }
+      return;
+    }
+    
     // 先检查是否点击了文件夹或其他元素，避免误触发
     if (e.target.closest('.folder-row')) {
       return; // 文件夹点击由专门的处理器处理
@@ -225,6 +237,41 @@ document.addEventListener('DOMContentLoaded', async () => {
         await loadBookmarksForPopup();
         await updateSyncStatus();
       });
+    }
+  });
+  
+  // 监听滚动事件，保存滚动位置（监听实际的滚动容器）
+  // 延迟绑定，确保元素已存在
+  setTimeout(() => {
+    const popupContentEl = document.querySelector('.popup-content');
+    const scrollContainer = popupContentEl || bookmarkList;
+    if (scrollContainer) {
+      console.log('[滚动位置] 绑定滚动事件监听器，容器:', scrollContainer.className, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
+      
+      // 直接绑定滚动事件，不使用 debounce（因为 debounce 可能有问题）
+      scrollContainer.addEventListener('scroll', () => {
+        const currentScrollTop = scrollContainer.scrollTop;
+        console.log('[滚动位置] 滚动事件触发，当前 scrollTop:', currentScrollTop, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
+        // 使用 setTimeout 来延迟保存，避免频繁保存
+        clearTimeout(scrollContainer._scrollSaveTimer);
+        scrollContainer._scrollSaveTimer = setTimeout(() => {
+          saveScrollPosition();
+        }, 300);
+      });
+    } else {
+      console.warn('[滚动位置] 未找到滚动容器，无法绑定事件');
+    }
+  }, 100);
+  
+  // 在页面卸载前保存滚动位置（确保不会丢失）
+  window.addEventListener('beforeunload', () => {
+    saveScrollPosition();
+  });
+  
+  // 在页面隐藏时也保存（移动端可能不会触发 beforeunload）
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      saveScrollPosition();
     }
   });
   
@@ -408,6 +455,22 @@ async function loadBookmarksForPopup() {
 
     lastRenderedBookmarks = sorted;
     renderBookmarks(sorted, { searchMode: false, folders: folders });
+    
+    // 恢复滚动位置（延迟执行，确保DOM完全渲染）
+    // 使用多个 requestAnimationFrame 和 setTimeout 确保布局完成
+    // 需要等待 renderBookmarks 内部的 requestAnimationFrame 完成
+    console.log('[弹窗] 准备恢复滚动位置');
+    setTimeout(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          // 再次延迟，确保所有内容都已渲染
+          setTimeout(() => {
+            console.log('[弹窗] 开始恢复滚动位置');
+            restoreScrollPosition();
+          }, 50);
+        });
+      });
+    }, 150);
   } catch (error) {
     console.error('加载书签失败:', error);
     pushOpLog(`loadBookmarks failed: ${error.message}`);
@@ -425,10 +488,13 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
 
   if (searchMode) {
     bookmarkList.innerHTML = bookmarks.map(bookmark => `
-      <div class="bookmark-item" data-url="${escapeHtml(bookmark.url)}">
-        <div class="bookmark-item-title">${escapeHtml(bookmark.title || '无标题')}</div>
-        <div class="bookmark-item-url">${escapeHtml(bookmark.url)}</div>
-        ${bookmark.folder ? `<div class="bookmark-item-folder">📁 ${escapeHtml(bookmark.folder)}</div>` : ''}
+      <div class="bookmark-item" data-url="${escapeHtml(bookmark.url)}" data-id="${escapeHtml(bookmark.id)}">
+        <div class="bookmark-item-content">
+          <div class="bookmark-item-title">${escapeHtml(bookmark.title || '无标题')}</div>
+          <div class="bookmark-item-url">${escapeHtml(bookmark.url)}</div>
+          ${bookmark.folder ? `<div class="bookmark-item-folder">📁 ${escapeHtml(bookmark.folder)}</div>` : ''}
+        </div>
+        <button class="bookmark-delete-btn" data-id="${escapeHtml(bookmark.id)}" title="删除">🗑️</button>
       </div>
     `).join('');
 
@@ -696,9 +762,12 @@ function renderFolderTreeHtml(node, indentPath) {
   }).join('');
 
   const itemHtml = items.map(b => `
-    <div class="bookmark-item" data-url="${escapeHtml(b.url)}">
-      <div class="bookmark-item-title">${escapeHtml(b.title || '无标题')}</div>
-      <div class="bookmark-item-url">${escapeHtml(b.url)}</div>
+    <div class="bookmark-item" data-url="${escapeHtml(b.url)}" data-id="${escapeHtml(b.id)}">
+      <div class="bookmark-item-content">
+        <div class="bookmark-item-title">${escapeHtml(b.title || '无标题')}</div>
+        <div class="bookmark-item-url">${escapeHtml(b.url)}</div>
+      </div>
+      <button class="bookmark-delete-btn" data-id="${escapeHtml(b.id)}" title="删除">🗑️</button>
     </div>
   `).join('');
 
@@ -1026,3 +1095,164 @@ function serializeLogToText(log) {
   return lines.join('\n');
 }
 
+/**
+ * 删除书签
+ */
+async function handleDeleteBookmark(bookmarkId) {
+  if (!confirm('确定要删除这个书签吗？')) {
+    return;
+  }
+  
+  try {
+    // 获取当前场景的所有书签
+    const data = await storage.getBookmarks(currentSceneId);
+    const allBookmarks = data.bookmarks || [];
+    const allFolders = data.folders || [];
+    
+    // 删除指定的书签
+    const remainingBookmarks = allBookmarks.filter(b => b.id !== bookmarkId);
+    
+    // 更新文件夹列表（移除不再使用的文件夹）
+    const bookmarkFolders = new Set(remainingBookmarks.map(b => b.folder).filter(Boolean));
+    const remainingFolders = allFolders.filter(f => bookmarkFolders.has(f));
+    
+    // 保存到本地
+    await storage.saveBookmarks(remainingBookmarks, remainingFolders, currentSceneId);
+    
+    // 同步到云端
+    await sendMessageCompat({
+      action: 'syncToCloud',
+      bookmarks: remainingBookmarks,
+      folders: remainingFolders,
+      sceneId: currentSceneId
+    });
+    
+    // 重新加载书签
+    await loadBookmarksForPopup();
+  } catch (error) {
+    console.error('删除书签失败:', error);
+    alert('删除失败: ' + error.message);
+  }
+}
+
+/**
+ * 保存滚动位置
+ */
+function saveScrollPosition() {
+  try {
+    // 优先使用 popup-content 的滚动位置（因为它是实际的滚动容器）
+    const popupContentEl = document.querySelector('.popup-content');
+    const scrollContainer = popupContentEl || bookmarkList;
+    if (!scrollContainer) {
+      console.warn('[滚动位置] 未找到滚动容器');
+      return;
+    }
+    
+    const scrollTop = scrollContainer.scrollTop;
+    const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+    
+    if (scrollTop === undefined || scrollTop === null || scrollTop < 0) {
+      console.log('[滚动位置] 跳过保存，scrollTop 无效:', scrollTop);
+      return;
+    }
+    
+    console.log('[滚动位置] 保存滚动位置:', scrollTop, '容器:', scrollContainer.className, 'maxScroll:', maxScroll, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
+    
+    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+    const state = {
+      popupScrollPosition: scrollTop
+    };
+    if (typeof browser !== 'undefined' && browser.storage) {
+      browser.storage.local.set(state);
+    } else {
+      chrome.storage.local.set(state, () => {});
+    }
+  } catch (e) {
+    console.warn('保存滚动位置失败:', e);
+  }
+}
+
+/**
+ * 恢复滚动位置
+ */
+async function restoreScrollPosition() {
+  try {
+    // 优先使用 popup-content 的滚动位置（因为它是实际的滚动容器）
+    const popupContentEl = document.querySelector('.popup-content');
+    const scrollContainer = popupContentEl || bookmarkList;
+    if (!scrollContainer) {
+      console.warn('[滚动位置] 恢复时未找到滚动容器');
+      return;
+    }
+    
+    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+    const result = typeof browser !== 'undefined' && browser.storage
+      ? await browser.storage.local.get(['popupScrollPosition'])
+      : await new Promise(resolve => {
+          chrome.storage.local.get(['popupScrollPosition'], resolve);
+        });
+    const scrollTop = result && result.popupScrollPosition;
+    
+    console.log('[滚动位置] 尝试恢复滚动位置:', scrollTop, '容器:', scrollContainer.className, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
+    
+    if (scrollTop !== undefined && scrollTop !== null && scrollTop >= 0) {
+      // 确保元素已渲染且有内容
+      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+      const targetScroll = Math.min(scrollTop, maxScroll);
+      
+      console.log('[滚动位置] 计算后的滚动位置:', targetScroll, 'maxScroll:', maxScroll, 'scrollTop:', scrollTop);
+      
+      // 如果 maxScroll 为 0，说明内容没有超出容器，不需要滚动
+      if (maxScroll <= 0 && scrollTop > 0) {
+        console.log('[滚动位置] 警告：内容未超出容器（maxScroll=0），但保存的位置 > 0，可能是内容还未完全加载');
+        // 继续等待内容加载
+      }
+      
+      // 使用统一的恢复逻辑，确保在正确的时机设置
+      const doRestore = () => {
+        const currentMaxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+        const finalScroll = Math.min(scrollTop, Math.max(0, currentMaxScroll));
+        
+        // 使用 requestAnimationFrame 确保在下一帧设置
+        requestAnimationFrame(() => {
+          scrollContainer.scrollTop = finalScroll;
+          console.log('[滚动位置] 已设置滚动位置:', scrollContainer.scrollTop, '目标:', finalScroll, 'maxScroll:', currentMaxScroll);
+          
+          // 验证并修正（如果设置失败，可能是内容还在变化）
+          setTimeout(() => {
+            const actualScroll = scrollContainer.scrollTop;
+            const newMaxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+            if (Math.abs(actualScroll - finalScroll) > 1 && newMaxScroll > 0) {
+              const correctedScroll = Math.min(scrollTop, newMaxScroll);
+              scrollContainer.scrollTop = correctedScroll;
+              console.log('[滚动位置] 修正滚动位置:', correctedScroll, '之前:', actualScroll);
+            }
+          }, 100);
+        });
+      };
+      
+      // 如果内容高度足够，立即设置；否则等待内容加载
+      if (maxScroll > 0 && maxScroll >= targetScroll) {
+        doRestore();
+      } else {
+        // 内容可能还在加载，使用轮询方式等待
+        let retries = 30; // 增加重试次数
+        const tryRestore = () => {
+          const currentMaxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+          console.log('[滚动位置] 轮询恢复，retries:', retries, 'currentMaxScroll:', currentMaxScroll, 'scrollTop:', scrollTop);
+          if (currentMaxScroll > 0 || retries <= 0) {
+            doRestore();
+          } else {
+            retries--;
+            setTimeout(tryRestore, 100); // 增加延迟时间
+          }
+        };
+        setTimeout(tryRestore, 200); // 增加初始延迟
+      }
+    } else {
+      console.log('[滚动位置] 没有保存的滚动位置或值为无效');
+    }
+  } catch (e) {
+    console.warn('恢复滚动位置失败:', e);
+  }
+}
