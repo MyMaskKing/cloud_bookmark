@@ -103,7 +103,8 @@ let currentSceneId = null;
 let expandedFolders = new Set(['']); // 根默认展开
 let lastRenderedBookmarks = [];
 let popupSettings = {
-  expandFirstLevel: false
+  expandFirstLevel: false,
+  rememberScrollPosition: true // 默认启用滚动位置记忆
 };
 let shouldApplyDefaultExpand = true;
 const runtimeErrors = [];
@@ -214,6 +215,41 @@ window.addEventListener('unhandledrejection', (event) => {
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('[弹窗] DOMContentLoaded 触发');
   
+  // 检测是否为悬浮球打开的弹窗，如果是则调整高度
+  const urlParams = new URLSearchParams(window.location.search);
+  const source = urlParams.get('source');
+  const isFloatingBallPopup = source === 'floating-ball';
+  
+  // 检测是否为移动设备
+  const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
+                         (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
+  
+  // PC端：如果是悬浮球打开的弹窗，需要调整容器高度以包含标题栏
+  // 移动端：悬浮球打开的弹窗和插件图标打开的弹窗高度应该有差异
+  if (isFloatingBallPopup && !isMobileDevice) {
+    // PC端悬浮球弹窗：容器高度保持600px（内容区域），但窗口总高度是640px（由background.js控制）
+    // 这里不需要修改，因为CSS中的600px是内容区域高度，窗口总高度由background.js控制
+    console.log('[弹窗] 悬浮球打开的弹窗（PC端），窗口总高度640px，内容区域600px');
+  } else if (isMobileDevice) {
+    // 移动端：根据是否是悬浮球打开的弹窗设置不同的高度
+    const popupContainer = document.querySelector('.popup-container');
+    if (popupContainer) {
+      if (isFloatingBallPopup) {
+        // 移动端悬浮球打开的弹窗：使用85vh（比插件图标打开的弹窗更高）
+        popupContainer.style.height = '85vh';
+        popupContainer.style.maxHeight = '650px';
+        popupContainer.style.minHeight = '450px';
+        console.log('[弹窗] 移动端悬浮球打开的弹窗，使用85vh高度');
+      } else {
+        // 移动端插件图标打开的弹窗：使用80vh
+        popupContainer.style.height = '80vh';
+        popupContainer.style.maxHeight = '600px';
+        popupContainer.style.minHeight = '400px';
+        console.log('[弹窗] 移动端插件图标打开的弹窗，使用80vh高度');
+      }
+    }
+  }
+  
   await loadPopupSettings();
   await loadFolderState();
   await loadCurrentScene();
@@ -283,10 +319,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   
   // ESC键关闭弹窗（仅在PC上启用，手机没有物理键盘）
-  // 检测是否为移动设备
-  const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-                         (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
-  
+  // 使用上面已声明的 isMobileDevice 变量
   if (!isMobileDevice) {
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' || e.key === 'Esc') {
@@ -603,11 +636,12 @@ async function loadPopupSettings() {
   try {
     const settings = await storage.getSettings();
     popupSettings = {
-      expandFirstLevel: !!(settings && settings.popup && settings.popup.expandFirstLevel)
+      expandFirstLevel: !!(settings && settings.popup && settings.popup.expandFirstLevel),
+      rememberScrollPosition: settings && settings.popup && settings.popup.rememberScrollPosition !== false // 默认true
     };
   } catch (e) {
     console.warn('加载弹窗设置失败，使用默认值', e?.message || e);
-    popupSettings = { expandFirstLevel: false };
+    popupSettings = { expandFirstLevel: false, rememberScrollPosition: true };
   }
 }
 
@@ -1140,6 +1174,12 @@ async function handleDeleteBookmark(bookmarkId) {
  */
 function saveScrollPosition() {
   try {
+    // 检查设置，如果未启用滚动位置记忆，则跳过
+    if (!popupSettings || popupSettings.rememberScrollPosition === false) {
+      console.log('[滚动位置] 滚动位置记忆已禁用，跳过保存');
+      return;
+    }
+    
     // 优先使用 popup-content 的滚动位置（因为它是实际的滚动容器）
     const popupContentEl = document.querySelector('.popup-content');
     const scrollContainer = popupContentEl || bookmarkList;
@@ -1177,6 +1217,12 @@ function saveScrollPosition() {
  */
 async function restoreScrollPosition() {
   try {
+    // 检查设置，如果未启用滚动位置记忆，则跳过
+    if (!popupSettings || popupSettings.rememberScrollPosition === false) {
+      console.log('[滚动位置] 滚动位置记忆已禁用，跳过恢复');
+      return;
+    }
+    
     // 优先使用 popup-content 的滚动位置（因为它是实际的滚动容器）
     const popupContentEl = document.querySelector('.popup-content');
     const scrollContainer = popupContentEl || bookmarkList;

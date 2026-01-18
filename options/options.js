@@ -98,6 +98,7 @@ const floatingBallActionGroup = document.getElementById('floatingBallActionGroup
 const floatingBallClickAction = document.getElementById('floatingBallClickAction');
 const enableSyncErrorNotification = document.getElementById('enableSyncErrorNotification');
 const stickySyncErrorToast = document.getElementById('stickySyncErrorToast');
+const rememberScrollPosition = document.getElementById('rememberScrollPosition');
 const shortcutDisplayWin = document.getElementById('shortcutDisplayWin');
 const shortcutDisplayMac = document.getElementById('shortcutDisplayMac');
 const sceneList = document.getElementById('sceneList');
@@ -1331,6 +1332,11 @@ async function loadUiSettings() {
   const popup = (settings && settings.popup) || {};
   expandFirstLevelCheckbox.checked = !!popup.expandFirstLevel;
   
+  // 加载滚动条位置记忆设置（默认选中）
+  if (rememberScrollPosition) {
+    rememberScrollPosition.checked = popup.rememberScrollPosition !== false; // 默认true
+  }
+  
   // 加载同步失败通知开关（默认开启）
   const syncErrorNotification = settings?.syncErrorNotification || {};
   enableSyncErrorNotification.checked = syncErrorNotification.enabled !== false;
@@ -1359,6 +1365,23 @@ expandFirstLevelCheckbox.addEventListener('change', async () => {
     showMessage('保存失败: ' + e.message, 'error');
   }
 });
+
+// 滚动条位置记忆设置
+if (rememberScrollPosition) {
+  rememberScrollPosition.addEventListener('change', async () => {
+    try {
+      const settings = await storage.getSettings();
+      const popup = (settings && settings.popup) || {};
+      popup.rememberScrollPosition = rememberScrollPosition.checked;
+      const newSettings = { ...(settings || {}), popup };
+      await storage.saveSettings(newSettings);
+      showMessage('界面设置已保存（已同步至云端）', 'success');
+      await sendMessageCompat({ action: 'syncSettings' });
+    } catch (e) {
+      showMessage('保存失败: ' + e.message, 'error');
+    }
+  });
+}
 
 /**
  * 加载快捷键显示（动态读取 commands 配置）

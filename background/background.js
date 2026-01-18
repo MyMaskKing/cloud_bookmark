@@ -790,115 +790,188 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
       return true;
     }
     
-    // 计算弹窗居中位置
-    const popupWidth = 400;
-    const popupHeight = 600;
-    
-    // 获取当前活动窗口，用于计算居中位置
-    const getCurrentWindow = () => {
-      if (typeof browser !== 'undefined' && browser.windows && browser.windows.getCurrent) {
-        // Firefox: 使用 Promise
-        return windowsAPI.getCurrent().catch(error => {
-          console.warn('[后台] getCurrent 失败:', error);
-          return null;
-        });
-      } else if (windowsAPI && windowsAPI.getCurrent) {
-        // Chrome: 使用回调，转换为 Promise
-        return new Promise((resolve) => {
+    // 使用立即执行的异步函数来处理异步操作
+    (async () => {
+      try {
+        // 计算弹窗居中位置
+        const popupWidth = 400;
+        // 检测是否为悬浮球打开的弹窗（通过检查是否有 currentUrl 参数）
+        const isFloatingBallPopup = !!(request.currentUrl && request.currentTitle);
+        // 检测是否为移动设备
+        const deviceType = await detectDeviceType();
+        const isMobile = deviceType === 'android' || deviceType === 'ios';
+        
+        let popupHeight = 600; // 默认PC高度（插件图标打开的弹窗是600px）
+        if (isMobile) {
+          // 移动端：悬浮球打开的弹窗和插件图标打开的弹窗高度应该有差异
+          // 在service worker中，window对象不存在，需要通过其他方式获取屏幕高度
           try {
-            windowsAPI.getCurrent((window) => {
-              if (chrome.runtime.lastError) {
-                console.warn('[后台] getCurrent 失败:', chrome.runtime.lastError.message);
+            let screenHeight = 800; // 默认值
+            // 先尝试获取当前窗口信息
+            if (windowsAPI && windowsAPI.getCurrent) {
+              let currentWindow = null;
+              if (typeof browser !== 'undefined' && browser.windows) {
+                // Firefox: 使用 Promise
+                currentWindow = await windowsAPI.getCurrent().catch(() => null);
+              } else if (chrome.windows) {
+                // Chrome: 使用回调，转换为 Promise
+                currentWindow = await new Promise(resolve => {
+                  windowsAPI.getCurrent((win) => {
+                    if (chrome.runtime.lastError) {
+                      resolve(null);
+                    } else {
+                      resolve(win);
+                    }
+                  });
+                });
+              }
+              
+              if (currentWindow && currentWindow.height) {
+                // 使用当前窗口高度作为参考（移动设备窗口通常接近屏幕高度）
+                screenHeight = currentWindow.height;
+              }
+            }
+            
+            if (isFloatingBallPopup) {
+              // 移动端悬浮球打开的弹窗：使用85vh（比插件图标打开的弹窗更高）
+              const calculatedHeight = Math.floor(screenHeight * 0.85);
+              // 限制在450-650px之间（比插件图标打开的弹窗稍高）
+              popupHeight = Math.max(450, Math.min(650, calculatedHeight));
+            } else {
+              // 移动端插件图标打开的弹窗：使用80vh
+              const calculatedHeight = Math.floor(screenHeight * 0.8);
+              // 限制在400-600px之间
+              popupHeight = Math.max(400, Math.min(600, calculatedHeight));
+            }
+          } catch (e) {
+            console.warn('[后台] 计算移动设备弹窗高度失败，使用默认值:', e);
+            // 移动设备默认值
+            if (isFloatingBallPopup) {
+              popupHeight = 550; // 悬浮球弹窗默认值，在450-650px范围内
+            } else {
+              popupHeight = 500; // 插件图标弹窗默认值，在400-600px范围内
+            }
+          }
+        } else {
+          // PC端：悬浮球打开的弹窗需要包含系统标题栏（约40px），所以总高度设为640px
+          // 这样内容区域仍然是600px，与插件图标打开的弹窗内容区域一致
+          if (isFloatingBallPopup) {
+            popupHeight = 640; // PC端悬浮球弹窗高度（600px内容 + 40px标题栏）
+          } else {
+            popupHeight = 600; // PC端插件图标打开的弹窗高度
+          }
+        }
+        
+        // 获取当前活动窗口，用于计算居中位置
+        const getCurrentWindow = () => {
+          if (typeof browser !== 'undefined' && browser.windows && browser.windows.getCurrent) {
+            // Firefox: 使用 Promise
+            return windowsAPI.getCurrent().catch(error => {
+              console.warn('[后台] getCurrent 失败:', error);
+              return null;
+            });
+          } else if (windowsAPI && windowsAPI.getCurrent) {
+            // Chrome: 使用回调，转换为 Promise
+            return new Promise((resolve) => {
+              try {
+                windowsAPI.getCurrent((window) => {
+                  if (chrome.runtime.lastError) {
+                    console.warn('[后台] getCurrent 失败:', chrome.runtime.lastError.message);
+                    resolve(null);
+                  } else {
+                    resolve(window);
+                  }
+                });
+              } catch (error) {
+                console.warn('[后台] getCurrent 异常:', error);
                 resolve(null);
-              } else {
-                resolve(window);
               }
             });
-          } catch (error) {
-            console.warn('[后台] getCurrent 异常:', error);
-            resolve(null);
+          } else {
+            // windows API 不可用（如移动端）
+            return Promise.resolve(null);
           }
-        });
-      } else {
-        // windows API 不可用（如移动端）
-        return Promise.resolve(null);
-      }
-    };
-    
-    const createCenteredPopup = (left, top) => {
-      const popupOptions = {
-        url: popupUrl,
-        type: 'popup',
-        width: popupWidth,
-        height: popupHeight,
-        left: left,
-        top: top
-      };
-      
-      if (typeof browser !== 'undefined' && browser.windows) {
-        // Firefox: 使用 Promise
-        return windowsAPI.create(popupOptions).then(window => {
-          sendResponse({ success: true, windowId: window?.id });
-        }).catch(error => {
-          // 如果 popup 类型失败，回退到普通标签页
-          tabsAPI.create({
-            url: popupUrl
-          }).then(() => {
-            sendResponse({ success: true });
-          }).catch(err => {
-            sendResponse({ success: false, error: err.message || error.message });
-          });
-        });
-      } else {
-        // Chrome: 使用回调
-        return new Promise((resolve) => {
-          windowsAPI.create(popupOptions, (window) => {
-            if (chrome.runtime.lastError) {
+        };
+        
+        const createCenteredPopup = (left, top) => {
+          const popupOptions = {
+            url: popupUrl,
+            type: 'popup',
+            width: popupWidth,
+            height: popupHeight,
+            left: left,
+            top: top
+          };
+          
+          if (typeof browser !== 'undefined' && browser.windows) {
+            // Firefox: 使用 Promise
+            return windowsAPI.create(popupOptions).then(window => {
+              sendResponse({ success: true, windowId: window?.id });
+            }).catch(error => {
               // 如果 popup 类型失败，回退到普通标签页
               tabsAPI.create({
                 url: popupUrl
-              }, () => {
+              }).then(() => {
                 sendResponse({ success: true });
-                resolve();
+              }).catch(err => {
+                sendResponse({ success: false, error: err.message || error.message });
               });
-            } else {
-              sendResponse({ success: true, windowId: window?.id });
-              resolve();
-            }
-          });
+            });
+          } else {
+            // Chrome: 使用回调
+            return new Promise((resolve) => {
+              windowsAPI.create(popupOptions, (window) => {
+                if (chrome.runtime.lastError) {
+                  // 如果 popup 类型失败，回退到普通标签页
+                  tabsAPI.create({
+                    url: popupUrl
+                  }, () => {
+                    sendResponse({ success: true });
+                    resolve();
+                  });
+                } else {
+                  sendResponse({ success: true, windowId: window?.id });
+                  resolve();
+                }
+              });
+            });
+          }
+        };
+        
+        // 获取当前窗口并计算居中位置
+        getCurrentWindow().then(currentWindow => {
+          let left, top;
+          
+          if (currentWindow && currentWindow.left !== undefined && currentWindow.width !== undefined) {
+            // 使用当前窗口的位置和大小计算居中
+            left = Math.floor(currentWindow.left + (currentWindow.width - popupWidth) / 2);
+            // 计算垂直居中，确保至少距离顶部 50px（避免被任务栏遮挡）
+            const windowTop = currentWindow.top || 0;
+            const windowHeight = currentWindow.height || 600;
+            const centerTop = windowTop + (windowHeight - popupHeight) / 2;
+            top = Math.max(50, Math.floor(centerTop));
+          } else {
+            // 回退：使用屏幕中心（假设常见屏幕尺寸）
+            // 大多数屏幕至少 1024px 宽，我们使用 1280 作为默认值
+            const screenWidth = 1280;
+            const screenHeight = 720;
+            left = Math.floor((screenWidth - popupWidth) / 2);
+            top = Math.floor((screenHeight - popupHeight) / 2);
+          }
+          
+          return createCenteredPopup(left, top);
+        }).catch(error => {
+          console.error('[后台] 获取当前窗口失败，使用默认位置:', error);
+          // 如果获取窗口失败，使用默认居中位置
+          const defaultLeft = Math.floor((1280 - popupWidth) / 2);
+          const defaultTop = Math.floor((720 - popupHeight) / 2);
+          return createCenteredPopup(defaultLeft, defaultTop);
         });
+      } catch (error) {
+        console.error('[后台] openPopup 处理失败:', error);
+        sendResponse({ success: false, error: error.message });
       }
-    };
-    
-    // 获取当前窗口并计算居中位置
-    getCurrentWindow().then(currentWindow => {
-      let left, top;
-      
-      if (currentWindow && currentWindow.left !== undefined && currentWindow.width !== undefined) {
-        // 使用当前窗口的位置和大小计算居中
-        left = Math.floor(currentWindow.left + (currentWindow.width - popupWidth) / 2);
-        // 计算垂直居中，确保至少距离顶部 50px（避免被任务栏遮挡）
-        const windowTop = currentWindow.top || 0;
-        const windowHeight = currentWindow.height || 600;
-        const centerTop = windowTop + (windowHeight - popupHeight) / 2;
-        top = Math.max(50, Math.floor(centerTop));
-      } else {
-        // 回退：使用屏幕中心（假设常见屏幕尺寸）
-        // 大多数屏幕至少 1024px 宽，我们使用 1280 作为默认值
-        const screenWidth = 1280;
-        const screenHeight = 720;
-        left = Math.floor((screenWidth - popupWidth) / 2);
-        top = Math.floor((screenHeight - popupHeight) / 2);
-      }
-      
-      return createCenteredPopup(left, top);
-    }).catch(error => {
-      console.error('[后台] 获取当前窗口失败，使用默认位置:', error);
-      // 如果获取窗口失败，使用默认居中位置
-      const defaultLeft = Math.floor((1280 - popupWidth) / 2);
-      const defaultTop = Math.floor((720 - popupHeight) / 2);
-      return createCenteredPopup(defaultLeft, defaultTop);
-    });
+    })();
     
     return true; // 异步响应，保持消息通道开放
   }
