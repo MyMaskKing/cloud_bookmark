@@ -1148,30 +1148,65 @@ settingsBtn.addEventListener('click', () => {
  */
 exportLogBtn.addEventListener('click', async () => {
   try {
+    // 显示加载状态
+    const originalText = exportLogBtn.textContent;
+    exportLogBtn.disabled = true;
+    exportLogBtn.textContent = '导出中...';
+    
+    console.log('[导出日志] 开始收集日志数据...');
+    
     const [config, syncStatus, pendingChanges, bookmarkData, devices, deviceInfo, settings] = await Promise.all([
-      storage.getConfig(),
-      storage.getSyncStatus(),
-      storage.getPendingChanges(),
-      storage.getBookmarks(),
-      storage.getDevices(),
-      storage.getDeviceInfo(),
-      storage.getSettings()
+      storage.getConfig().catch(e => {
+        console.warn('[导出日志] 获取配置失败:', e);
+        return null;
+      }),
+      storage.getSyncStatus().catch(e => {
+        console.warn('[导出日志] 获取同步状态失败:', e);
+        return null;
+      }),
+      storage.getPendingChanges().catch(e => {
+        console.warn('[导出日志] 获取待同步变更失败:', e);
+        return [];
+      }),
+      storage.getBookmarks().catch(e => {
+        console.warn('[导出日志] 获取书签失败:', e);
+        return { bookmarks: [], folders: [] };
+      }),
+      storage.getDevices().catch(e => {
+        console.warn('[导出日志] 获取设备列表失败:', e);
+        return [];
+      }),
+      storage.getDeviceInfo().catch(e => {
+        console.warn('[导出日志] 获取设备信息失败:', e);
+        return null;
+      }),
+      storage.getSettings().catch(e => {
+        console.warn('[导出日志] 获取设置失败:', e);
+        return null;
+      })
     ]);
+
+    console.log('[导出日志] 数据收集完成，开始处理...');
 
     const manifest = runtimeAPI.getManifest ? runtimeAPI.getManifest() : {};
     const alarmsAPI = typeof browser !== 'undefined' ? browser.alarms : chrome.alarms;
     let alarms = [];
     if (alarmsAPI && alarmsAPI.getAll) {
-      if (typeof browser !== 'undefined' && browser.alarms) {
-        // Firefox: 使用 Promise
-        alarms = await alarmsAPI.getAll();
-      } else {
-        // Chrome/Edge: 使用回调
-        alarms = await new Promise(resolve => {
-          alarmsAPI.getAll(resolve);
-        });
+      try {
+        if (typeof browser !== 'undefined' && browser.alarms) {
+          // Firefox: 使用 Promise
+          alarms = await alarmsAPI.getAll();
+        } else {
+          // Chrome/Edge: 使用回调
+          alarms = await new Promise(resolve => {
+            alarmsAPI.getAll(resolve);
+          });
+        }
+      } catch (e) {
+        console.warn('[导出日志] 获取定时任务失败:', e);
       }
     }
+    
     const maskConfig = (cfg) => {
       if (!cfg) return null;
       const masked = { ...cfg };
@@ -1212,19 +1247,61 @@ exportLogBtn.addEventListener('click', async () => {
       config: maskConfig(config)
     };
 
+    console.log('[导出日志] 开始序列化日志...');
     const text = serializeLogToText(log);
-    const blob = new Blob([text], { type: 'text/plain' });
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `cloud-bookmark-log-${Date.now()}.log`;
+    a.download = `cloud-bookmark-log-${Date.now()}.txt`;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    
+    console.log('[导出日志] 触发下载...');
     a.click();
-    URL.revokeObjectURL(url);
-    // 操作完成后关闭弹窗
-    window.close();
+    
+    // 延迟清理，确保下载开始
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      console.log('[导出日志] 下载完成');
+    }, 100);
+    
+    // 恢复按钮状态
+    exportLogBtn.disabled = false;
+    exportLogBtn.textContent = originalText;
+    
+    // 显示成功提示（不关闭弹窗，让用户可以继续使用）
+    const successMsg = document.createElement('div');
+    successMsg.textContent = '日志已导出';
+    successMsg.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #4caf50;
+      color: white;
+      padding: 12px 24px;
+      border-radius: 6px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 10001;
+      font-size: 14px;
+    `;
+    document.body.appendChild(successMsg);
+    setTimeout(() => {
+      if (successMsg.parentNode) {
+        successMsg.parentNode.removeChild(successMsg);
+      }
+    }, 2000);
   } catch (error) {
-    console.error('导出日志失败:', error);
-    alert('导出日志失败：' + error.message);
+    console.error('[导出日志] 导出失败:', error);
+    
+    // 恢复按钮状态
+    exportLogBtn.disabled = false;
+    exportLogBtn.textContent = '导出日志';
+    
+    // 显示错误提示
+    alert('导出日志失败：' + (error.message || String(error)) + '\n\n请查看控制台获取详细信息。');
   }
 });
 
