@@ -99,6 +99,14 @@ const floatingBallClickAction = document.getElementById('floatingBallClickAction
 const enableSyncErrorNotification = document.getElementById('enableSyncErrorNotification');
 const stickySyncErrorToast = document.getElementById('stickySyncErrorToast');
 const rememberScrollPosition = document.getElementById('rememberScrollPosition');
+const floatingBallPopupHeightPc = document.getElementById('floatingBallPopupHeightPc');
+const floatingBallPopupHeightMobile = document.getElementById('floatingBallPopupHeightMobile');
+const syncFloatingBallHeightPc = document.getElementById('syncFloatingBallHeightPc');
+const syncFloatingBallHeightMobile = document.getElementById('syncFloatingBallHeightMobile');
+const iconPopupHeightPc = document.getElementById('iconPopupHeightPc');
+const iconPopupHeightMobile = document.getElementById('iconPopupHeightMobile');
+const syncIconHeightPc = document.getElementById('syncIconHeightPc');
+const syncIconHeightMobile = document.getElementById('syncIconHeightMobile');
 const shortcutDisplayWin = document.getElementById('shortcutDisplayWin');
 const shortcutDisplayMac = document.getElementById('shortcutDisplayMac');
 const sceneList = document.getElementById('sceneList');
@@ -1343,6 +1351,31 @@ async function loadUiSettings() {
   if (stickySyncErrorToast) {
     stickySyncErrorToast.checked = !!syncErrorNotification.sticky;
   }
+  
+  // 加载悬浮球弹窗高度设置
+  const floatingBallPopup = settings?.floatingBallPopup || {};
+  if (floatingBallPopupHeightPc) {
+    // PC端高度（默认640px）
+    floatingBallPopupHeightPc.value = floatingBallPopup.heightPc || 640;
+  }
+  if (floatingBallPopupHeightMobile) {
+    // 移动端高度（默认85vh）
+    floatingBallPopupHeightMobile.value = floatingBallPopup.heightMobile || 85;
+  }
+  
+  // 加载插件图标弹窗高度设置
+  const iconPopup = settings?.iconPopup || {};
+  if (iconPopupHeightPc) {
+    // PC端高度（默认600px）
+    iconPopupHeightPc.value = iconPopup.heightPc || 600;
+  }
+  if (iconPopupHeightMobile) {
+    // 移动端高度（默认90vh）
+    iconPopupHeightMobile.value = iconPopup.heightMobile || 90;
+  }
+  
+  // 更新同步按钮状态
+  updateSyncButtonStates();
 }
 
 expandFirstLevelCheckbox.addEventListener('change', async () => {
@@ -1380,6 +1413,145 @@ if (rememberScrollPosition) {
     } catch (e) {
       showMessage('保存失败: ' + e.message, 'error');
     }
+  });
+}
+
+/**
+ * 更新同步按钮状态
+ */
+function updateSyncButtonStates() {
+  // 检查是否有未同步的本地更改
+  // 这里可以根据需要添加逻辑来检测是否有未同步的更改
+  // 暂时不实现，因为用户需要手动点击同步按钮
+}
+
+/**
+ * 保存悬浮球弹窗高度设置（仅本地）
+ */
+async function saveFloatingBallPopupHeightLocal() {
+  try {
+    const settings = await storage.getSettings();
+    const floatingBallPopup = {
+      heightPc: floatingBallPopupHeightPc ? parseInt(floatingBallPopupHeightPc.value) || 640 : 640,
+      heightMobile: floatingBallPopupHeightMobile ? parseInt(floatingBallPopupHeightMobile.value) || 85 : 85
+    };
+    const newSettings = { ...(settings || {}), floatingBallPopup };
+    await storage.saveSettings(newSettings);
+    showMessage('高度设置已保存（本地）', 'success');
+    updateSyncButtonStates();
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+}
+
+/**
+ * 同步悬浮球弹窗高度设置到云端
+ */
+async function syncFloatingBallPopupHeightToCloud() {
+  try {
+    const settings = await storage.getSettings();
+    const floatingBallPopup = {
+      heightPc: floatingBallPopupHeightPc ? parseInt(floatingBallPopupHeightPc.value) || 640 : 640,
+      heightMobile: floatingBallPopupHeightMobile ? parseInt(floatingBallPopupHeightMobile.value) || 85 : 85
+    };
+    const newSettings = { ...(settings || {}), floatingBallPopup };
+    await storage.saveSettings(newSettings);
+    showMessage('高度设置已保存，正在同步到云端...', 'success');
+    await sendMessageCompat({ action: 'syncSettings' });
+    showMessage('高度设置已同步到云端', 'success');
+  } catch (e) {
+    showMessage('同步失败: ' + e.message, 'error');
+  }
+}
+
+/**
+ * 保存插件图标弹窗高度设置（仅本地）
+ */
+async function saveIconPopupHeightLocal() {
+  try {
+    const settings = await storage.getSettings();
+    const iconPopup = {
+      heightPc: iconPopupHeightPc ? parseInt(iconPopupHeightPc.value) || 600 : 600,
+      heightMobile: iconPopupHeightMobile ? parseInt(iconPopupHeightMobile.value) || 90 : 90
+    };
+    const newSettings = { ...(settings || {}), iconPopup };
+    await storage.saveSettings(newSettings);
+    showMessage('高度设置已保存（本地）', 'success');
+    updateSyncButtonStates();
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+}
+
+/**
+ * 同步插件图标弹窗高度设置到云端
+ */
+async function syncIconPopupHeightToCloud() {
+  try {
+    const settings = await storage.getSettings();
+    const iconPopup = {
+      heightPc: iconPopupHeightPc ? parseInt(iconPopupHeightPc.value) || 600 : 600,
+      heightMobile: iconPopupHeightMobile ? parseInt(iconPopupHeightMobile.value) || 90 : 90
+    };
+    const newSettings = { ...(settings || {}), iconPopup };
+    await storage.saveSettings(newSettings);
+    showMessage('高度设置已保存，正在同步到云端...', 'success');
+    await sendMessageCompat({ action: 'syncSettings' });
+    showMessage('高度设置已同步到云端', 'success');
+  } catch (e) {
+    showMessage('同步失败: ' + e.message, 'error');
+  }
+}
+
+// 悬浮球弹窗高度设置 - PC端
+if (floatingBallPopupHeightPc) {
+  floatingBallPopupHeightPc.addEventListener('change', () => {
+    saveFloatingBallPopupHeightLocal();
+  });
+}
+
+if (syncFloatingBallHeightPc) {
+  syncFloatingBallHeightPc.addEventListener('click', async () => {
+    await syncFloatingBallPopupHeightToCloud();
+  });
+}
+
+// 悬浮球弹窗高度设置 - 移动端
+if (floatingBallPopupHeightMobile) {
+  floatingBallPopupHeightMobile.addEventListener('change', () => {
+    saveFloatingBallPopupHeightLocal();
+  });
+}
+
+if (syncFloatingBallHeightMobile) {
+  syncFloatingBallHeightMobile.addEventListener('click', async () => {
+    await syncFloatingBallPopupHeightToCloud();
+  });
+}
+
+// 插件图标弹窗高度设置 - PC端
+if (iconPopupHeightPc) {
+  iconPopupHeightPc.addEventListener('change', () => {
+    saveIconPopupHeightLocal();
+  });
+}
+
+if (syncIconHeightPc) {
+  syncIconHeightPc.addEventListener('click', async () => {
+    await syncIconPopupHeightToCloud();
+  });
+}
+
+// 插件图标弹窗高度设置 - 移动端
+if (iconPopupHeightMobile) {
+  iconPopupHeightMobile.addEventListener('change', () => {
+    saveIconPopupHeightLocal();
+  });
+}
+
+if (syncIconHeightMobile) {
+  syncIconHeightMobile.addEventListener('click', async () => {
+    await syncIconPopupHeightToCloud();
   });
 }
 

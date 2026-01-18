@@ -140,6 +140,49 @@
           <small>选择点击悬浮球时的行为。默认打开弹窗；一键保存会直接把当前页面加入当前场景书签。</small>
         </div>
         <div class="form-group">
+          <label>弹窗高度自定义</label>
+          <div class="height-custom-group">
+            <div class="height-section">
+              <h3>悬浮球打开的弹窗</h3>
+              <div class="height-item">
+                <label for="floatingBallPopupHeightPc">PC端高度（px）</label>
+                <div class="height-input-group">
+                  <input type="number" id="floatingBallPopupHeightPc" min="400" max="1000" step="10" placeholder="640">
+                  <button type="button" class="btn btn-small btn-sync" id="syncFloatingBallHeightPc" title="同步到云端">上传云端</button>
+                </div>
+                <small>PC端悬浮球打开的弹窗高度（默认640px，包含40px标题栏）。修改后点击"上传云端"同步。</small>
+              </div>
+              <div class="height-item">
+                <label for="floatingBallPopupHeightMobile">移动端高度（vh）</label>
+                <div class="height-input-group">
+                  <input type="number" id="floatingBallPopupHeightMobile" min="50" max="100" step="1" placeholder="85">
+                  <button type="button" class="btn btn-small btn-sync" id="syncFloatingBallHeightMobile" title="同步到云端">上传云端</button>
+                </div>
+                <small>移动端悬浮球打开的弹窗高度（默认85vh）。修改后点击"上传云端"同步。</small>
+              </div>
+            </div>
+            <div class="height-section">
+              <h3>插件图标打开的弹窗</h3>
+              <div class="height-item">
+                <label for="iconPopupHeightPc">PC端高度（px）</label>
+                <div class="height-input-group">
+                  <input type="number" id="iconPopupHeightPc" min="400" max="1000" step="10" placeholder="600">
+                  <button type="button" class="btn btn-small btn-sync" id="syncIconHeightPc" title="同步到云端">上传云端</button>
+                </div>
+                <small>PC端插件图标打开的弹窗高度（默认600px）。修改后点击"上传云端"同步。</small>
+              </div>
+              <div class="height-item">
+                <label for="iconPopupHeightMobile">移动端高度（vh）</label>
+                <div class="height-input-group">
+                  <input type="number" id="iconPopupHeightMobile" min="50" max="100" step="1" placeholder="90">
+                  <button type="button" class="btn btn-small btn-sync" id="syncIconHeightMobile" title="同步到云端">上传云端</button>
+                </div>
+                <small>移动端插件图标打开的弹窗高度（默认90vh）。修改后点击"上传云端"同步。</small>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
           <label>保存书签快捷键</label>
           <div id="shortcutDisplayWin" style="font-weight:600;">Windows / Linux：加载中…</div>
           <div id="shortcutDisplayMac" style="font-weight:600;">macOS：加载中…</div>

@@ -801,6 +801,10 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         const deviceType = await detectDeviceType();
         const isMobile = deviceType === 'android' || deviceType === 'ios';
         
+        // 读取自定义高度设置
+        const settings = await storage.getSettings();
+        const floatingBallPopup = settings?.floatingBallPopup || {};
+        
         let popupHeight = 600; // 默认PC高度（插件图标打开的弹窗是600px）
         if (isMobile) {
           // 移动端：悬浮球打开的弹窗和插件图标打开的弹窗高度应该有差异
@@ -833,32 +837,42 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
             }
             
             if (isFloatingBallPopup) {
-              // 移动端悬浮球打开的弹窗：使用85vh（比插件图标打开的弹窗更高）
-              const calculatedHeight = Math.floor(screenHeight * 0.85);
-              // 限制在450-650px之间（比插件图标打开的弹窗稍高）
-              popupHeight = Math.max(450, Math.min(650, calculatedHeight));
+              // 移动端悬浮球打开的弹窗：使用自定义高度（默认85vh）
+              const customHeightVh = floatingBallPopup.heightMobile || 85;
+              const calculatedHeight = Math.floor(screenHeight * (customHeightVh / 100));
+              // 不限制最小值，让自定义高度完全生效（但限制最大值避免超出屏幕）
+              popupHeight = Math.min(screenHeight - 50, calculatedHeight); // 至少留50px给系统UI
             } else {
-              // 移动端插件图标打开的弹窗：使用80vh
-              const calculatedHeight = Math.floor(screenHeight * 0.8);
-              // 限制在400-600px之间
-              popupHeight = Math.max(400, Math.min(600, calculatedHeight));
+              // 移动端插件图标打开的弹窗：使用自定义高度（默认90vh）
+              const iconPopup = settings?.iconPopup || {};
+              const customHeightVh = iconPopup.heightMobile || 90;
+              const calculatedHeight = Math.floor(screenHeight * (customHeightVh / 100));
+              // 不限制最小值，让自定义高度完全生效（但限制最大值避免超出屏幕）
+              popupHeight = Math.min(screenHeight - 50, calculatedHeight); // 至少留50px给系统UI
             }
           } catch (e) {
             console.warn('[后台] 计算移动设备弹窗高度失败，使用默认值:', e);
             // 移动设备默认值
             if (isFloatingBallPopup) {
-              popupHeight = 550; // 悬浮球弹窗默认值，在450-650px范围内
+              const customHeightVh = floatingBallPopup.heightMobile || 85;
+              // 使用默认屏幕高度800px计算，不限制最小值
+              popupHeight = Math.min(750, Math.floor(800 * (customHeightVh / 100))); // 至少留50px给系统UI
             } else {
-              popupHeight = 500; // 插件图标弹窗默认值，在400-600px范围内
+              const iconPopup = settings?.iconPopup || {};
+              const customHeightVh = iconPopup.heightMobile || 90;
+              // 使用默认屏幕高度800px计算，不限制最小值
+              popupHeight = Math.min(750, Math.floor(800 * (customHeightVh / 100))); // 至少留50px给系统UI
             }
           }
         } else {
-          // PC端：悬浮球打开的弹窗需要包含系统标题栏（约40px），所以总高度设为640px
-          // 这样内容区域仍然是600px，与插件图标打开的弹窗内容区域一致
+          // PC端：悬浮球打开的弹窗需要包含系统标题栏（约40px）
           if (isFloatingBallPopup) {
-            popupHeight = 640; // PC端悬浮球弹窗高度（600px内容 + 40px标题栏）
+            // 使用自定义高度（默认640px，包含40px标题栏）
+            popupHeight = floatingBallPopup.heightPc || 640;
           } else {
-            popupHeight = 600; // PC端插件图标打开的弹窗高度
+            // PC端插件图标打开的弹窗：使用自定义高度（默认600px）
+            const iconPopup = settings?.iconPopup || {};
+            popupHeight = iconPopup.heightPc || 600;
           }
         }
         
