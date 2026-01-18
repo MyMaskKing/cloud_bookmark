@@ -907,6 +907,7 @@ async function updateSyncStatus() {
 
 /**
  * 保存搜索内容
+ * 注意：搜索内容记忆功能始终启用，不受滚动条位置记忆设置影响
  */
 function saveSearchContent() {
   try {
@@ -927,6 +928,7 @@ function saveSearchContent() {
 
 /**
  * 恢复搜索内容
+ * 注意：搜索内容记忆功能始终启用，不受滚动条位置记忆设置影响
  */
 async function restoreSearchContent() {
   try {
