@@ -420,8 +420,8 @@ function checkUrlParams() {
   const action = params.get('action');
   pageSource = params.get('source'); // 记录页面来源
   
-  // 如果是从快捷键打开的，隐藏主内容，只显示添加表单
-  if (pageSource === 'shortcut') {
+  // 如果是从快捷键、弹窗或悬浮球打开的，隐藏主内容，只显示添加/编辑表单
+  if (pageSource === 'shortcut' || pageSource === 'popup' || pageSource === 'floating-ball') {
     const appContainer = document.querySelector('.app-container');
     if (appContainer) {
       // 隐藏侧边栏和主内容区域
@@ -2056,12 +2056,18 @@ function hideModal() {
   bookmarkModal.style.display = 'none';
   editingBookmarkId = null;
   
-  // 如果是从快捷键打开的，关闭整个页面
-  if (pageSource === 'shortcut') {
-    sendMessageCompat({ action: 'closeCurrentTab' }).catch(() => {
+  // 如果是从弹窗、悬浮球或快捷键打开的，关闭整个页面
+  if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
+    // 先尝试通过后台脚本关闭标签页
+    sendMessageCompat({ action: 'closeCurrentTab' }).then(() => {
+      console.log('[书签管理] 标签页已通过后台脚本关闭');
+    }).catch((error) => {
+      console.warn('[书签管理] 通过后台脚本关闭标签页失败，尝试直接关闭:', error);
+      // 如果后台脚本关闭失败，尝试直接关闭窗口
       try {
         window.close();
       } catch (e) {
+        console.warn('[书签管理] 直接关闭窗口也失败:', e);
         // 静默处理
       }
     });
@@ -2110,11 +2116,14 @@ function showSuccessInModal(message = '添加成功') {
       hideModal();
       // 如果是从弹窗/悬浮球/快捷键打开的，关闭页面
       if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
-        sendMessageCompat({ action: 'closeCurrentTab' }).catch(() => {
+        sendMessageCompat({ action: 'closeCurrentTab' }).then(() => {
+          console.log('[书签管理] 标签页已通过后台脚本关闭');
+        }).catch((error) => {
+          console.warn('[书签管理] 通过后台脚本关闭标签页失败，尝试直接关闭:', error);
           try {
             window.close();
           } catch (e) {
-            // 静默处理
+            console.warn('[书签管理] 直接关闭窗口也失败:', e);
           }
         });
       }
@@ -2183,28 +2192,26 @@ async function handleSubmit(e) {
     // 在模态框中显示成功提示
     showSuccessInModal('添加成功');
     
-    // 如果是新增书签且是从弹窗/悬浮球/快捷键打开的，1.5秒后关闭页面
-    if (isNewBookmark && (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut')) {
-      autoCloseTimer = setTimeout(() => {
-        // 先关闭模态框
+    // 如果是从弹窗/悬浮球/快捷键打开的，操作完成后关闭页面
+    if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
+      if (isNewBookmark) {
+        // 新增书签：显示成功提示，1.5秒后关闭页面
+        autoCloseTimer = setTimeout(() => {
+          // 先关闭模态框
+          hideModal();
+          // hideModal 中会处理关闭页面
+        }, 1500);
+      } else {
+        // 编辑书签：直接关闭模态框（hideModal 中会处理关闭页面）
         hideModal();
-        // 通过消息让 background 关闭当前标签页
-        sendMessageCompat({ action: 'closeCurrentTab' }).catch(() => {
-          // 如果消息失败，尝试使用 window.close()（某些情况下可能有效）
-          try {
-            window.close();
-          } catch (e) {
-            // 如果都失败，静默处理
-          }
-        });
-      }, 1500);
+      }
     } else if (isNewBookmark) {
-      // 其他情况显示成功提示，1.5秒后关闭模态框
+      // 其他情况：新增书签显示成功提示，1.5秒后关闭模态框
       autoCloseTimer = setTimeout(() => {
         hideModal();
       }, 1500);
     } else {
-      // 编辑情况，直接关闭模态框
+      // 其他情况：编辑书签直接关闭模态框
       hideModal();
     }
   } catch (error) {
@@ -2237,6 +2244,19 @@ async function toggleStar(bookmarkId) {
  */
 async function deleteBookmark(bookmarkId) {
   if (!confirm('确定要删除这个书签吗？')) {
+    // 如果是从弹窗/悬浮球打开的，取消删除时也关闭页面
+    if (pageSource === 'popup' || pageSource === 'floating-ball') {
+      sendMessageCompat({ action: 'closeCurrentTab' }).then(() => {
+        console.log('[书签管理] 取消删除，标签页已通过后台脚本关闭');
+      }).catch((error) => {
+        console.warn('[书签管理] 通过后台脚本关闭标签页失败，尝试直接关闭:', error);
+        try {
+          window.close();
+        } catch (e) {
+          console.warn('[书签管理] 直接关闭窗口也失败:', e);
+        }
+      });
+    }
     return;
   }
   
@@ -2248,6 +2268,20 @@ async function deleteBookmark(bookmarkId) {
     await loadBookmarks();
     await loadFolders();
     await loadTags();
+    
+    // 如果是从弹窗/悬浮球打开的，删除完成后关闭页面
+    if (pageSource === 'popup' || pageSource === 'floating-ball') {
+      sendMessageCompat({ action: 'closeCurrentTab' }).then(() => {
+        console.log('[书签管理] 删除完成，标签页已通过后台脚本关闭');
+      }).catch((error) => {
+        console.warn('[书签管理] 通过后台脚本关闭标签页失败，尝试直接关闭:', error);
+        try {
+          window.close();
+        } catch (e) {
+          console.warn('[书签管理] 直接关闭窗口也失败:', e);
+        }
+      });
+    }
   } catch (error) {
     console.error('删除失败:', error);
     alert('删除失败: ' + error.message);

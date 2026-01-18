@@ -486,6 +486,9 @@ body {
   transition: opacity 0.2s;
   flex-shrink: 0;
   touch-action: manipulation; /* 移动端优化 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .bookmark-update-btn {

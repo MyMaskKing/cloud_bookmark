@@ -102,6 +102,7 @@ const sceneMenu = document.getElementById('sceneMenu');
 // 已移除 MAX_BOOKMARKS_DISPLAY 限制，弹窗现在显示所有书签以保持与完整画面一致
 let currentSceneId = null;
 let expandedFolders = new Set(['']); // 根默认展开
+let isFloatingBallPopup = false; // 是否为悬浮球打开的弹窗
 let lastRenderedBookmarks = [];
 let popupSettings = {
   expandFirstLevel: false,
@@ -243,7 +244,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 检测是否为悬浮球打开的弹窗，如果是则调整高度
   const urlParams = new URLSearchParams(window.location.search);
   const source = urlParams.get('source');
-  const isFloatingBallPopup = source === 'floating-ball';
+  isFloatingBallPopup = source === 'floating-ball';
   
   // 检测是否为移动设备
   const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
@@ -1031,8 +1032,9 @@ addCurrentBtn.addEventListener('click', async () => {
   }
   
   // 打开添加书签页面
+  const source = isFloatingBallPopup ? 'floating-ball' : 'popup';
   tabsAPI.create({
-    url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(targetTitle || '')}&source=popup`)
+    url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(targetTitle || '')}&source=${source}`)
   });
   // 操作完成后关闭弹窗
   window.close();
@@ -1289,8 +1291,9 @@ async function handleUpdateBookmark(bookmarkId) {
     }
     
     // 打开编辑页面
+    const source = isFloatingBallPopup ? 'floating-ball' : 'popup';
     tabsAPI.create({
-      url: runtimeAPI.getURL(`pages/bookmarks.html?action=edit&id=${encodeURIComponent(bookmarkId)}&source=popup`)
+      url: runtimeAPI.getURL(`pages/bookmarks.html?action=edit&id=${encodeURIComponent(bookmarkId)}&source=${source}`)
     });
     // 操作完成后关闭弹窗
     window.close();
