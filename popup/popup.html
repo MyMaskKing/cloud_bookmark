@@ -66,6 +66,22 @@
     </footer>
   </div>
 
+  <!-- 自定义确认对话框 -->
+  <div id="confirmDialog" class="confirm-dialog-overlay" style="display: none;">
+    <div class="confirm-dialog">
+      <div class="confirm-dialog-header">
+        <h3>确认删除</h3>
+      </div>
+      <div class="confirm-dialog-body">
+        <p id="confirmDialogMessage">确定要删除这个书签吗？</p>
+      </div>
+      <div class="confirm-dialog-footer">
+        <button id="confirmDialogCancel" class="confirm-dialog-btn cancel-btn">取消</button>
+        <button id="confirmDialogConfirm" class="confirm-dialog-btn confirm-btn">确定</button>
+      </div>
+    </div>
+  </div>
+
   <script src="../utils/storage.js"></script>
   <script src="../utils/utils.js"></script>
   <script src="popup.js"></script>

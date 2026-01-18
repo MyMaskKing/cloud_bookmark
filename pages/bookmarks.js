@@ -2244,19 +2244,6 @@ async function toggleStar(bookmarkId) {
  */
 async function deleteBookmark(bookmarkId) {
   if (!confirm('确定要删除这个书签吗？')) {
-    // 如果是从弹窗/悬浮球打开的，取消删除时也关闭页面
-    if (pageSource === 'popup' || pageSource === 'floating-ball') {
-      sendMessageCompat({ action: 'closeCurrentTab' }).then(() => {
-        console.log('[书签管理] 取消删除，标签页已通过后台脚本关闭');
-      }).catch((error) => {
-        console.warn('[书签管理] 通过后台脚本关闭标签页失败，尝试直接关闭:', error);
-        try {
-          window.close();
-        } catch (e) {
-          console.warn('[书签管理] 直接关闭窗口也失败:', e);
-        }
-      });
-    }
     return;
   }
   
@@ -2269,19 +2256,7 @@ async function deleteBookmark(bookmarkId) {
     await loadFolders();
     await loadTags();
     
-    // 如果是从弹窗/悬浮球打开的，删除完成后关闭页面
-    if (pageSource === 'popup' || pageSource === 'floating-ball') {
-      sendMessageCompat({ action: 'closeCurrentTab' }).then(() => {
-        console.log('[书签管理] 删除完成，标签页已通过后台脚本关闭');
-      }).catch((error) => {
-        console.warn('[书签管理] 通过后台脚本关闭标签页失败，尝试直接关闭:', error);
-        try {
-          window.close();
-        } catch (e) {
-          console.warn('[书签管理] 直接关闭窗口也失败:', e);
-        }
-      });
-    }
+    // 删除完成后不关闭页面，保持在书签管理页面
   } catch (error) {
     console.error('删除失败:', error);
     alert('删除失败: ' + error.message);

@@ -1304,10 +1304,50 @@ async function handleUpdateBookmark(bookmarkId) {
 }
 
 /**
+ * 显示确认对话框
+ */
+function showConfirmDialog(message) {
+  return new Promise((resolve) => {
+    const dialog = document.getElementById('confirmDialog');
+    const messageEl = document.getElementById('confirmDialogMessage');
+    const confirmBtn = document.getElementById('confirmDialogConfirm');
+    const cancelBtn = document.getElementById('confirmDialogCancel');
+    
+    messageEl.textContent = message;
+    dialog.style.display = 'flex';
+    
+    const cleanup = () => {
+      dialog.style.display = 'none';
+      confirmBtn.onclick = null;
+      cancelBtn.onclick = null;
+    };
+    
+    confirmBtn.onclick = () => {
+      cleanup();
+      resolve(true);
+    };
+    
+    cancelBtn.onclick = () => {
+      cleanup();
+      resolve(false);
+    };
+    
+    // 点击遮罩层关闭
+    dialog.onclick = (e) => {
+      if (e.target === dialog) {
+        cleanup();
+        resolve(false);
+      }
+    };
+  });
+}
+
+/**
  * 删除书签
  */
 async function handleDeleteBookmark(bookmarkId) {
-  if (!confirm('确定要删除这个书签吗？')) {
+  const confirmed = await showConfirmDialog('确定要删除这个书签吗？');
+  if (!confirmed) {
     return;
   }
   
