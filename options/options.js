@@ -91,6 +91,7 @@ const currentDeviceId = document.getElementById('currentDeviceId');
 const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
 const enableDeviceDetection = document.getElementById('enableDeviceDetection');
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
+const showUpdateButtonCheckbox = document.getElementById('showUpdateButton');
 const enableFloatingBall = document.getElementById('enableFloatingBall');
 const floatingBallPositionGroup = document.getElementById('floatingBallPositionGroup');
 const floatingBallDefaultPosition = document.getElementById('floatingBallDefaultPosition');
@@ -1345,6 +1346,11 @@ async function loadUiSettings() {
     rememberScrollPosition.checked = popup.rememberScrollPosition !== false; // 默认true
   }
   
+  // 加载显示更新按钮设置（默认不显示）
+  if (showUpdateButtonCheckbox) {
+    showUpdateButtonCheckbox.checked = !!popup.showUpdateButton; // 默认false
+  }
+  
   // 加载同步失败通知开关（默认开启）
   const syncErrorNotification = settings?.syncErrorNotification || {};
   enableSyncErrorNotification.checked = syncErrorNotification.enabled !== false;
@@ -1393,11 +1399,66 @@ expandFirstLevelCheckbox.addEventListener('change', async () => {
       }
     });
     showMessage('界面设置已保存（已同步至云端）', 'success');
-  await sendMessageCompat({ action: 'syncSettings' });
+    await sendMessageCompat({ action: 'syncSettings' });
+    // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
+    try {
+      if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+        // Firefox: 使用 Promise
+        browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => {
+          // 忽略错误，可能没有打开的弹窗
+        });
+      } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+        // Chrome/Edge: 使用回调包装成Promise
+        chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+          // 忽略错误，可能没有打开的弹窗
+          if (chrome.runtime.lastError) {
+            // 静默处理错误
+          }
+        });
+      }
+    } catch (e) {
+      // 忽略错误
+    }
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
 });
+
+// 显示更新按钮设置
+if (showUpdateButtonCheckbox) {
+  showUpdateButtonCheckbox.addEventListener('change', async () => {
+    try {
+      const settings = await storage.getSettings();
+      const popup = (settings && settings.popup) || {};
+      popup.showUpdateButton = showUpdateButtonCheckbox.checked;
+      const newSettings = { ...(settings || {}), popup };
+      await storage.saveSettings(newSettings);
+      showMessage('弹窗画面更新按钮显示设置已保存（已同步至云端）', 'success');
+      await sendMessageCompat({ action: 'syncSettings' });
+      // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          // Firefox: 使用 Promise
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => {
+            // 忽略错误，可能没有打开的弹窗
+          });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          // Chrome/Edge: 使用回调包装成Promise
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            // 忽略错误，可能没有打开的弹窗
+            if (chrome.runtime.lastError) {
+              // 静默处理错误
+            }
+          });
+        }
+      } catch (e) {
+        // 忽略错误
+      }
+    } catch (e) {
+      showMessage('保存失败: ' + e.message, 'error');
+    }
+  });
+}
 
 // 滚动条位置记忆设置
 if (rememberScrollPosition) {
@@ -1410,6 +1471,25 @@ if (rememberScrollPosition) {
       await storage.saveSettings(newSettings);
       showMessage('界面设置已保存（已同步至云端）', 'success');
       await sendMessageCompat({ action: 'syncSettings' });
+      // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          // Firefox: 使用 Promise
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => {
+            // 忽略错误，可能没有打开的弹窗
+          });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          // Chrome/Edge: 使用回调包装成Promise
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            // 忽略错误，可能没有打开的弹窗
+            if (chrome.runtime.lastError) {
+              // 静默处理错误
+            }
+          });
+        }
+      } catch (e) {
+        // 忽略错误
+      }
     } catch (e) {
       showMessage('保存失败: ' + e.message, 'error');
     }

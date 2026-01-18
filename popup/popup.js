@@ -88,6 +88,7 @@ function searchBookmarks(bookmarks, query) {
 
 // DOM元素
 const searchInput = document.getElementById('searchInput');
+const searchClearBtn = document.getElementById('searchClearBtn');
 const addCurrentBtn = document.getElementById('addCurrentBtn');
 const openFullBtn = document.getElementById('openFullBtn');
 const settingsBtn = document.getElementById('settingsBtn');
@@ -104,7 +105,8 @@ let expandedFolders = new Set(['']); // 根默认展开
 let lastRenderedBookmarks = [];
 let popupSettings = {
   expandFirstLevel: false,
-  rememberScrollPosition: true // 默认启用滚动位置记忆
+  rememberScrollPosition: true, // 默认启用滚动位置记忆
+  showUpdateButton: false // 默认不显示更新按钮，只显示删除按钮
 };
 let shouldApplyDefaultExpand = true;
 const runtimeErrors = [];
@@ -114,6 +116,24 @@ const opLogs = [];
 // 使用全局事件委托（捕获阶段），确保首次同步后渲染的书签也能响应点击
 document.addEventListener('click', (e) => {
   try {
+    // 先检查是否点击了清除搜索按钮
+    if (e.target.id === 'searchClearBtn' || e.target.closest('#searchClearBtn')) {
+      // 清除按钮有自己的事件处理器，这里不处理，直接返回
+      return;
+    }
+    
+    // 先检查是否点击了更新按钮
+    const updateBtn = e.target.closest('.bookmark-update-btn');
+    if (updateBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const bookmarkId = updateBtn.dataset.id;
+      if (bookmarkId) {
+        handleUpdateBookmark(bookmarkId);
+      }
+      return;
+    }
+    
     // 先检查是否点击了删除按钮
     const deleteBtn = e.target.closest('.bookmark-delete-btn');
     if (deleteBtn) {
@@ -132,6 +152,11 @@ document.addEventListener('click', (e) => {
     }
     if (e.target.closest('.scene-menu-item')) {
       return; // 场景菜单项点击由专门的处理器处理
+    }
+    
+    // 检查是否点击了按钮容器，如果是则忽略（按钮点击已在上面的处理中处理）
+    if (e.target.closest('.bookmark-item-actions')) {
+      return;
     }
     
     const item = e.target.closest('.bookmark-item');
@@ -278,11 +303,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('[弹窗] requestAnimationFrame 回调执行，开始加载书签');
     await loadBookmarksForPopup();
     await updateSyncStatus();
+    // 恢复搜索内容
+    await restoreSearchContent();
     console.log('[弹窗] 书签加载完成');
   });
   
   // 监听消息更新
-  runtimeAPI.onMessage.addListener((request) => {
+  runtimeAPI.onMessage.addListener(async (request) => {
     if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
       console.log('[弹窗] 收到更新消息，重新加载书签');
       loadCurrentScene();
@@ -290,6 +317,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       requestAnimationFrame(async () => {
         await loadBookmarksForPopup();
         await updateSyncStatus();
+      });
+    } else if (request.action === 'settingsUpdated') {
+      console.log('[弹窗] 收到设置更新消息，重新加载设置');
+      await loadPopupSettings();
+      // 重新渲染书签以应用设置
+      requestAnimationFrame(async () => {
+        await loadBookmarksForPopup();
       });
     }
   });
@@ -317,15 +351,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }, 100);
   
-  // 在页面卸载前保存滚动位置（确保不会丢失）
+  // 在页面卸载前保存滚动位置和搜索内容（确保不会丢失）
   window.addEventListener('beforeunload', () => {
     saveScrollPosition();
+    saveSearchContent();
   });
   
   // 在页面隐藏时也保存（移动端可能不会触发 beforeunload）
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       saveScrollPosition();
+      saveSearchContent();
     }
   });
   
@@ -545,30 +581,22 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
           <div class="bookmark-item-url">${escapeHtml(bookmark.url)}</div>
           ${bookmark.folder ? `<div class="bookmark-item-folder">📁 ${escapeHtml(bookmark.folder)}</div>` : ''}
         </div>
-        <button class="bookmark-delete-btn" data-id="${escapeHtml(bookmark.id)}" title="删除">🗑️</button>
+        <div class="bookmark-item-actions">
+          <button class="bookmark-update-btn" data-id="${escapeHtml(bookmark.id)}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>
+          <button class="bookmark-delete-btn" data-id="${escapeHtml(bookmark.id)}" title="删除">🗑️</button>
+        </div>
       </div>
     `).join('');
 
-    // 点击事件（使用 requestAnimationFrame 确保 DOM 更新完成）
-    requestAnimationFrame(() => {
-      const items = bookmarkList.querySelectorAll('.bookmark-item');
-      console.log('[弹窗] 搜索模式：找到书签项数量:', items.length);
-      
-      items.forEach((item, index) => {
-        console.log(`[弹窗] 搜索模式：绑定书签项 ${index}:`, item.dataset.url);
-        item.addEventListener('click', () => {
-          console.log('[弹窗] 搜索模式：书签项被点击:', item.dataset.url);
-          const url = item.dataset.url;
-          if (url) {
-            console.log('[弹窗] 搜索模式：打开URL:', url);
-            tabsAPI.create({ url });
-            window.close();
-          } else {
-            console.error('[弹窗] 搜索模式：URL为空，无法打开');
-          }
-        });
-      });
-    });
+    // 搜索模式中的点击事件由全局事件委托处理，不需要单独绑定
+    // 全局事件委托会先检查按钮点击，然后才处理书签项点击
+    
+    // 应用设置到UI（更新按钮的显示/隐藏）
+    // 使用setTimeout确保DOM已完全渲染
+    setTimeout(() => {
+      applyPopupSettings();
+    }, 0);
+    
     return;
   }
 
@@ -603,6 +631,8 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
     });
 
     bindBookmarkClick();
+    // 应用设置到UI（更新按钮的显示/隐藏）
+    applyPopupSettings();
   });
 
   function bindFolderEvents() {
@@ -655,12 +685,33 @@ async function loadPopupSettings() {
     const settings = await storage.getSettings();
     popupSettings = {
       expandFirstLevel: !!(settings && settings.popup && settings.popup.expandFirstLevel),
-      rememberScrollPosition: settings && settings.popup && settings.popup.rememberScrollPosition !== false // 默认true
+      rememberScrollPosition: settings && settings.popup && settings.popup.rememberScrollPosition !== false, // 默认true
+      showUpdateButton: !!(settings && settings.popup && settings.popup.showUpdateButton) // 默认false
     };
+    // 应用设置到UI
+    applyPopupSettings();
   } catch (e) {
     console.warn('加载弹窗设置失败，使用默认值', e?.message || e);
-    popupSettings = { expandFirstLevel: false, rememberScrollPosition: true };
+    popupSettings = { expandFirstLevel: false, rememberScrollPosition: true, showUpdateButton: false };
+    applyPopupSettings();
   }
+}
+
+/**
+ * 应用弹窗设置到UI
+ */
+function applyPopupSettings() {
+  // 更新按钮的显示/隐藏
+  const updateButtons = document.querySelectorAll('.bookmark-update-btn');
+  const shouldShow = popupSettings && popupSettings.showUpdateButton;
+  updateButtons.forEach(btn => {
+    if (shouldShow) {
+      btn.style.display = 'flex';
+    } else {
+      btn.style.display = 'none';
+    }
+  });
+  console.log('[弹窗设置] 应用设置，showUpdateButton:', shouldShow, '找到按钮数量:', updateButtons.length);
 }
 
 async function loadFolderState() {
@@ -819,7 +870,10 @@ function renderFolderTreeHtml(node, indentPath) {
         <div class="bookmark-item-title">${escapeHtml(b.title || '无标题')}</div>
         <div class="bookmark-item-url">${escapeHtml(b.url)}</div>
       </div>
-      <button class="bookmark-delete-btn" data-id="${escapeHtml(b.id)}" title="删除">🗑️</button>
+      <div class="bookmark-item-actions">
+        <button class="bookmark-update-btn" data-id="${escapeHtml(b.id)}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>
+        <button class="bookmark-delete-btn" data-id="${escapeHtml(b.id)}" title="删除">🗑️</button>
+      </div>
     </div>
   `).join('');
 
@@ -852,10 +906,80 @@ async function updateSyncStatus() {
 }
 
 /**
+ * 保存搜索内容
+ */
+function saveSearchContent() {
+  try {
+    const query = searchInput.value.trim();
+    const state = {
+      popupSearchContent: query
+    };
+    if (typeof browser !== 'undefined' && browser.storage) {
+      browser.storage.local.set(state);
+    } else {
+      chrome.storage.local.set(state, () => {});
+    }
+    console.log('[搜索内容] 保存搜索内容:', query);
+  } catch (e) {
+    console.warn('保存搜索内容失败:', e);
+  }
+}
+
+/**
+ * 恢复搜索内容
+ */
+async function restoreSearchContent() {
+  try {
+    const result = typeof browser !== 'undefined' && browser.storage
+      ? await browser.storage.local.get(['popupSearchContent'])
+      : await new Promise(resolve => {
+          chrome.storage.local.get(['popupSearchContent'], resolve);
+        });
+    const savedQuery = result && result.popupSearchContent;
+    
+    if (savedQuery && savedQuery.trim()) {
+      searchInput.value = savedQuery;
+      searchClearBtn.style.display = 'flex'; // 显示清除按钮
+      console.log('[搜索内容] 恢复搜索内容:', savedQuery);
+      // 触发搜索
+      searchInput.dispatchEvent(new Event('input'));
+    } else {
+      searchClearBtn.style.display = 'none'; // 隐藏清除按钮
+    }
+  } catch (e) {
+    console.warn('恢复搜索内容失败:', e);
+  }
+}
+
+/**
+ * 清除搜索
+ */
+if (searchClearBtn) {
+  searchClearBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    searchInput.value = '';
+    searchClearBtn.style.display = 'none';
+    saveSearchContent();
+    loadBookmarksForPopup();
+  });
+}
+
+/**
  * 搜索书签
  */
 searchInput.addEventListener('input', debounce(async (e) => {
   const query = e.target.value.trim();
+  // 保存搜索内容
+  saveSearchContent();
+  
+  // 显示/隐藏清除按钮
+  if (query) {
+    searchClearBtn.style.display = 'flex';
+  } else {
+    searchClearBtn.style.display = 'none';
+  }
+  
   if (!query) {
     await loadBookmarksForPopup();
     return;
@@ -1148,6 +1272,33 @@ function serializeLogToText(log) {
 }
 
 /**
+ * 更新书签
+ */
+async function handleUpdateBookmark(bookmarkId) {
+  try {
+    // 获取当前场景的所有书签
+    const data = await storage.getBookmarks(currentSceneId);
+    const bookmarks = data.bookmarks || [];
+    const bookmark = bookmarks.find(b => b.id === bookmarkId);
+    
+    if (!bookmark) {
+      alert('未找到要更新的书签');
+      return;
+    }
+    
+    // 打开编辑页面
+    tabsAPI.create({
+      url: runtimeAPI.getURL(`pages/bookmarks.html?action=edit&id=${encodeURIComponent(bookmarkId)}&source=popup`)
+    });
+    // 操作完成后关闭弹窗
+    window.close();
+  } catch (error) {
+    console.error('更新书签失败:', error);
+    alert('更新书签失败: ' + error.message);
+  }
+}
+
+/**
  * 删除书签
  */
 async function handleDeleteBookmark(bookmarkId) {
@@ -1216,7 +1367,6 @@ function saveScrollPosition() {
     
     console.log('[滚动位置] 保存滚动位置:', scrollTop, '容器:', scrollContainer.className, 'maxScroll:', maxScroll, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
     
-    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
     const state = {
       popupScrollPosition: scrollTop
     };
@@ -1249,7 +1399,6 @@ async function restoreScrollPosition() {
       return;
     }
     
-    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
     const result = typeof browser !== 'undefined' && browser.storage
       ? await browser.storage.local.get(['popupScrollPosition'])
       : await new Promise(resolve => {

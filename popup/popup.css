@@ -156,12 +156,13 @@ body {
 }
 
 .search-box {
+  position: relative;
   margin-bottom: 12px;
 }
 
 .search-box input {
   width: 100%;
-  padding: 8px 12px;
+  padding: 8px 32px 8px 12px; /* 右侧留出空间给清除按钮 */
   border: 1px solid #ddd;
   border-radius: 6px;
   font-size: 14px;
@@ -170,6 +171,55 @@ body {
 .search-box input:focus {
   outline: none;
   border-color: #4a90e2;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.7;
+  transition: opacity 0.2s, color 0.2s;
+  touch-action: manipulation; /* 移动端优化 */
+}
+
+.search-clear-btn:hover {
+  opacity: 1;
+  color: #666;
+}
+
+.search-clear-btn:active {
+  opacity: 0.8;
+}
+
+/* 移动端优化 */
+@media (max-width: 480px) {
+  .search-clear-btn {
+    width: 32px;
+    height: 32px;
+    font-size: 20px;
+    min-width: 32px; /* 确保触摸目标足够大 */
+    min-height: 32px;
+  }
+}
+
+/* 触摸设备优化 */
+@media (hover: none) and (pointer: coarse) {
+  .search-clear-btn:hover {
+    opacity: 0.7; /* 触摸设备移除hover效果 */
+  }
 }
 
 .quick-actions {
@@ -418,10 +468,17 @@ body {
   min-width: 0;
 }
 
+.bookmark-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.bookmark-update-btn,
 .bookmark-delete-btn {
   background: none;
   border: none;
-  color: #dc3545;
   cursor: pointer;
   padding: 4px 8px;
   font-size: 14px;
@@ -431,21 +488,56 @@ body {
   touch-action: manipulation; /* 移动端优化 */
 }
 
+.bookmark-update-btn {
+  color: #007bff;
+}
+
+.bookmark-delete-btn {
+  color: #dc3545;
+}
+
+.bookmark-update-btn:hover,
 .bookmark-delete-btn:hover {
   opacity: 1;
 }
 
+.bookmark-update-btn:active,
 .bookmark-delete-btn:active {
   opacity: 0.9;
 }
 
-/* 移动端优化 */
+/* 移动端优化 - 小屏幕 */
 @media (max-width: 360px) {
+  .bookmark-item {
+    padding: 8px;
+    gap: 6px;
+  }
+  
+  .bookmark-item-actions {
+    gap: 4px;
+  }
+  
+  .bookmark-update-btn,
   .bookmark-delete-btn {
-    padding: 6px 10px;
+    padding: 6px 8px;
     font-size: 16px; /* 移动端增大点击区域 */
     min-width: 44px; /* 最小触摸目标 */
     min-height: 44px;
+  }
+}
+
+/* 移动端优化 - 中等屏幕 */
+@media (max-width: 480px) and (min-width: 361px) {
+  .bookmark-item-actions {
+    gap: 5px;
+  }
+  
+  .bookmark-update-btn,
+  .bookmark-delete-btn {
+    padding: 5px 9px;
+    font-size: 15px;
+    min-width: 40px;
+    min-height: 40px;
   }
 }
 

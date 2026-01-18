@@ -447,6 +447,22 @@ function checkUrlParams() {
     if (url) {
       showAddForm({ url, title });
     }
+  } else if (action === 'edit') {
+    const bookmarkId = params.get('id');
+    if (bookmarkId) {
+      // 等待书签加载完成后再打开编辑表单
+      const tryShowEditForm = async () => {
+        const bookmark = currentBookmarks.find(b => b.id === bookmarkId);
+        if (bookmark) {
+          showEditForm(bookmark);
+        } else {
+          // 如果还没加载完成，等待一下再试
+          setTimeout(tryShowEditForm, 100);
+        }
+      };
+      // 延迟执行，确保书签已加载
+      setTimeout(tryShowEditForm, 200);
+    }
   }
 }
 
