@@ -12,6 +12,8 @@ function parseHtmlBookmarks(htmlText) {
   
   const bookmarks = [];
   const folders = [];
+
+  const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
   
   // 递归解析书签节点
   function parseNode(node, currentFolder = '') {
@@ -21,8 +23,9 @@ function parseHtmlBookmarks(htmlText) {
     const folderNodes = node.querySelectorAll('H3');
     folderNodes.forEach(folderNode => {
       const folderName = folderNode.textContent.trim();
-      if (folderName && !folders.includes(folderName)) {
-        folders.push(folderName);
+      const folderPath = normalizeFolder(currentFolder ? `${currentFolder}/${folderName}` : folderName);
+      if (folderPath && !folders.includes(folderPath)) {
+        folders.push(folderPath);
       }
       
       // 查找文件夹下的DL节点
@@ -32,7 +35,7 @@ function parseHtmlBookmarks(htmlText) {
       }
       
       if (dlNode) {
-        parseNode(dlNode, folderName);
+        parseNode(dlNode, folderPath);
       }
     });
     

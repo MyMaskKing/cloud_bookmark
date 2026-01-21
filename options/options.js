@@ -658,20 +658,35 @@ importBrowserBtn.addEventListener('click', async () => {
         return;
       }
       
-      // 规范化路径，合并到现有书签，清理空文件夹
+      // 规范化路径 + 补齐父级路径（保证 folders 与画面树一致，例如补齐 “.../4.仕事&邮件”）
       const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+      const expandFolderPathsPreserveOrder = (paths) => {
+        const out = [];
+        const seen = new Set();
+        (paths || []).forEach((p) => {
+          const n = normalizeFolder(p || '');
+          if (!n) return;
+          const parts = n.split('/').filter(Boolean);
+          let cur = '';
+          for (const part of parts) {
+            cur = cur ? `${cur}/${part}` : part;
+            if (!seen.has(cur)) {
+              seen.add(cur);
+              out.push(cur);
+            }
+          }
+        });
+        return out;
+      };
       const importedBookmarks = (data.bookmarks || []).map(b => ({
         ...b,
         folder: b.folder ? normalizeFolder(b.folder) : undefined,
         scene: targetSceneId // 设置场景
       }));
 
-      // 获取所有书签（包括其他场景）
-      const allBookmarks = await storage.getBookmarks();
-      const otherSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== targetSceneId);
-      
-      // 合并书签（避免重复 URL，仅在同一场景内检测）
-      const sceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene === targetSceneId);
+      // 获取当前场景书签
+      const sceneData = await storage.getBookmarks(targetSceneId);
+      const sceneBookmarks = sceneData.bookmarks || [];
       const urlMap = new Map();
       sceneBookmarks.forEach(b => urlMap.set(b.url, b));
       
@@ -684,22 +699,19 @@ importBrowserBtn.addEventListener('click', async () => {
         }
       });
       
-      // 合并所有场景的书签
-      const mergedBookmarks = [...otherSceneBookmarks, ...sceneBookmarks];
-      
-      // 仅保留有书签引用的文件夹（清理空文件夹）
-      const usedFolders = new Set(
-        mergedBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean)
-      );
-      const allFolders = [...usedFolders];
+      // folders：优先使用导入返回的 folders（完整层级），并补齐父级；再补上书签中引用的 folder
+      const importedFoldersRaw = (data.folders || []).map(normalizeFolder).filter(Boolean);
+      const bookmarkFoldersRaw = sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean);
+      const foldersForScene = expandFolderPathsPreserveOrder([...importedFoldersRaw, ...bookmarkFoldersRaw]);
 
-      await storage.saveBookmarks(mergedBookmarks, allFolders);
+      // 仅更新目标场景（保留其他场景不变），并保存该场景的 folders（包含父级层级）
+      await storage.saveBookmarks(sceneBookmarks, foldersForScene, targetSceneId);
       
       // 同步到云端（同步到选择的场景）
       await sendMessageCompat({ 
         action: 'syncToCloud', 
         bookmarks: sceneBookmarks,
-        folders: [...new Set(sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean))],
+        folders: foldersForScene,
         sceneId: targetSceneId // 明确指定场景ID
       });
       
@@ -1801,20 +1813,35 @@ importFile.addEventListener('change', async (e) => {
         return;
       }
       
-      // 规范化并仅保留实际使用的文件夹
+      // 规范化路径 + 补齐父级路径（保证 folders 与画面树一致）
       const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+      const expandFolderPathsPreserveOrder = (paths) => {
+        const out = [];
+        const seen = new Set();
+        (paths || []).forEach((p) => {
+          const n = normalizeFolder(p || '');
+          if (!n) return;
+          const parts = n.split('/').filter(Boolean);
+          let cur = '';
+          for (const part of parts) {
+            cur = cur ? `${cur}/${part}` : part;
+            if (!seen.has(cur)) {
+              seen.add(cur);
+              out.push(cur);
+            }
+          }
+        });
+        return out;
+      };
       const importedBookmarks = data.bookmarks.map(b => ({
         ...b,
         folder: b.folder ? normalizeFolder(b.folder) : undefined,
         scene: targetSceneId // 设置场景
       }));
 
-      // 获取所有书签（包括其他场景）
-      const allBookmarks = await storage.getBookmarks();
-      const otherSceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== targetSceneId);
-      
-      // 合并书签（避免重复 URL，仅在同一场景内检测）
-      const sceneBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene === targetSceneId);
+      // 获取当前场景书签
+      const sceneData = await storage.getBookmarks(targetSceneId);
+      const sceneBookmarks = sceneData.bookmarks || [];
       const urlMap = new Map();
       sceneBookmarks.forEach(b => urlMap.set(b.url, b));
       
@@ -1827,22 +1854,19 @@ importFile.addEventListener('change', async (e) => {
         }
       });
       
-      // 合并所有场景的书签
-      const mergedBookmarks = [...otherSceneBookmarks, ...sceneBookmarks];
-      
-      // 导入时清空空文件夹：仅保留有书签引用的文件夹
-      const usedFolders = new Set(
-        mergedBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean)
-      );
-      const allFolders = [...usedFolders];
-      
-      await storage.saveBookmarks(mergedBookmarks, allFolders);
+      // folders：优先使用导入数据携带的 folders（若有），并补齐父级；再补上书签引用的 folder
+      const importedFoldersRaw = (data.folders || []).map(normalizeFolder).filter(Boolean);
+      const bookmarkFoldersRaw = sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean);
+      const foldersForScene = expandFolderPathsPreserveOrder([...importedFoldersRaw, ...bookmarkFoldersRaw]);
+
+      // 仅更新目标场景（保留其他场景不变），并保存该场景的 folders（包含父级层级）
+      await storage.saveBookmarks(sceneBookmarks, foldersForScene, targetSceneId);
       
       // 同步到云端（同步到选择的场景）
       await sendMessageCompat({ 
         action: 'syncToCloud', 
         bookmarks: sceneBookmarks,
-        folders: [...new Set(sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean))],
+        folders: foldersForScene,
         sceneId: targetSceneId // 明确指定场景ID
       });
       
@@ -2221,8 +2245,29 @@ async function loadScenes() {
             await storage.deleteScene(sceneId);
             // 删除本地该场景的书签
             const allBookmarks = await storage.getBookmarks();
+            const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+            const expandFolderPathsPreserveOrder = (paths) => {
+              const out = [];
+              const seen = new Set();
+              (paths || []).forEach((p) => {
+                const n = normalizeFolder(p || '');
+                if (!n) return;
+                const parts = n.split('/').filter(Boolean);
+                let cur = '';
+                for (const part of parts) {
+                  cur = cur ? `${cur}/${part}` : part;
+                  if (!seen.has(cur)) {
+                    seen.add(cur);
+                    out.push(cur);
+                  }
+                }
+              });
+              return out;
+            };
+
             const filteredBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== sceneId);
-            const filteredFolders = [...new Set(filteredBookmarks.map(b => b.folder).filter(Boolean))];
+            // 保留父级层级，避免云端 folders 缺层（跨场景全量保存时同样适用）
+            const filteredFolders = expandFolderPathsPreserveOrder(filteredBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean));
             await storage.saveBookmarks(filteredBookmarks, filteredFolders);
             // 通知后台删除云端文件
             await sendMessageCompat({ action: 'deleteSceneBookmarks', sceneId });

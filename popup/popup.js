@@ -1437,9 +1437,34 @@ async function handleDeleteBookmark(bookmarkId) {
     // 删除指定的书签
     const remainingBookmarks = allBookmarks.filter(b => b.id !== bookmarkId);
     
-    // 更新文件夹列表（移除不再使用的文件夹）
-    const bookmarkFolders = new Set(remainingBookmarks.map(b => b.folder).filter(Boolean));
-    const remainingFolders = allFolders.filter(f => bookmarkFolders.has(f));
+    // 更新文件夹列表（移除不再使用的文件夹，但保留父级层级，避免云端 folders 缺层）
+    const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+    const expandFolderPathsPreserveOrder = (paths) => {
+      const out = [];
+      const seen = new Set();
+      (paths || []).forEach((p) => {
+        const n = normalizeFolder(p || '');
+        if (!n) return;
+        const parts = n.split('/').filter(Boolean);
+        let cur = '';
+        for (const part of parts) {
+          cur = cur ? `${cur}/${part}` : part;
+          if (!seen.has(cur)) {
+            seen.add(cur);
+            out.push(cur);
+          }
+        }
+      });
+      return { out, seen };
+    };
+
+    const usedLeafFolders = remainingBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean);
+    const { seen: usedWithParentsSet, out: usedWithParentsOrder } = expandFolderPathsPreserveOrder(usedLeafFolders);
+    // 先保留现有 allFolders 的顺序，再补齐缺失的父级/层级
+    const remainingFolders = [
+      ...(allFolders || []).map(normalizeFolder).filter(f => f && usedWithParentsSet.has(f)),
+      ...usedWithParentsOrder.filter(f => f && !(allFolders || []).includes(f))
+    ];
     
     // 保存到本地
     await storage.saveBookmarks(remainingBookmarks, remainingFolders, currentSceneId);

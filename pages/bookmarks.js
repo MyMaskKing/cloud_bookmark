@@ -73,6 +73,66 @@ function normalizeFolderPath(path) {
     .replace(/^\/|\/$/g, '');
 }
 
+// 将形如 a/b/c 的路径补齐中间父级：a、a/b、a/b/c，并保持“首次出现顺序”
+function expandFolderPathsPreserveOrder(paths) {
+  const out = [];
+  const seen = new Set();
+  (paths || []).forEach((p) => {
+    const n = normalizeFolderPath(p || '');
+    if (!n) return;
+    const parts = n.split('/').filter(Boolean);
+    let cur = '';
+    for (const part of parts) {
+      cur = cur ? `${cur}/${part}` : part;
+      if (!seen.has(cur)) {
+        seen.add(cur);
+        out.push(cur);
+      }
+    }
+  });
+  return out;
+}
+
+// 将新文件夹插入到“同父级分组”的末尾，避免新增子文件夹总是跑到 folders 最后
+function insertFolderPathSmart(folders, newPath) {
+  const n = normalizeFolderPath(newPath || '');
+  if (!n) return folders || [];
+  const list = Array.isArray(folders) ? [...folders] : [];
+  if (list.includes(n)) return list;
+
+  const parent = getParentFolder(n); // '' 表示根
+  // 找到父级在数组中的位置（可能不存在）
+  const parentIdx = parent ? list.indexOf(parent) : -1;
+
+  // 规则：插入到“父级的最后一个后代”之后（含父级本身）
+  // 即：找到最后一个满足 f === parent 或 f 以 `${parent}/` 开头的元素位置
+  let insertAt = -1;
+  if (parent) {
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      if (f === parent || (typeof f === 'string' && f.startsWith(parent + '/'))) {
+        insertAt = i;
+      }
+    }
+    if (insertAt === -1 && parentIdx !== -1) insertAt = parentIdx;
+  } else {
+    // 根目录：插入到最后一个根级（不含“a/b”）之后
+    for (let i = 0; i < list.length; i++) {
+      const f = list[i];
+      if (typeof f === 'string' && f.indexOf('/') === -1) {
+        insertAt = i;
+      }
+    }
+  }
+
+  if (insertAt === -1) {
+    list.push(n);
+  } else {
+    list.splice(insertAt + 1, 0, n);
+  }
+  return list;
+}
+
 // 工具函数（从utils.js导入的函数需要在这里定义或确保全局可用）
 function escapeHtml(text) {
   const div = document.createElement('div');
@@ -147,19 +207,44 @@ let batchMode = false;
 let selectedBookmarkIds = new Set();
 let pageSource = null; // 记录页面来源（popup/floating-ball等）
 let autoCloseTimer = null; // 自动关闭定时器
+let orderSyncPending = false; // 标记是否有未执行的排序同步
+let draggingBookmarkId = null; // 当前拖拽的书签ID（自定义排序）
+
+function isMobileView() {
+  return window.innerWidth <= 768;
+}
 const ORDER_SYNC_DELAY = 1000; // 文件夹/排序调整的上行防抖（毫秒），1秒内频繁操作只合并一次上行
-const scheduleOrderSync = debounce(() => {
+const scheduleOrderSync = (() => {
+  const debounced = debounce(async () => {
+    try {
+      console.log('[排序同步] 防抖触发，开始同步当前场景排序到云端', {
+        sceneId: currentSceneId,
+        bookmarkCount: currentBookmarks.length,
+        folderCount: currentFolders.length
+      });
+      await syncToCloud();
+    } catch (e) {
+      console.error('[排序同步] 同步失败', e);
+    } finally {
+      orderSyncPending = false;
+    }
+  }, ORDER_SYNC_DELAY);
+  return () => {
+    orderSyncPending = true;
+    debounced();
+  };
+})();
+
+async function flushPendingOrderSync() {
+  if (!orderSyncPending) return;
+  orderSyncPending = false;
   try {
-    console.log('[排序同步] 防抖触发，开始同步当前场景排序到云端', {
-      sceneId: currentSceneId,
-      bookmarkCount: currentBookmarks.length,
-      folderCount: currentFolders.length
-    });
-    syncToCloud().catch((e) => console.error('[排序同步] 同步失败', e));
+    console.log('[排序同步] 页面即将隐藏/关闭，执行兜底同步');
+    await syncToCloud();
   } catch (e) {
-    console.error('[排序同步] 执行异常', e);
+    console.error('[排序同步] 兜底同步失败', e);
   }
-}, ORDER_SYNC_DELAY);
+}
 
 // DOM元素
 const addBookmarkBtn = document.getElementById('addBookmarkBtn');
@@ -366,6 +451,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSidebarResizer();
   setupEventListeners();
   checkUrlParams();
+
+  // 页面隐藏/关闭时兜底执行一次排序同步，避免防抖未触发导致顺序丢失
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      flushPendingOrderSync();
+    }
+  });
+  window.addEventListener('beforeunload', () => {
+    flushPendingOrderSync();
+  });
 
   window.addEventListener('resize', () => {
     if (window.innerWidth > 768) {
@@ -574,6 +669,46 @@ function setupEventListeners() {
 
   if (sidebarOverlay) {
     sidebarOverlay.addEventListener('click', () => closeSidebarMobile());
+  }
+
+  // 书签卡片拖拽排序（仅在自定义排序模式且非批量模式启用）
+  if (bookmarksGrid) {
+    bookmarksGrid.addEventListener('dragstart', (e) => {
+      if (currentSort !== 'custom' || batchMode) return;
+      const card = e.target.closest('.bookmark-card');
+      if (!card) return;
+      draggingBookmarkId = card.dataset.id;
+      e.dataTransfer.effectAllowed = 'move';
+    });
+
+    bookmarksGrid.addEventListener('dragover', (e) => {
+      if (currentSort !== 'custom' || batchMode) return;
+      const card = e.target.closest('.bookmark-card');
+      if (!card) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+    });
+
+    bookmarksGrid.addEventListener('drop', async (e) => {
+      if (currentSort !== 'custom' || batchMode) return;
+      const card = e.target.closest('.bookmark-card');
+      if (!card || !draggingBookmarkId) return;
+      e.preventDefault();
+      const targetId = card.dataset.id;
+      if (!targetId || targetId === draggingBookmarkId) {
+        draggingBookmarkId = null;
+        return;
+      }
+      reorderBookmarksById(draggingBookmarkId, targetId);
+      draggingBookmarkId = null;
+      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+      scheduleOrderSync();
+      renderBookmarks(); // 重新渲染以应用新顺序
+    });
+
+    bookmarksGrid.addEventListener('dragend', () => {
+      draggingBookmarkId = null;
+    });
   }
 
   // 使用事件委托处理文件夹相关事件（避免重复绑定导致内存泄漏）
@@ -856,6 +991,8 @@ async function loadBookmarks() {
       //       2) 在当前场景的书签中使用的文件夹
       return storedFoldersSet.has(f) || currentSceneBookmarkFoldersSet.has(f);
     });
+    // 关键：补齐中间父级路径，确保树上可见但未显式存储的节点也参与排序（例如 “2.学习&娱乐”）
+    currentFolders = expandFolderPathsPreserveOrder(currentFolders);
 
     renderBookmarks();
   } catch (error) {
@@ -1012,7 +1149,8 @@ async function loadFolders() {
     .map(normalizeFolderPath)
     .filter(f => f && !normalizedCurrentFoldersSet.has(f));
   // 合并：先保留 currentFolders 的顺序，然后添加新文件夹
-  const folders = [...normalizedCurrentFolders, ...normalizedBookmarkFolders];
+  // 并补齐中间父级路径，保证树节点与排序逻辑一致
+  const folders = expandFolderPathsPreserveOrder([...normalizedCurrentFolders, ...normalizedBookmarkFolders]);
 
   const tree = buildFolderTree(folders);
 
@@ -1287,8 +1425,8 @@ async function handleAddFolder() {
     alert('该文件夹已存在');
     return;
   }
-  currentFolders.push(normalized);
-  currentFolders = [...new Set(currentFolders)];
+  currentFolders = insertFolderPathSmart(currentFolders, normalized);
+  currentFolders = expandFolderPathsPreserveOrder(currentFolders);
   await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
   await syncToCloud();
   await loadFolders();
@@ -1392,8 +1530,8 @@ function openFolderMenu(anchorBtn, folderPath) {
           alert('该文件夹已存在');
           return;
         }
-        currentFolders.push(newPath);
-        currentFolders = [...new Set(currentFolders)]; // 去重但保持顺序（不排序，保持用户设置的顺序）
+        currentFolders = insertFolderPathSmart(currentFolders, newPath);
+        currentFolders = expandFolderPathsPreserveOrder(currentFolders);
         await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
         await syncToCloud();
         await loadFolders();
@@ -1456,13 +1594,75 @@ function openFolderMenu(anchorBtn, folderPath) {
  * 重排文件夹顺序（保持路径不变，仅排序）
  */
 function reorderFolder(source, target) {
-  const srcIdx = currentFolders.indexOf(source);
-  const tgtIdx = currentFolders.indexOf(target);
-  if (srcIdx === -1 || tgtIdx === -1) return;
-  const newOrder = [...currentFolders];
-  newOrder.splice(srcIdx, 1);
-  newOrder.splice(tgtIdx, 0, source);
-  currentFolders = newOrder;
+  // 按“子树块”移动：source 及其所有后代路径一起移动到 target 之前
+  const moveBlockBefore = (list, srcRoot, tgtRoot) => {
+    const src = normalizeFolderPath(srcRoot || '');
+    const tgt = normalizeFolderPath(tgtRoot || '');
+    if (!src || !tgt || src === tgt) return list;
+
+    const srcPrefix = src + '/';
+    const tgtPrefix = tgt + '/';
+
+    const srcBlock = [];
+    const rest = [];
+    for (const p of list) {
+      if (p === src || (typeof p === 'string' && p.startsWith(srcPrefix))) {
+        srcBlock.push(p);
+      } else {
+        rest.push(p);
+      }
+    }
+    if (srcBlock.length === 0) return list;
+
+    // 找到 target 在 rest 中的第一个位置（target 及其后代块仍在 rest）
+    let insertAt = rest.indexOf(tgt);
+    if (insertAt === -1) {
+      // target 根可能不存在（理论上不该发生），退化为追加
+      return [...rest, ...srcBlock];
+    }
+
+    const out = [...rest.slice(0, insertAt), ...srcBlock, ...rest.slice(insertAt)];
+    // 维持父级层级完整
+    return expandFolderPathsPreserveOrder(out);
+  };
+
+  currentFolders = moveBlockBefore(currentFolders, source, target);
+}
+
+/**
+ * 重排书签顺序（自定义排序拖拽）
+ */
+function reorderBookmarksById(sourceId, targetId) {
+  const srcIdx = currentBookmarks.findIndex(b => b.id === sourceId);
+  const tgtIdx = currentBookmarks.findIndex(b => b.id === targetId);
+  if (srcIdx === -1 || tgtIdx === -1) {
+    console.warn('[书签排序] 未找到拖拽目标', { sourceId, targetId, srcIdx, tgtIdx });
+    return false;
+  }
+  const newOrder = [...currentBookmarks];
+  const [item] = newOrder.splice(srcIdx, 1);
+  const adjustedTarget = srcIdx < tgtIdx ? tgtIdx - 1 : tgtIdx;
+  newOrder.splice(adjustedTarget, 0, item);
+  currentBookmarks = newOrder;
+  return true;
+}
+
+function moveBookmarkByDirection(bookmarkId, direction) {
+  const idx = currentBookmarks.findIndex(b => b.id === bookmarkId);
+  if (idx === -1) return false;
+  const targetIdx = idx + direction;
+  if (targetIdx < 0 || targetIdx >= currentBookmarks.length) {
+    showToast && showToast(direction < 0 ? '已经是最上面的书签了' : '已经是最下面的书签了', {
+      title: '无法移动',
+      type: 'info',
+      duration: 1500
+    });
+    return false;
+  }
+  const newOrder = [...currentBookmarks];
+  [newOrder[idx], newOrder[targetIdx]] = [newOrder[targetIdx], newOrder[idx]];
+  currentBookmarks = newOrder;
+  return true;
 }
 
 function moveFolderSameLevel(folderPath, direction) {
@@ -1472,29 +1672,26 @@ function moveFolderSameLevel(folderPath, direction) {
     currentFoldersSnapshot: [...currentFolders]
   });
   const parent = getParentFolder(folderPath);
-  const siblingIndices = [];
-  currentFolders.forEach((f, idx) => {
-    if (getParentFolder(f) === parent) siblingIndices.push(idx);
-  });
-  const currentIdx = currentFolders.indexOf(folderPath);
-  const pos = siblingIndices.indexOf(currentIdx);
+
+  // 只把“同层级的根节点”当作兄弟（currentFolders 中的后代路径 parent 不等于该 parent，会被自动排除）
+  const siblings = currentFolders.filter(f => getParentFolder(f) === parent);
+  const pos = siblings.indexOf(folderPath);
   if (pos === -1) {
     console.warn('[文件夹排序] 未找到同层级位置，无法移动', {
       folderPath,
       parent,
-      currentIdx,
-      siblingIndices
+      siblings
     });
     return false;
   }
   const targetPos = pos + direction;
-  if (targetPos < 0 || targetPos >= siblingIndices.length) {
+  if (targetPos < 0 || targetPos >= siblings.length) {
     console.log('[文件夹排序] 已在边界，无法继续移动', {
       folderPath,
       direction,
       pos,
       targetPos,
-      siblingCount: siblingIndices.length
+      siblingCount: siblings.length
     });
     // 非阻断提示一下，让用户知道为什么“没反应”
     showToast && showToast(direction < 0 ? '已经是最上面的文件夹了' : '已经是最下面的文件夹了', {
@@ -1504,10 +1701,88 @@ function moveFolderSameLevel(folderPath, direction) {
     });
     return false;
   }
-  const swapIdx = siblingIndices[targetPos];
-  const newOrder = [...currentFolders];
-  [newOrder[currentIdx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[currentIdx]];
-  currentFolders = newOrder;
+
+  const targetSibling = siblings[targetPos];
+
+  // 交换两个“子树块”的位置（folderPath 与 targetSibling 及其所有后代）
+  const swapBlocks = (list, aRoot, bRoot) => {
+    const a = normalizeFolderPath(aRoot || '');
+    const b = normalizeFolderPath(bRoot || '');
+    if (!a || !b || a === b) return list;
+    const aPrefix = a + '/';
+    const bPrefix = b + '/';
+
+    const aBlock = [];
+    const bBlock = [];
+    const out = [];
+
+    // 标记当前是否在跳过某个块
+    let i = 0;
+    while (i < list.length) {
+      const p = list[i];
+      const isA = p === a || (typeof p === 'string' && p.startsWith(aPrefix));
+      const isB = p === b || (typeof p === 'string' && p.startsWith(bPrefix));
+
+      if (isA) {
+        // 收集 a 块
+        while (i < list.length) {
+          const q = list[i];
+          if (q === a || (typeof q === 'string' && q.startsWith(aPrefix))) {
+            aBlock.push(q);
+            i++;
+          } else {
+            break;
+          }
+        }
+        continue;
+      }
+
+      if (isB) {
+        // 收集 b 块
+        while (i < list.length) {
+          const q = list[i];
+          if (q === b || (typeof q === 'string' && q.startsWith(bPrefix))) {
+            bBlock.push(q);
+            i++;
+          } else {
+            break;
+          }
+        }
+        continue;
+      }
+
+      out.push(p);
+      i++;
+    }
+
+    // 找到原始 a/b 根出现的先后顺序
+    const aIdx = list.indexOf(a);
+    const bIdx = list.indexOf(b);
+    if (aIdx === -1 || bIdx === -1 || aBlock.length === 0 || bBlock.length === 0) return list;
+
+    // 重新插入：按 out 的顺序扫描原列表，遇到 aIdx/bIdx 时插入对方块
+    const rebuilt = [];
+    for (let j = 0; j < list.length; ) {
+      const p = list[j];
+      if (j === aIdx) {
+        rebuilt.push(...bBlock);
+        // 跳过 aBlock 在原列表中的长度
+        j += aBlock.length;
+        continue;
+      }
+      if (j === bIdx) {
+        rebuilt.push(...aBlock);
+        j += bBlock.length;
+        continue;
+      }
+      // 如果当前位置属于 a 或 b 的后代（已被 j 跳过覆盖），这里不会再命中
+      rebuilt.push(p);
+      j++;
+    }
+    return expandFolderPathsPreserveOrder(rebuilt);
+  };
+
+  currentFolders = swapBlocks(currentFolders, folderPath, targetSibling);
   console.log('[文件夹排序] 同层级移动完成', {
     folderPath,
     direction,
@@ -1588,25 +1863,27 @@ function renderBookmarks() {
     filtered = searchBookmarks(filtered, query);
   }
   
-  // 应用排序
-  filtered.sort((a, b) => {
-    switch (currentSort) {
-      case 'created-desc':
-        return (b.createdAt || 0) - (a.createdAt || 0);
-      case 'created-asc':
-        return (a.createdAt || 0) - (b.createdAt || 0);
-      case 'title-asc':
-        return (a.title || '').localeCompare(b.title || '');
-      case 'title-desc':
-        return (b.title || '').localeCompare(a.title || '');
-      case 'starred':
-        if (a.starred && !b.starred) return -1;
-        if (!a.starred && b.starred) return 1;
-        return (b.createdAt || 0) - (a.createdAt || 0);
-      default:
-        return 0;
-    }
-  });
+  // 应用排序（自定义排序 custom 时保持当前顺序，不再二次排序）
+  if (currentSort !== 'custom') {
+    filtered.sort((a, b) => {
+      switch (currentSort) {
+        case 'created-desc':
+          return (b.createdAt || 0) - (a.createdAt || 0);
+        case 'created-asc':
+          return (a.createdAt || 0) - (b.createdAt || 0);
+        case 'title-asc':
+          return (a.title || '').localeCompare(b.title || '');
+        case 'title-desc':
+          return (b.title || '').localeCompare(a.title || '');
+        case 'starred':
+          if (a.starred && !b.starred) return -1;
+          if (!a.starred && b.starred) return 1;
+          return (b.createdAt || 0) - (a.createdAt || 0);
+        default:
+          return 0;
+      }
+    });
+  }
   
   // 渲染
   if (filtered.length === 0) {
@@ -1616,6 +1893,15 @@ function renderBookmarks() {
     emptyState.style.display = 'none';
     bookmarksGrid.innerHTML = filtered.map(bookmark => renderBookmarkCard(bookmark)).join('');
     
+    // 自定义排序模式下允许拖拽书签卡片
+    bookmarksGrid.querySelectorAll('.bookmark-card').forEach(card => {
+      if (currentSort === 'custom' && !batchMode) {
+        card.setAttribute('draggable', 'true');
+      } else {
+        card.removeAttribute('draggable');
+      }
+    });
+
     // 恢复滚动位置（延迟执行，确保DOM完全渲染）
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -1693,6 +1979,33 @@ function renderBookmarks() {
             deleteBookmark(bookmarkId);
           });
         }
+        // 移动（移动端自定义排序）
+        const moveUpBtn = card.querySelector('.move-up-btn');
+        const moveDownBtn = card.querySelector('.move-down-btn');
+        if (currentSort === 'custom' && !batchMode) {
+          if (moveUpBtn) {
+            moveUpBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const moved = moveBookmarkByDirection(bookmarkId, -1);
+              if (moved) {
+                await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+                scheduleOrderSync();
+                renderBookmarks();
+              }
+            });
+          }
+          if (moveDownBtn) {
+            moveDownBtn.addEventListener('click', async (e) => {
+              e.stopPropagation();
+              const moved = moveBookmarkByDirection(bookmarkId, 1);
+              if (moved) {
+                await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+                scheduleOrderSync();
+                renderBookmarks();
+              }
+            });
+          }
+        }
       }
     });
   }
@@ -1705,6 +2018,7 @@ function renderBookmarkCard(bookmark) {
   const favicon = bookmark.favicon || bookmark.icon || getFaviconUrl(bookmark.url);
   const domain = getDomain(bookmark.url);
   const isSelected = selectedBookmarkIds.has(bookmark.id);
+  const showMobileReorder = currentSort === 'custom' && !batchMode && isMobileView();
   
   return `
     <div class="bookmark-card ${bookmark.starred ? 'starred' : ''} ${isSelected ? 'selected' : ''}" data-id="${bookmark.id}">
@@ -1717,6 +2031,12 @@ function renderBookmarkCard(bookmark) {
         <button class="action-btn edit-btn" title="编辑">✏️</button>
         <button class="action-btn delete-btn" title="删除">🗑️</button>
       </div>
+      ${showMobileReorder ? `
+        <div class="bookmark-reorder-mobile">
+          <button class="action-btn move-up-btn" title="上移">⬆️</button>
+          <button class="action-btn move-down-btn" title="下移">⬇️</button>
+        </div>
+      ` : ''}
       <div class="bookmark-header">
         ${viewOptions.showIcon ? `<img src="${favicon}" alt="" class="bookmark-favicon" data-fallback-icon>` : ''}
         <div class="bookmark-info">
@@ -1919,13 +2239,10 @@ async function handleCreateFolderInForm() {
   
   // 添加到文件夹列表（不排序，保持添加顺序，但去重）
   if (!currentFolders.includes(newPath)) {
-    currentFolders.push(newPath);
-    currentFolders = [...new Set(currentFolders)];
-    
-    // 保存到本地并同步到云端（确保空文件夹不会丢失）
-    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-    await syncToCloud();
-    
+    currentFolders = insertFolderPathSmart(currentFolders, newPath);
+    currentFolders = expandFolderPathsPreserveOrder(currentFolders);
+
+    // 仅更新内存和表单/侧边栏，不立即同步；真正保存和上行在用户点击“保存书签”时一起进行
     // 重新加载文件夹选项并自动选中新创建的文件夹
     loadFolderOptions(newPath);
     
@@ -2324,6 +2641,10 @@ function toggleView() {
   const oldView = currentView;
   currentView = currentView === 'grid' ? 'list' : 'grid';
   console.log('[视图切换] 新视图:', currentView, '旧视图:', oldView);
+  // 视图切换后刷新拖拽/移动状态
+  if (currentSort === 'custom') {
+    renderBookmarks();
+  }
   
   try {
     applyViewMode();
