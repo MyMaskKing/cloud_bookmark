@@ -109,7 +109,12 @@ let tabActivatedCheckTimeout = null;
 
 function normalizeFolderPath(path) {
   if (!path) return '';
-  return path.trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
+  // 去除零宽字符，做 Unicode 归一化（避免“看起来一样但字符串不同”导致去重/排序异常）
+  let s = String(path).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  try {
+    if (typeof s.normalize === 'function') s = s.normalize('NFKC');
+  } catch (_) {}
+  return s.replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
 }
 
 function normalizeData(bookmarks = [], folders = []) {

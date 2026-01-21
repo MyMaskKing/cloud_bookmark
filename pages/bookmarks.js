@@ -67,10 +67,12 @@ const defaultViewOptions = { ...defaultSettings.viewOptions };
 
 function normalizeFolderPath(path) {
   if (!path) return '';
-  return path
-    .trim()
-    .replace(/\/+/g, '/')
-    .replace(/^\/|\/$/g, '');
+  // 去除零宽字符，做 Unicode 归一化（避免“看起来一样但字符串不同”导致去重/排序异常）
+  let s = String(path).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  try {
+    if (typeof s.normalize === 'function') s = s.normalize('NFKC');
+  } catch (_) {}
+  return s.replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
 }
 
 // 将形如 a/b/c 的路径补齐中间父级：a、a/b、a/b/c，并保持“首次出现顺序”
@@ -1594,39 +1596,65 @@ function openFolderMenu(anchorBtn, folderPath) {
  * 重排文件夹顺序（保持路径不变，仅排序）
  */
 function reorderFolder(source, target) {
-  // 按“子树块”移动：source 及其所有后代路径一起移动到 target 之前
-  const moveBlockBefore = (list, srcRoot, tgtRoot) => {
-    const src = normalizeFolderPath(srcRoot || '');
-    const tgt = normalizeFolderPath(tgtRoot || '');
-    if (!src || !tgt || src === tgt) return list;
+  currentFolders = moveFolderBlock(currentFolders, source, { before: target });
+}
 
-    const srcPrefix = src + '/';
-    const tgtPrefix = tgt + '/';
+// 以“子树块”为单位移动文件夹，保证移动父文件夹时子文件夹一并移动，并且不会误伤其它块
+function moveFolderBlock(list, srcRoot, { before = null, after = null } = {}) {
+  const src = normalizeFolderPath(srcRoot || '');
+  const refBefore = normalizeFolderPath(before || '');
+  const refAfter = normalizeFolderPath(after || '');
+  if (!src) return Array.isArray(list) ? list : [];
+  if (refBefore && refAfter) return Array.isArray(list) ? list : [];
+  const ref = refBefore || refAfter;
+  if (ref && src === ref) return Array.isArray(list) ? list : [];
 
-    const srcBlock = [];
-    const rest = [];
-    for (const p of list) {
-      if (p === src || (typeof p === 'string' && p.startsWith(srcPrefix))) {
-        srcBlock.push(p);
-      } else {
-        rest.push(p);
-      }
+  const srcPrefix = src + '/';
+  const srcBlock = [];
+  const rest = [];
+  (Array.isArray(list) ? list : []).forEach((p) => {
+    if (p === src || (typeof p === 'string' && p.startsWith(srcPrefix))) {
+      srcBlock.push(p);
+    } else {
+      rest.push(p);
     }
-    if (srcBlock.length === 0) return list;
+  });
+  if (srcBlock.length === 0) return Array.isArray(list) ? list : [];
 
-    // 找到 target 在 rest 中的第一个位置（target 及其后代块仍在 rest）
-    let insertAt = rest.indexOf(tgt);
-    if (insertAt === -1) {
-      // target 根可能不存在（理论上不该发生），退化为追加
-      return [...rest, ...srcBlock];
+  // 没有参照：追加
+  if (!ref) {
+    return expandFolderPathsPreserveOrder([...rest, ...srcBlock]);
+  }
+
+  const insertAt = rest.indexOf(ref);
+  if (insertAt === -1) {
+    return expandFolderPathsPreserveOrder([...rest, ...srcBlock]);
+  }
+
+  if (refBefore) {
+    return expandFolderPathsPreserveOrder([
+      ...rest.slice(0, insertAt),
+      ...srcBlock,
+      ...rest.slice(insertAt)
+    ]);
+  }
+
+  // after：插到 ref 的“子树块”之后（即 ref 及其后代之后）
+  const refPrefix = ref + '/';
+  let afterIdx = insertAt;
+  for (let i = insertAt; i < rest.length; i++) {
+    const p = rest[i];
+    if (p === ref || (typeof p === 'string' && p.startsWith(refPrefix))) {
+      afterIdx = i;
+    } else {
+      break;
     }
-
-    const out = [...rest.slice(0, insertAt), ...srcBlock, ...rest.slice(insertAt)];
-    // 维持父级层级完整
-    return expandFolderPathsPreserveOrder(out);
-  };
-
-  currentFolders = moveBlockBefore(currentFolders, source, target);
+  }
+  return expandFolderPathsPreserveOrder([
+    ...rest.slice(0, afterIdx + 1),
+    ...srcBlock,
+    ...rest.slice(afterIdx + 1)
+  ]);
 }
 
 /**
@@ -1703,86 +1731,12 @@ function moveFolderSameLevel(folderPath, direction) {
   }
 
   const targetSibling = siblings[targetPos];
-
-  // 交换两个“子树块”的位置（folderPath 与 targetSibling 及其所有后代）
-  const swapBlocks = (list, aRoot, bRoot) => {
-    const a = normalizeFolderPath(aRoot || '');
-    const b = normalizeFolderPath(bRoot || '');
-    if (!a || !b || a === b) return list;
-    const aPrefix = a + '/';
-    const bPrefix = b + '/';
-
-    const aBlock = [];
-    const bBlock = [];
-    const out = [];
-
-    // 标记当前是否在跳过某个块
-    let i = 0;
-    while (i < list.length) {
-      const p = list[i];
-      const isA = p === a || (typeof p === 'string' && p.startsWith(aPrefix));
-      const isB = p === b || (typeof p === 'string' && p.startsWith(bPrefix));
-
-      if (isA) {
-        // 收集 a 块
-        while (i < list.length) {
-          const q = list[i];
-          if (q === a || (typeof q === 'string' && q.startsWith(aPrefix))) {
-            aBlock.push(q);
-            i++;
-          } else {
-            break;
-          }
-        }
-        continue;
-      }
-
-      if (isB) {
-        // 收集 b 块
-        while (i < list.length) {
-          const q = list[i];
-          if (q === b || (typeof q === 'string' && q.startsWith(bPrefix))) {
-            bBlock.push(q);
-            i++;
-          } else {
-            break;
-          }
-        }
-        continue;
-      }
-
-      out.push(p);
-      i++;
-    }
-
-    // 找到原始 a/b 根出现的先后顺序
-    const aIdx = list.indexOf(a);
-    const bIdx = list.indexOf(b);
-    if (aIdx === -1 || bIdx === -1 || aBlock.length === 0 || bBlock.length === 0) return list;
-
-    // 重新插入：按 out 的顺序扫描原列表，遇到 aIdx/bIdx 时插入对方块
-    const rebuilt = [];
-    for (let j = 0; j < list.length; ) {
-      const p = list[j];
-      if (j === aIdx) {
-        rebuilt.push(...bBlock);
-        // 跳过 aBlock 在原列表中的长度
-        j += aBlock.length;
-        continue;
-      }
-      if (j === bIdx) {
-        rebuilt.push(...aBlock);
-        j += bBlock.length;
-        continue;
-      }
-      // 如果当前位置属于 a 或 b 的后代（已被 j 跳过覆盖），这里不会再命中
-      rebuilt.push(p);
-      j++;
-    }
-    return expandFolderPathsPreserveOrder(rebuilt);
-  };
-
-  currentFolders = swapBlocks(currentFolders, folderPath, targetSibling);
+  // 用严格的块移动代替“块交换”，避免频繁操作时出现误差把无关块带跑
+  if (direction < 0) {
+    currentFolders = moveFolderBlock(currentFolders, folderPath, { before: targetSibling });
+  } else {
+    currentFolders = moveFolderBlock(currentFolders, folderPath, { after: targetSibling });
+  }
   console.log('[文件夹排序] 同层级移动完成', {
     folderPath,
     direction,
