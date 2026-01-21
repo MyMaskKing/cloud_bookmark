@@ -117,8 +117,15 @@ function normalizeData(bookmarks = [], folders = []) {
     if (!b.folder) return b;
     return { ...b, folder: normalizeFolderPath(b.folder) };
   });
-  // 同步时不过度清理空文件夹，保留传入的非空文件夹
-  const normalizedFolders = [...new Set(folders.map(normalizeFolderPath).filter(Boolean))];
+  // 保留传入顺序的去重：出现过的第一个顺序保留，后面重复跳过
+  const seen = new Set();
+  const normalizedFolders = [];
+  (folders || []).forEach(f => {
+    const n = normalizeFolderPath(f);
+    if (!n || seen.has(n)) return;
+    seen.add(n);
+    normalizedFolders.push(n);
+  });
   return { bookmarks: normalizedBookmarks, folders: normalizedFolders };
 }
 
@@ -1771,15 +1778,28 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
     
     // 只同步指定场景的书签到对应的文件
     const sceneBookmarks = cleaned.bookmarks.filter(b => b.scene === targetSceneId);
+    const deviceInfo = await storage.getDeviceInfo();
+    const meta = {
+      updatedByDeviceId: (deviceInfo && deviceInfo.id) || (currentDevice && currentDevice.id) || null,
+      updatedByDeviceName: (deviceInfo && deviceInfo.name) || (currentDevice && currentDevice.name) || '',
+      updatedAt: Date.now()
+    };
     
     // 合并文件夹：从书签中提取的文件夹 + 传入的文件夹列表（确保空文件夹也能同步）
-    const bookmarkFolders = [...new Set(sceneBookmarks.map(b => b.folder).filter(Boolean))];
-    const passedFolders = cleaned.folders || [];
-    // 合并并去重，确保空文件夹也能同步到云端
-    const sceneFolders = [...new Set([...bookmarkFolders, ...passedFolders])];
+  const bookmarkFolders = [...new Set(sceneBookmarks.map(b => b.folder).filter(Boolean))];
+  const passedFolders = cleaned.folders || [];
+  // 关键点：优先保留前端传入的文件夹顺序（即 currentFolders 的顺序），
+  // 然后再补上只在书签中出现但不在传入列表中的文件夹，避免顺序被 bookmark 遍历顺序覆盖。
+  const sceneFolderSet = new Set(passedFolders);
+  bookmarkFolders.forEach(f => {
+    if (f && !sceneFolderSet.has(f)) {
+      sceneFolderSet.add(f);
+    }
+  });
+  const sceneFolders = [...sceneFolderSet];
     
     await webdav.writeBookmarks(
-      { bookmarks: sceneBookmarks, folders: sceneFolders },
+    { bookmarks: sceneBookmarks, folders: sceneFolders, _meta: meta },
       targetSceneId
     );
 

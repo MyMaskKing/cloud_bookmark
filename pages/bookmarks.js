@@ -147,6 +147,19 @@ let batchMode = false;
 let selectedBookmarkIds = new Set();
 let pageSource = null; // 记录页面来源（popup/floating-ball等）
 let autoCloseTimer = null; // 自动关闭定时器
+const ORDER_SYNC_DELAY = 1000; // 文件夹/排序调整的上行防抖（毫秒），1秒内频繁操作只合并一次上行
+const scheduleOrderSync = debounce(() => {
+  try {
+    console.log('[排序同步] 防抖触发，开始同步当前场景排序到云端', {
+      sceneId: currentSceneId,
+      bookmarkCount: currentBookmarks.length,
+      folderCount: currentFolders.length
+    });
+    syncToCloud().catch((e) => console.error('[排序同步] 同步失败', e));
+  } catch (e) {
+    console.error('[排序同步] 执行异常', e);
+  }
+}, ORDER_SYNC_DELAY);
 
 // DOM元素
 const addBookmarkBtn = document.getElementById('addBookmarkBtn');
@@ -715,7 +728,7 @@ function setupEventListeners() {
       if (!source || !target || source === target) return;
       reorderFolder(source, target);
       await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-      await syncToCloud();
+      scheduleOrderSync();
       await loadFolders();
       await loadTags();
     });
@@ -1422,7 +1435,7 @@ function openFolderMenu(anchorBtn, folderPath) {
         const moved = moveFolderSameLevel(folderPath, dir);
         if (!moved) return;
         await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-        await syncToCloud();
+        scheduleOrderSync();
         await loadFolders();
         await loadTags();
       } else if (action === 'delete') {
@@ -1453,6 +1466,11 @@ function reorderFolder(source, target) {
 }
 
 function moveFolderSameLevel(folderPath, direction) {
+  console.log('[文件夹排序] 请求同层级移动', {
+    folderPath,
+    direction,
+    currentFoldersSnapshot: [...currentFolders]
+  });
   const parent = getParentFolder(folderPath);
   const siblingIndices = [];
   currentFolders.forEach((f, idx) => {
@@ -1460,13 +1478,41 @@ function moveFolderSameLevel(folderPath, direction) {
   });
   const currentIdx = currentFolders.indexOf(folderPath);
   const pos = siblingIndices.indexOf(currentIdx);
-  if (pos === -1) return false;
+  if (pos === -1) {
+    console.warn('[文件夹排序] 未找到同层级位置，无法移动', {
+      folderPath,
+      parent,
+      currentIdx,
+      siblingIndices
+    });
+    return false;
+  }
   const targetPos = pos + direction;
-  if (targetPos < 0 || targetPos >= siblingIndices.length) return false;
+  if (targetPos < 0 || targetPos >= siblingIndices.length) {
+    console.log('[文件夹排序] 已在边界，无法继续移动', {
+      folderPath,
+      direction,
+      pos,
+      targetPos,
+      siblingCount: siblingIndices.length
+    });
+    // 非阻断提示一下，让用户知道为什么“没反应”
+    showToast && showToast(direction < 0 ? '已经是最上面的文件夹了' : '已经是最下面的文件夹了', {
+      title: '无法移动',
+      type: 'info',
+      duration: 1500
+    });
+    return false;
+  }
   const swapIdx = siblingIndices[targetPos];
   const newOrder = [...currentFolders];
   [newOrder[currentIdx], newOrder[swapIdx]] = [newOrder[swapIdx], newOrder[currentIdx]];
   currentFolders = newOrder;
+  console.log('[文件夹排序] 同层级移动完成', {
+    folderPath,
+    direction,
+    newOrder: [...currentFolders]
+  });
   return true;
 }
 
