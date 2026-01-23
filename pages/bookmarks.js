@@ -95,7 +95,7 @@ function expandFolderPathsPreserveOrder(paths) {
   return out;
 }
 
-// 将新文件夹插入到“同父级分组”的末尾，避免新增子文件夹总是跑到 folders 最后
+// 将新文件夹插入到"同父级分组"的末尾，避免新增子文件夹总是跑到 folders 最后
 function insertFolderPathSmart(folders, newPath) {
   const n = normalizeFolderPath(newPath || '');
   if (!n) return folders || [];
@@ -106,7 +106,7 @@ function insertFolderPathSmart(folders, newPath) {
   // 找到父级在数组中的位置（可能不存在）
   const parentIdx = parent ? list.indexOf(parent) : -1;
 
-  // 规则：插入到“父级的最后一个后代”之后（含父级本身）
+  // 规则：插入到"父级的最后一个后代"之后（含父级本身）
   // 即：找到最后一个满足 f === parent 或 f 以 `${parent}/` 开头的元素位置
   let insertAt = -1;
   if (parent) {
@@ -118,7 +118,7 @@ function insertFolderPathSmart(folders, newPath) {
     }
     if (insertAt === -1 && parentIdx !== -1) insertAt = parentIdx;
   } else {
-    // 根目录：插入到最后一个根级（不含“a/b”）之后
+    // 根目录：插入到最后一个根级（不含"a/b"）之后
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
       if (typeof f === 'string' && f.indexOf('/') === -1) {
@@ -133,6 +133,95 @@ function insertFolderPathSmart(folders, newPath) {
     list.splice(insertAt + 1, 0, n);
   }
   return list;
+}
+
+// 将新书签插入到"同文件夹分组"的末尾，避免新增书签总是跑到所有书签最后
+function insertBookmarkSmart(bookmarks, newBookmark) {
+  const list = Array.isArray(bookmarks) ? [...bookmarks] : [];
+  const bookmarkFolder = normalizeFolderPath(newBookmark.folder || '');
+  
+  // 规则：插入到"该文件夹的最后一个书签"之后
+  // 即：找到最后一个满足 b.folder === bookmarkFolder 的书签位置
+  let insertAt = -1;
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    const bFolder = normalizeFolderPath(b.folder || '');
+    if (bFolder === bookmarkFolder) {
+      insertAt = i;
+    }
+  }
+
+  if (insertAt === -1) {
+    // 如果该文件夹没有书签，需要找到该文件夹在文件夹列表中的位置
+    // 然后找到下一个文件夹的第一个书签之前插入
+    const folderIndex = currentFolders.indexOf(bookmarkFolder);
+    if (folderIndex !== -1) {
+      // 找到该文件夹之后的所有文件夹（按顺序）
+      const afterFolders = [];
+      for (let i = folderIndex + 1; i < currentFolders.length; i++) {
+        afterFolders.push(normalizeFolderPath(currentFolders[i]));
+      }
+      // 找到第一个属于这些文件夹的书签位置，插入到该位置之前
+      for (let i = 0; i < list.length; i++) {
+        const b = list[i];
+        const bFolder = normalizeFolderPath(b.folder || '');
+        if (afterFolders.includes(bFolder)) {
+          insertAt = i - 1;
+          break;
+        }
+      }
+    }
+  }
+
+  if (insertAt === -1) {
+    list.push(newBookmark);
+  } else {
+    list.splice(insertAt + 1, 0, newBookmark);
+  }
+  return list;
+}
+
+/**
+ * 按文件夹分组排序书签，保持文件夹顺序，同一文件夹内的书签保持原有顺序
+ * @param {Array} bookmarks - 书签数组
+ * @returns {Array} 排序后的书签数组
+ */
+function sortBookmarksByFolder(bookmarks) {
+  const list = Array.isArray(bookmarks) ? [...bookmarks] : [];
+  
+  // 按文件夹分组，保持每个文件夹内书签的原有顺序
+  const folderGroups = {};
+  const folderOrder = [];
+  
+  list.forEach(bookmark => {
+    const folder = normalizeFolderPath(bookmark.folder || '');
+    if (!folderGroups[folder]) {
+      folderGroups[folder] = [];
+      folderOrder.push(folder);
+    }
+    folderGroups[folder].push(bookmark);
+  });
+  
+  // 按照文件夹列表的顺序重新排列
+  const sortedBookmarks = [];
+  
+  // 先按文件夹列表的顺序添加
+  currentFolders.forEach(folder => {
+    const normalizedFolder = normalizeFolderPath(folder);
+    if (folderGroups[normalizedFolder]) {
+      sortedBookmarks.push(...folderGroups[normalizedFolder]);
+      delete folderGroups[normalizedFolder];
+    }
+  });
+  
+  // 添加不在文件夹列表中的书签（按原有顺序）
+  folderOrder.forEach(folder => {
+    if (folderGroups[folder]) {
+      sortedBookmarks.push(...folderGroups[folder]);
+    }
+  });
+  
+  return sortedBookmarks;
 }
 
 // 工具函数（从utils.js导入的函数需要在这里定义或确保全局可用）
@@ -703,6 +792,8 @@ function setupEventListeners() {
       }
       reorderBookmarksById(draggingBookmarkId, targetId);
       draggingBookmarkId = null;
+      // 自动按文件夹分组排序，保持文件夹顺序
+      currentBookmarks = sortBookmarksByFolder(currentBookmarks);
       await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
       scheduleOrderSync();
       renderBookmarks(); // 重新渲染以应用新顺序
@@ -1690,6 +1781,8 @@ function moveBookmarkByDirection(bookmarkId, direction) {
   const newOrder = [...currentBookmarks];
   [newOrder[idx], newOrder[targetIdx]] = [newOrder[targetIdx], newOrder[idx]];
   currentBookmarks = newOrder;
+  // 自动按文件夹分组排序，保持文件夹顺序
+  currentBookmarks = sortBookmarksByFolder(currentBookmarks);
   return true;
 }
 
@@ -1819,7 +1912,28 @@ function renderBookmarks() {
   
   // 应用排序（自定义排序 custom 时保持当前顺序，不再二次排序）
   if (currentSort !== 'custom') {
+    // 先按文件夹分组排序，然后在每个文件夹内排序
     filtered.sort((a, b) => {
+      const aFolder = normalizeFolderPath(a.folder || '');
+      const bFolder = normalizeFolderPath(b.folder || '');
+      
+      // 如果文件夹不同，按文件夹在文件夹列表中的顺序排序
+      if (aFolder !== bFolder) {
+        const aFolderIndex = currentFolders.indexOf(aFolder);
+        const bFolderIndex = currentFolders.indexOf(bFolder);
+        
+        // 如果文件夹不在列表中，放到最后
+        if (aFolderIndex === -1 && bFolderIndex === -1) {
+          // 都不在列表中，按文件夹路径字符串排序
+          return aFolder.localeCompare(bFolder);
+        }
+        if (aFolderIndex === -1) return 1;
+        if (bFolderIndex === -1) return -1;
+        
+        return aFolderIndex - bFolderIndex;
+      }
+      
+      // 文件夹相同，按选择的排序方式排序
       switch (currentSort) {
         case 'created-desc':
           return (b.createdAt || 0) - (a.createdAt || 0);
@@ -2493,7 +2607,12 @@ async function handleSubmit(e) {
       // 新增
       bookmark.id = storage.generateId();
       bookmark.createdAt = Date.now();
-      currentBookmarks.push(bookmark);
+      currentBookmarks = insertBookmarkSmart(currentBookmarks, bookmark);
+    }
+    
+    // 如果是自定义排序模式，自动按文件夹分组排序
+    if (currentSort === 'custom') {
+      currentBookmarks = sortBookmarksByFolder(currentBookmarks);
     }
     
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);

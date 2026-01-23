@@ -135,6 +135,58 @@ function normalizeData(bookmarks = [], folders = []) {
 }
 
 /**
+ * 将新书签插入到"同文件夹分组"的末尾，避免新增书签总是跑到所有书签最后
+ * @param {Array} bookmarks - 现有书签数组
+ * @param {Object} newBookmark - 新书签对象
+ * @param {Array} folders - 文件夹列表（用于确定插入位置）
+ * @returns {Array} 插入后的书签数组
+ */
+function insertBookmarkSmart(bookmarks, newBookmark, folders = []) {
+  const list = Array.isArray(bookmarks) ? [...bookmarks] : [];
+  const bookmarkFolder = normalizeFolderPath(newBookmark.folder || '');
+  
+  // 规则：插入到"该文件夹的最后一个书签"之后
+  // 即：找到最后一个满足 b.folder === bookmarkFolder 的书签位置
+  let insertAt = -1;
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    const bFolder = normalizeFolderPath(b.folder || '');
+    if (bFolder === bookmarkFolder) {
+      insertAt = i;
+    }
+  }
+
+  if (insertAt === -1) {
+    // 如果该文件夹没有书签，需要找到该文件夹在文件夹列表中的位置
+    // 然后找到下一个文件夹的第一个书签之前插入
+    const folderIndex = folders.indexOf(bookmarkFolder);
+    if (folderIndex !== -1) {
+      // 找到该文件夹之后的所有文件夹（按顺序）
+      const afterFolders = [];
+      for (let i = folderIndex + 1; i < folders.length; i++) {
+        afterFolders.push(normalizeFolderPath(folders[i]));
+      }
+      // 找到第一个属于这些文件夹的书签位置，插入到该位置之前
+      for (let i = 0; i < list.length; i++) {
+        const b = list[i];
+        const bFolder = normalizeFolderPath(b.folder || '');
+        if (afterFolders.includes(bFolder)) {
+          insertAt = i - 1;
+          break;
+        }
+      }
+    }
+  }
+
+  if (insertAt === -1) {
+    list.push(newBookmark);
+  } else {
+    list.splice(insertAt + 1, 0, newBookmark);
+  }
+  return list;
+}
+
+/**
  * 同步设置到云端（非敏感）
  * @param {Array} devicesOverride - 可选的设备列表，如果提供则使用此列表而不是从存储读取
  */
@@ -1080,7 +1132,10 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
           favicon: ''
         };
 
-        await storage.saveBookmarks([...existing, newBookmark], data.folders || [], sceneId);
+        // 使用智能插入，将新书签插入到对应文件夹的最后一个书签之后
+        const folders = data.folders || [];
+        const updatedBookmarks = insertBookmarkSmart(existing, newBookmark, folders);
+        await storage.saveBookmarks(updatedBookmarks, folders, sceneId);
         sendResponse({ success: true, bookmarkId: newBookmark.id });
       } catch (error) {
         console.error('[后台] quickAddBookmark 失败:', error);
