@@ -288,7 +288,7 @@ function getDomain(url) {
 let currentBookmarks = [];
 let currentFolders = [];
 let currentFilter = 'all';
-let currentSort = 'created-desc';
+let currentSort = 'custom'; // 默认使用自定义排序，保持书签的原始顺序（按文件夹顺序）
 let editingBookmarkId = null;
 let currentSceneId = null;
 // 文件夹展开状态（Set，存储展开的文件夹路径）
@@ -541,6 +541,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   await updateSyncErrorBanner();
   initSidebarResizer();
   setupEventListeners();
+  // 设置排序下拉框的默认值
+  if (sortSelect) {
+    sortSelect.value = currentSort;
+  }
   checkUrlParams();
 
   // 页面隐藏/关闭时兜底执行一次排序同步，避免防抖未触发导致顺序丢失
@@ -1087,8 +1091,14 @@ async function loadBookmarks() {
       //       2) 在当前场景的书签中使用的文件夹
       return storedFoldersSet.has(f) || currentSceneBookmarkFoldersSet.has(f);
     });
-    // 关键：补齐中间父级路径，确保树上可见但未显式存储的节点也参与排序（例如 “2.学习&娱乐”）
+    // 关键：补齐中间父级路径，确保树上可见但未显式存储的节点也参与排序（例如 "2.学习&娱乐"）
     currentFolders = expandFolderPathsPreserveOrder(currentFolders);
+    
+    // 注意：不再在这里排序，因为：
+    // 1. 保存时已经确保数据按文件夹顺序排列（添加、编辑、删除、批量操作都会排序）
+    // 2. 从云端同步来的数据在后台已经按文件夹顺序排列（如果后台实现了排序）
+    // 3. 如果数据已经是按文件夹顺序的，这里排序是多余的
+    // 4. 如果数据不是按文件夹顺序的（比如从旧版本升级），在首次操作时会自动排序
 
     renderBookmarks();
   } catch (error) {
@@ -1453,6 +1463,11 @@ async function renameFolderPath(oldPath, newPath) {
   });
   // 合并：更新后的文件夹列表 + 从书签中提取的文件夹（确保不丢失）
   currentFolders = [...new Set([...currentFolders, ...bookmarkFolders])];
+  
+  // 如果是自定义排序模式，确保移动/重命名后仍按文件夹顺序排列
+  if (currentSort === 'custom') {
+    currentBookmarks = sortBookmarksByFolder(currentBookmarks);
+  }
   
   await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
   await syncToCloud();
@@ -2691,6 +2706,11 @@ async function deleteBookmark(bookmarkId) {
   
   currentBookmarks = currentBookmarks.filter(b => b.id !== bookmarkId);
   
+  // 如果是自定义排序模式，确保删除后仍按文件夹顺序排列
+  if (currentSort === 'custom') {
+    currentBookmarks = sortBookmarksByFolder(currentBookmarks);
+  }
+  
   try {
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     await syncToCloud();
@@ -3122,6 +3142,11 @@ async function batchMoveBookmarks() {
     const newFolders = bookmarkFolders.filter(f => !currentFolders.includes(f));
     currentFolders = [...existingFolders, ...newFolders];
     
+    // 如果是自定义排序模式，确保移动后仍按文件夹顺序排列
+    if (currentSort === 'custom') {
+      currentBookmarks = sortBookmarksByFolder(currentBookmarks);
+    }
+    
     // 保存到本地
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     
@@ -3167,6 +3192,11 @@ async function batchDeleteBookmarks() {
     const bookmarkFoldersSet = new Set(bookmarkFolders);
     // 保留 currentFolders 中仍然有书签使用的文件夹（保持顺序）
     currentFolders = currentFolders.filter(f => bookmarkFoldersSet.has(f));
+    
+    // 如果是自定义排序模式，确保删除后仍按文件夹顺序排列
+    if (currentSort === 'custom') {
+      currentBookmarks = sortBookmarksByFolder(currentBookmarks);
+    }
     
     // 保存到本地
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
