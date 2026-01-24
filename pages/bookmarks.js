@@ -955,8 +955,11 @@ function setupEventListeners() {
       const target = row.dataset.folder;
       if (!source || !target || source === target) return;
       reorderFolder(source, target);
+      // 文件夹排序后，书签也要跟着排序（按新的文件夹顺序）
+      currentBookmarks = sortBookmarksByFolder(currentBookmarks);
       await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
       scheduleOrderSync();
+      await loadBookmarks(); // 重新加载书签以显示新顺序
       await loadFolders();
       await loadTags();
     });
@@ -1665,8 +1668,11 @@ function openFolderMenu(anchorBtn, folderPath) {
         const dir = action === 'move-up' ? -1 : 1;
         const moved = moveFolderSameLevel(folderPath, dir);
         if (!moved) return;
+        // 文件夹排序后，书签也要跟着排序（按新的文件夹顺序）
+        currentBookmarks = sortBookmarksByFolder(currentBookmarks);
         await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
         scheduleOrderSync();
+        await loadBookmarks(); // 重新加载书签以显示新顺序
         await loadFolders();
         await loadTags();
       } else if (action === 'delete') {
