@@ -5,9 +5,9 @@
 const storage = new StorageManager();
 
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
-const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function(message, callback) {
+const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function (message, callback) {
   const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
-  
+
   if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
     // Firefox: 使用 Promise
     return runtime.sendMessage(message).then(response => {
@@ -21,12 +21,12 @@ const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : fun
         String(error).includes('Receiving end does not exist') ||
         String(error).includes('Could not establish connection')
       );
-      
+
       if (isReceivingEndError) {
         if (callback) callback(null);
         return null;
       }
-      
+
       if (callback) callback(null);
       throw error;
     });
@@ -122,7 +122,7 @@ document.addEventListener('click', (e) => {
       // 清除按钮有自己的事件处理器，这里不处理，直接返回
       return;
     }
-    
+
     // 先检查是否点击了更新按钮
     const updateBtn = e.target.closest('.bookmark-update-btn');
     if (updateBtn) {
@@ -134,7 +134,7 @@ document.addEventListener('click', (e) => {
       }
       return;
     }
-    
+
     // 先检查是否点击了删除按钮
     const deleteBtn = e.target.closest('.bookmark-delete-btn');
     if (deleteBtn) {
@@ -146,7 +146,7 @@ document.addEventListener('click', (e) => {
       }
       return;
     }
-    
+
     // 先检查是否点击了文件夹或其他元素，避免误触发
     if (e.target.closest('.folder-row')) {
       return; // 文件夹点击由专门的处理器处理
@@ -154,12 +154,12 @@ document.addEventListener('click', (e) => {
     if (e.target.closest('.scene-menu-item')) {
       return; // 场景菜单项点击由专门的处理器处理
     }
-    
+
     // 检查是否点击了按钮容器，如果是则忽略（按钮点击已在上面的处理中处理）
     if (e.target.closest('.bookmark-item-actions')) {
       return;
     }
-    
+
     const item = e.target.closest('.bookmark-item');
     if (!item) {
       // 调试日志：记录点击了什么
@@ -240,16 +240,16 @@ window.addEventListener('unhandledrejection', (event) => {
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('[弹窗] DOMContentLoaded 触发');
-  
+
   // 检测是否为悬浮球打开的弹窗，如果是则调整高度
   const urlParams = new URLSearchParams(window.location.search);
   const source = urlParams.get('source');
   isFloatingBallPopup = source === 'floating-ball';
-  
+
   // 检测是否为移动设备
-  const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
-                         (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
-  
+  const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+    (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
+
   // PC端和移动端都需要根据自定义高度调整容器高度
   const popupContainer = document.querySelector('.popup-container');
   if (popupContainer) {
@@ -257,7 +257,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     const settings = await storage.getSettings();
     const floatingBallPopup = settings?.floatingBallPopup || {};
     const iconPopup = settings?.iconPopup || {};
-    
+
     if (!isMobileDevice) {
       // PC端：根据弹窗类型设置容器高度
       if (isFloatingBallPopup) {
@@ -293,12 +293,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       }
     }
   }
-  
+
   await loadPopupSettings();
   await loadFolderState();
   await loadCurrentScene();
   await loadScenes();
-  
+
   // 确保 DOM 完全准备好后再加载书签
   requestAnimationFrame(async () => {
     console.log('[弹窗] requestAnimationFrame 回调执行，开始加载书签');
@@ -308,7 +308,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await restoreSearchContent();
     console.log('[弹窗] 书签加载完成');
   });
-  
+
   // 监听消息更新
   runtimeAPI.onMessage.addListener(async (request) => {
     if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
@@ -328,36 +328,57 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     }
   });
-  
-  // 监听滚动事件，保存滚动位置（监听实际的滚动容器）
-  // 延迟绑定，确保元素已存在
+
+
+  // 监听滚动事件，保存滚动位置和处理"回到顶部"按钮
+  const backToTopBtn = document.getElementById('backToTopBtn');
   setTimeout(() => {
     const popupContentEl = document.querySelector('.popup-content');
     const scrollContainer = popupContentEl || bookmarkList;
     if (scrollContainer) {
-      console.log('[滚动位置] 绑定滚动事件监听器，容器:', scrollContainer.className, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
-      
-      // 直接绑定滚动事件，不使用 debounce（因为 debounce 可能有问题）
+      console.log('[滚动位置] 绑定滚动事件监听器，容器:', scrollContainer.className);
+
       scrollContainer.addEventListener('scroll', () => {
         const currentScrollTop = scrollContainer.scrollTop;
-        console.log('[滚动位置] 滚动事件触发，当前 scrollTop:', currentScrollTop, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
-        // 使用 setTimeout 来延迟保存，避免频繁保存
+
+        // 处理"回到顶部"按钮显示/隐藏
+        if (backToTopBtn) {
+          if (currentScrollTop > 300) {
+            backToTopBtn.style.display = 'flex';
+          } else {
+            backToTopBtn.style.display = 'none';
+          }
+        }
+
+        // 延迟保存滚动位置
         clearTimeout(scrollContainer._scrollSaveTimer);
         scrollContainer._scrollSaveTimer = setTimeout(() => {
           saveScrollPosition();
         }, 300);
       });
-    } else {
-      console.warn('[滚动位置] 未找到滚动容器，无法绑定事件');
     }
   }, 100);
-  
+
+  // "回到顶部"按钮点击事件
+  if (backToTopBtn) {
+    backToTopBtn.addEventListener('click', () => {
+      const popupContentEl = document.querySelector('.popup-content');
+      const scrollContainer = popupContentEl || bookmarkList;
+      if (scrollContainer) {
+        scrollContainer.scrollTo({
+          top: 0,
+          behavior: 'smooth'
+        });
+      }
+    });
+  }
+
   // 在页面卸载前保存滚动位置和搜索内容（确保不会丢失）
   window.addEventListener('beforeunload', () => {
     saveScrollPosition();
     saveSearchContent();
   });
-  
+
   // 在页面隐藏时也保存（移动端可能不会触发 beforeunload）
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -365,14 +386,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       saveSearchContent();
     }
   });
-  
+
   // 点击外部关闭场景菜单
   document.addEventListener('click', (e) => {
     if (!sceneSwitchBtn.contains(e.target) && !sceneMenu.contains(e.target)) {
       sceneMenu.style.display = 'none';
     }
   });
-  
+
   // ESC键关闭弹窗（仅在PC上启用，手机没有物理键盘）
   // 使用上面已声明的 isMobileDevice 变量
   if (!isMobileDevice) {
@@ -414,7 +435,7 @@ async function loadScenes() {
   try {
     const scenes = await storage.getScenes();
     // 使用全局变量currentSceneId，不要重新获取
-    
+
     sceneMenu.innerHTML = scenes.map(scene => {
       const isCurrent = scene.id === currentSceneId;
       return `
@@ -423,7 +444,7 @@ async function loadScenes() {
         </div>
       `;
     }).join('');
-    
+
     // 绑定点击事件
     sceneMenu.querySelectorAll('.scene-menu-item').forEach(item => {
       item.addEventListener('click', async () => {
@@ -432,20 +453,20 @@ async function loadScenes() {
         if (sceneId !== currentId) {
           await storage.saveCurrentScene(sceneId);
           currentSceneId = sceneId; // 立即更新本地状态，避免后续逻辑读取旧值
-          
+
           // 检查 WebDAV 配置是否有效
           const config = await storage.getConfig();
           const hasValidConfig = config && config.serverUrl;
           // 检查该场景是否已同步过
           const isSceneSynced = await storage.isSceneSynced(sceneId);
-          
+
           // WebDAV配置有效且该场景从未同步过，需要执行云端同步
           if (hasValidConfig && !isSceneSynced) {
             try {
               console.log('[弹窗] 切换场景：开始同步场景', sceneId);
               const syncResult = await sendMessageCompat({ action: 'sync', sceneId });
               console.log('[弹窗] 切换场景：同步完成', syncResult);
-              
+
               // 等待同步完成后再读取数据，确保数据是最新的
               // 使用轮询方式等待数据更新（最多等待3秒）
               let retries = 30;
@@ -453,11 +474,11 @@ async function loadScenes() {
               while (retries > 0 && !hasData) {
                 await new Promise(resolve => setTimeout(resolve, 100));
                 const afterSync = await storage.getBookmarks(sceneId);
-                hasData = (afterSync.bookmarks && afterSync.bookmarks.length > 0) || 
-                          (afterSync.folders && afterSync.folders.length > 0);
+                hasData = (afterSync.bookmarks && afterSync.bookmarks.length > 0) ||
+                  (afterSync.folders && afterSync.folders.length > 0);
                 retries--;
               }
-              
+
               if (!hasData) {
                 // 云端也没有，创建一个空文件以便后续同步
                 try {
@@ -527,14 +548,14 @@ async function loadBookmarksForPopup() {
       //       2) 在当前场景的书签中使用的文件夹
       return storedFoldersSet.has(f) || currentSceneBookmarkFoldersSet.has(f);
     });
-    
+
     pushOpLog(`loadBookmarks success, scene=${currentSceneId}, total=${bookmarks.length}, folders=${folders.length}`);
-    
+
     // 显示所有书签，与完整画面保持一致（不再限制数量）
     const sorted = bookmarks
       .map(b => ({ ...b }))
       .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
-    
+
     // 默认展开第一层（仅在没有本地折叠状态时）
     if (shouldApplyDefaultExpand && popupSettings.expandFirstLevel) {
       const first = getFirstLevelFolders(sorted);
@@ -543,22 +564,27 @@ async function loadBookmarksForPopup() {
 
     lastRenderedBookmarks = sorted;
     renderBookmarks(sorted, { searchMode: false, folders: folders });
-    
+
     // 恢复滚动位置（延迟执行，确保DOM完全渲染）
-    // 使用多个 requestAnimationFrame 和 setTimeout 确保布局完成
-    // 需要等待 renderBookmarks 内部的 requestAnimationFrame 完成
-    console.log('[弹窗] 准备恢复滚动位置');
-    setTimeout(() => {
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          // 再次延迟，确保所有内容都已渲染
-          setTimeout(() => {
-            console.log('[弹窗] 开始恢复滚动位置');
-            restoreScrollPosition();
-          }, 50);
-        });
+    // 使用 requestAnimationFrame 等待渲染完成
+    console.log('[弹窗] 书签渲染完成，准备恢复滚动位置');
+
+    // 增加延迟和多次轮询，确保在各种设备上都能成功恢复
+    let scrollRetries = 0;
+    const MAX_SCROLL_RETRIES = 5;
+
+    const attemptRestore = () => {
+      restoreScrollPosition().then(success => {
+        if (!success && scrollRetries < MAX_SCROLL_RETRIES) {
+          scrollRetries++;
+          console.log(`[弹窗] 恢复滚动位置未成功，进行第 ${scrollRetries} 次重试`);
+          setTimeout(attemptRestore, 100 * scrollRetries);
+        }
       });
-    }, 150);
+    };
+
+    // 初始延迟，等待 DOM 解析和初步渲染
+    setTimeout(attemptRestore, 100);
   } catch (error) {
     console.error('加载书签失败:', error);
     pushOpLog(`loadBookmarks failed: ${error.message}`);
@@ -591,13 +617,13 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
 
     // 搜索模式中的点击事件由全局事件委托处理，不需要单独绑定
     // 全局事件委托会先检查按钮点击，然后才处理书签项点击
-    
+
     // 应用设置到UI（更新按钮的显示/隐藏）
     // 使用setTimeout确保DOM已完全渲染
     setTimeout(() => {
       applyPopupSettings();
     }, 0);
-    
+
     return;
   }
 
@@ -721,13 +747,13 @@ async function loadFolderState() {
     const result = typeof browser !== 'undefined' && browser.storage
       ? await browser.storage.local.get(['popupFolderState'])
       : await new Promise(resolve => {
-          chrome.storage.local.get(['popupFolderState'], resolve);
-        });
+        chrome.storage.local.get(['popupFolderState'], resolve);
+      });
     const state = result && result.popupFolderState;
 
     // 如果上次记录的设置值与当前设置不同，则认为用户刚修改了设置，重置展开状态
     if (state && typeof state.lastExpandFirstLevel === 'boolean' &&
-        state.lastExpandFirstLevel !== popupSettings.expandFirstLevel) {
+      state.lastExpandFirstLevel !== popupSettings.expandFirstLevel) {
       expandedFolders = new Set(['']);
       shouldApplyDefaultExpand = true; // 按新的设置重新应用默认展开规则
       return;
@@ -766,18 +792,18 @@ function saveFolderState() {
     browser.storage.local.set(state);
   } else {
     // Chrome/Edge: 使用回调
-    chrome.storage.local.set(state, () => {});
+    chrome.storage.local.set(state, () => { });
   }
 }
 
 function buildFolderTree(bookmarks, folders = null) {
   const root = { name: 'root', path: '', folders: {}, order: [], items: [] };
-  
+
   // 从书签中提取文件夹集合，用于验证文件夹是否属于当前场景
   const bookmarkFoldersSet = new Set(
     bookmarks.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean)
   );
-  
+
   // 如果提供了 folders 列表，先按照这个顺序创建文件夹结构（保持创建顺序）
   if (folders && folders.length > 0) {
     folders.forEach(folderPath => {
@@ -799,7 +825,7 @@ function buildFolderTree(bookmarks, folders = null) {
       });
     });
   }
-  
+
   // 然后添加书签到对应的文件夹
   bookmarks.forEach(b => {
     const folderPath = normalizeFolderPath(b.folder || '');
@@ -890,14 +916,14 @@ function renderFolderTreeHtml(node, indentPath) {
 async function updateSyncStatus() {
   try {
     const status = await storage.getSyncStatus();
-    
+
     const statusMap = {
       'idle': { text: '已同步', class: 'success' },
       'syncing': { text: '同步中', class: 'syncing' },
       'success': { text: '已同步', class: 'success' },
       'error': { text: '同步失败', class: 'error' }
     };
-    
+
     const statusInfo = statusMap[status.status] || statusMap.idle;
     statusText.textContent = statusInfo.text;
     statusDot.className = 'status-dot ' + statusInfo.class;
@@ -919,7 +945,7 @@ function saveSearchContent() {
     if (typeof browser !== 'undefined' && browser.storage) {
       browser.storage.local.set(state);
     } else {
-      chrome.storage.local.set(state, () => {});
+      chrome.storage.local.set(state, () => { });
     }
     console.log('[搜索内容] 保存搜索内容:', query);
   } catch (e) {
@@ -936,10 +962,10 @@ async function restoreSearchContent() {
     const result = typeof browser !== 'undefined' && browser.storage
       ? await browser.storage.local.get(['popupSearchContent'])
       : await new Promise(resolve => {
-          chrome.storage.local.get(['popupSearchContent'], resolve);
-        });
+        chrome.storage.local.get(['popupSearchContent'], resolve);
+      });
     const savedQuery = result && result.popupSearchContent;
-    
+
     if (savedQuery && savedQuery.trim()) {
       searchInput.value = savedQuery;
       searchClearBtn.style.display = 'flex'; // 显示清除按钮
@@ -975,19 +1001,19 @@ searchInput.addEventListener('input', debounce(async (e) => {
   const query = e.target.value.trim();
   // 保存搜索内容
   saveSearchContent();
-  
+
   // 显示/隐藏清除按钮
   if (query) {
     searchClearBtn.style.display = 'flex';
   } else {
     searchClearBtn.style.display = 'none';
   }
-  
+
   if (!query) {
     await loadBookmarksForPopup();
     return;
   }
-  
+
   try {
     // 按当前场景过滤书签
     const data = await storage.getBookmarks(currentSceneId);
@@ -1004,14 +1030,14 @@ searchInput.addEventListener('input', debounce(async (e) => {
  */
 addCurrentBtn.addEventListener('click', async () => {
   pushOpLog('addCurrent: start');
-  
+
   // 优先使用 URL 参数中的信息（从悬浮球传递过来的，准确）
   const urlParams = new URLSearchParams(window.location.search);
   const urlFromParams = urlParams.get('url');
   const titleFromParams = urlParams.get('title');
-  
+
   let targetUrl, targetTitle;
-  
+
   if (urlFromParams && titleFromParams) {
     // 使用从悬浮球传递过来的信息（从 content script 直接获取，准确）
     targetUrl = decodeURIComponent(urlFromParams);
@@ -1030,7 +1056,7 @@ addCurrentBtn.addEventListener('click', async () => {
       return;
     }
   }
-  
+
   // 打开添加书签页面
   const source = isFloatingBallPopup ? 'floating-ball' : 'popup';
   tabsAPI.create({
@@ -1152,9 +1178,9 @@ exportLogBtn.addEventListener('click', async () => {
     const originalText = exportLogBtn.textContent;
     exportLogBtn.disabled = true;
     exportLogBtn.textContent = '导出中...';
-    
+
     console.log('[导出日志] 开始收集日志数据...');
-    
+
     const [config, syncStatus, pendingChanges, bookmarkData, devices, deviceInfo, settings] = await Promise.all([
       storage.getConfig().catch(e => {
         console.warn('[导出日志] 获取配置失败:', e);
@@ -1206,7 +1232,7 @@ exportLogBtn.addEventListener('click', async () => {
         console.warn('[导出日志] 获取定时任务失败:', e);
       }
     }
-    
+
     const maskConfig = (cfg) => {
       if (!cfg) return null;
       const masked = { ...cfg };
@@ -1256,21 +1282,21 @@ exportLogBtn.addEventListener('click', async () => {
     a.download = `cloud-bookmark-log-${Date.now()}.txt`;
     a.style.display = 'none';
     document.body.appendChild(a);
-    
+
     console.log('[导出日志] 触发下载...');
     a.click();
-    
+
     // 延迟清理，确保下载开始
     setTimeout(() => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
       console.log('[导出日志] 下载完成');
     }, 100);
-    
+
     // 恢复按钮状态
     exportLogBtn.disabled = false;
     exportLogBtn.textContent = originalText;
-    
+
     // 显示成功提示（不关闭弹窗，让用户可以继续使用）
     const successMsg = document.createElement('div');
     successMsg.textContent = '日志已导出';
@@ -1295,11 +1321,11 @@ exportLogBtn.addEventListener('click', async () => {
     }, 2000);
   } catch (error) {
     console.error('[导出日志] 导出失败:', error);
-    
+
     // 恢复按钮状态
     exportLogBtn.disabled = false;
     exportLogBtn.textContent = '导出日志';
-    
+
     // 显示错误提示
     alert('导出日志失败：' + (error.message || String(error)) + '\n\n请查看控制台获取详细信息。');
   }
@@ -1361,12 +1387,12 @@ async function handleUpdateBookmark(bookmarkId) {
     const data = await storage.getBookmarks(currentSceneId);
     const bookmarks = data.bookmarks || [];
     const bookmark = bookmarks.find(b => b.id === bookmarkId);
-    
+
     if (!bookmark) {
       alert('未找到要更新的书签');
       return;
     }
-    
+
     // 打开编辑页面
     const source = isFloatingBallPopup ? 'floating-ball' : 'popup';
     tabsAPI.create({
@@ -1389,26 +1415,26 @@ function showConfirmDialog(message) {
     const messageEl = document.getElementById('confirmDialogMessage');
     const confirmBtn = document.getElementById('confirmDialogConfirm');
     const cancelBtn = document.getElementById('confirmDialogCancel');
-    
+
     messageEl.textContent = message;
     dialog.style.display = 'flex';
-    
+
     const cleanup = () => {
       dialog.style.display = 'none';
       confirmBtn.onclick = null;
       cancelBtn.onclick = null;
     };
-    
+
     confirmBtn.onclick = () => {
       cleanup();
       resolve(true);
     };
-    
+
     cancelBtn.onclick = () => {
       cleanup();
       resolve(false);
     };
-    
+
     // 点击遮罩层关闭
     dialog.onclick = (e) => {
       if (e.target === dialog) {
@@ -1427,16 +1453,16 @@ async function handleDeleteBookmark(bookmarkId) {
   if (!confirmed) {
     return;
   }
-  
+
   try {
     // 获取当前场景的所有书签
     const data = await storage.getBookmarks(currentSceneId);
     const allBookmarks = data.bookmarks || [];
     const allFolders = data.folders || [];
-    
+
     // 删除指定的书签
     const remainingBookmarks = allBookmarks.filter(b => b.id !== bookmarkId);
-    
+
     // 更新文件夹列表（移除不再使用的文件夹，但保留父级层级，避免云端 folders 缺层）
     const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
     const expandFolderPathsPreserveOrder = (paths) => {
@@ -1465,10 +1491,10 @@ async function handleDeleteBookmark(bookmarkId) {
       ...(allFolders || []).map(normalizeFolder).filter(f => f && usedWithParentsSet.has(f)),
       ...usedWithParentsOrder.filter(f => f && !(allFolders || []).includes(f))
     ];
-    
+
     // 保存到本地
     await storage.saveBookmarks(remainingBookmarks, remainingFolders, currentSceneId);
-    
+
     // 同步到云端
     await sendMessageCompat({
       action: 'syncToCloud',
@@ -1476,7 +1502,7 @@ async function handleDeleteBookmark(bookmarkId) {
       folders: remainingFolders,
       sceneId: currentSceneId
     });
-    
+
     // 重新加载书签
     await loadBookmarksForPopup();
   } catch (error) {
@@ -1495,7 +1521,7 @@ function saveScrollPosition() {
       console.log('[滚动位置] 滚动位置记忆已禁用，跳过保存');
       return;
     }
-    
+
     // 优先使用 popup-content 的滚动位置（因为它是实际的滚动容器）
     const popupContentEl = document.querySelector('.popup-content');
     const scrollContainer = popupContentEl || bookmarkList;
@@ -1503,24 +1529,24 @@ function saveScrollPosition() {
       console.warn('[滚动位置] 未找到滚动容器');
       return;
     }
-    
+
     const scrollTop = scrollContainer.scrollTop;
     const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-    
+
     if (scrollTop === undefined || scrollTop === null || scrollTop < 0) {
       console.log('[滚动位置] 跳过保存，scrollTop 无效:', scrollTop);
       return;
     }
-    
+
     console.log('[滚动位置] 保存滚动位置:', scrollTop, '容器:', scrollContainer.className, 'maxScroll:', maxScroll, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
-    
+
     const state = {
       popupScrollPosition: scrollTop
     };
     if (typeof browser !== 'undefined' && browser.storage) {
       browser.storage.local.set(state);
     } else {
-      chrome.storage.local.set(state, () => {});
+      chrome.storage.local.set(state, () => { });
     }
   } catch (e) {
     console.warn('保存滚动位置失败:', e);
@@ -1529,90 +1555,49 @@ function saveScrollPosition() {
 
 /**
  * 恢复滚动位置
+ * @returns {Promise<boolean>} 是否成功恢复了非0的位置
  */
 async function restoreScrollPosition() {
   try {
-    // 检查设置，如果未启用滚动位置记忆，则跳过
     if (!popupSettings || popupSettings.rememberScrollPosition === false) {
-      console.log('[滚动位置] 滚动位置记忆已禁用，跳过恢复');
-      return;
+      return true; // 视为完成
     }
-    
-    // 优先使用 popup-content 的滚动位置（因为它是实际的滚动容器）
+
     const popupContentEl = document.querySelector('.popup-content');
     const scrollContainer = popupContentEl || bookmarkList;
-    if (!scrollContainer) {
-      console.warn('[滚动位置] 恢复时未找到滚动容器');
-      return;
-    }
-    
+    if (!scrollContainer) return false;
+
     const result = typeof browser !== 'undefined' && browser.storage
       ? await browser.storage.local.get(['popupScrollPosition'])
       : await new Promise(resolve => {
-          chrome.storage.local.get(['popupScrollPosition'], resolve);
-        });
-    const scrollTop = result && result.popupScrollPosition;
-    
-    console.log('[滚动位置] 尝试恢复滚动位置:', scrollTop, '容器:', scrollContainer.className, 'scrollHeight:', scrollContainer.scrollHeight, 'clientHeight:', scrollContainer.clientHeight);
-    
-    if (scrollTop !== undefined && scrollTop !== null && scrollTop >= 0) {
-      // 确保元素已渲染且有内容
-      const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-      const targetScroll = Math.min(scrollTop, maxScroll);
-      
-      console.log('[滚动位置] 计算后的滚动位置:', targetScroll, 'maxScroll:', maxScroll, 'scrollTop:', scrollTop);
-      
-      // 如果 maxScroll 为 0，说明内容没有超出容器，不需要滚动
-      if (maxScroll <= 0 && scrollTop > 0) {
-        console.log('[滚动位置] 警告：内容未超出容器（maxScroll=0），但保存的位置 > 0，可能是内容还未完全加载');
-        // 继续等待内容加载
-      }
-      
-      // 使用统一的恢复逻辑，确保在正确的时机设置
-      const doRestore = () => {
-        const currentMaxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-        const finalScroll = Math.min(scrollTop, Math.max(0, currentMaxScroll));
-        
-        // 使用 requestAnimationFrame 确保在下一帧设置
-        requestAnimationFrame(() => {
-          scrollContainer.scrollTop = finalScroll;
-          console.log('[滚动位置] 已设置滚动位置:', scrollContainer.scrollTop, '目标:', finalScroll, 'maxScroll:', currentMaxScroll);
-          
-          // 验证并修正（如果设置失败，可能是内容还在变化）
-          setTimeout(() => {
-            const actualScroll = scrollContainer.scrollTop;
-            const newMaxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-            if (Math.abs(actualScroll - finalScroll) > 1 && newMaxScroll > 0) {
-              const correctedScroll = Math.min(scrollTop, newMaxScroll);
-              scrollContainer.scrollTop = correctedScroll;
-              console.log('[滚动位置] 修正滚动位置:', correctedScroll, '之前:', actualScroll);
-            }
-          }, 100);
-        });
-      };
-      
-      // 如果内容高度足够，立即设置；否则等待内容加载
-      if (maxScroll > 0 && maxScroll >= targetScroll) {
-        doRestore();
-      } else {
-        // 内容可能还在加载，使用轮询方式等待
-        let retries = 30; // 增加重试次数
-        const tryRestore = () => {
-          const currentMaxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
-          console.log('[滚动位置] 轮询恢复，retries:', retries, 'currentMaxScroll:', currentMaxScroll, 'scrollTop:', scrollTop);
-          if (currentMaxScroll > 0 || retries <= 0) {
-            doRestore();
-          } else {
-            retries--;
-            setTimeout(tryRestore, 100); // 增加延迟时间
-          }
-        };
-        setTimeout(tryRestore, 200); // 增加初始延迟
-      }
+        chrome.storage.local.get(['popupScrollPosition'], resolve);
+      });
+    const savedTop = result && result.popupScrollPosition;
+
+    if (savedTop === undefined || savedTop === null || savedTop <= 0) {
+      return true; // 没有位置要恢复
+    }
+
+    // 检查当前容器是否有足够的内容进行滚动
+    const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
+    if (maxScroll <= 0) {
+      console.log('[滚动位置] 内容高度不足，暂时无法恢复:', { scrollHeight: scrollContainer.scrollHeight, clientHeight: scrollContainer.clientHeight });
+      return false;
+    }
+
+    const finalScroll = Math.min(savedTop, maxScroll);
+    scrollContainer.scrollTop = finalScroll;
+
+    // 验证是否真的设置成功了（允许 2px 误差）
+    if (Math.abs(scrollContainer.scrollTop - finalScroll) < 2) {
+      console.log('[滚动位置] 恢复成功:', scrollContainer.scrollTop);
+      return true;
     } else {
-      console.log('[滚动位置] 没有保存的滚动位置或值为无效');
+      console.log('[滚动位置] 恢复尝试失败，可能内容仍在变动');
+      return false;
     }
   } catch (e) {
     console.warn('恢复滚动位置失败:', e);
+    return true;
   }
 }

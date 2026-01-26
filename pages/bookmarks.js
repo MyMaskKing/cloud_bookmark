@@ -5,9 +5,9 @@
 const storage = new StorageManager();
 
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
-const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function(message, callback) {
+const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function (message, callback) {
   const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
-  
+
   if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
     // Firefox: 使用 Promise
     return runtime.sendMessage(message).then(response => {
@@ -21,12 +21,12 @@ const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : fun
         String(error).includes('Receiving end does not exist') ||
         String(error).includes('Could not establish connection')
       );
-      
+
       if (isReceivingEndError) {
         if (callback) callback(null);
         return null;
       }
-      
+
       if (callback) callback(null);
       throw error;
     });
@@ -71,7 +71,7 @@ function normalizeFolderPath(path) {
   let s = String(path).replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
   try {
     if (typeof s.normalize === 'function') s = s.normalize('NFKC');
-  } catch (_) {}
+  } catch (_) { }
   return s.replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
 }
 
@@ -139,7 +139,7 @@ function insertFolderPathSmart(folders, newPath) {
 function insertBookmarkSmart(bookmarks, newBookmark) {
   const list = Array.isArray(bookmarks) ? [...bookmarks] : [];
   const bookmarkFolder = normalizeFolderPath(newBookmark.folder || '');
-  
+
   // 规则：插入到"该文件夹的最后一个书签"之后
   // 即：找到最后一个满足 b.folder === bookmarkFolder 的书签位置
   let insertAt = -1;
@@ -188,11 +188,11 @@ function insertBookmarkSmart(bookmarks, newBookmark) {
  */
 function sortBookmarksByFolder(bookmarks) {
   const list = Array.isArray(bookmarks) ? [...bookmarks] : [];
-  
+
   // 按文件夹分组，保持每个文件夹内书签的原有顺序
   const folderGroups = {};
   const folderOrder = [];
-  
+
   list.forEach(bookmark => {
     const folder = normalizeFolderPath(bookmark.folder || '');
     if (!folderGroups[folder]) {
@@ -201,10 +201,10 @@ function sortBookmarksByFolder(bookmarks) {
     }
     folderGroups[folder].push(bookmark);
   });
-  
+
   // 按照文件夹列表的顺序重新排列
   const sortedBookmarks = [];
-  
+
   // 先按文件夹列表的顺序添加
   currentFolders.forEach(folder => {
     const normalizedFolder = normalizeFolderPath(folder);
@@ -213,14 +213,14 @@ function sortBookmarksByFolder(bookmarks) {
       delete folderGroups[normalizedFolder];
     }
   });
-  
+
   // 添加不在文件夹列表中的书签（按原有顺序）
   folderOrder.forEach(folder => {
     if (folderGroups[folder]) {
       sortedBookmarks.push(...folderGroups[folder]);
     }
   });
-  
+
   return sortedBookmarks;
 }
 
@@ -428,7 +428,7 @@ function showToast(message, { title = '提示', type = 'error', duration = 2000 
       if (!toastEl) return;
       toastEl.style.opacity = '0';
       setTimeout(() => {
-        try { toastEl?.remove(); } catch (_) {}
+        try { toastEl?.remove(); } catch (_) { }
         toastEl = null;
       }, 160);
     }, Math.max(500, duration));
@@ -562,20 +562,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       closeSidebarMobile();
     }
   });
-  
-  // 监听滚动事件，保存滚动位置
-  const bookmarksContainer = document.querySelector('.bookmarks-container');
-  if (bookmarksContainer) {
-    bookmarksContainer.addEventListener('scroll', debounce(() => {
-      saveBookmarksPageScrollPosition();
-    }, 300));
-  } else {
-    // 如果没有容器，监听window滚动
-    window.addEventListener('scroll', debounce(() => {
-      saveBookmarksPageScrollPosition();
-    }, 300));
-  }
-  
+
+
   // 监听消息更新
   runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     if (request && (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged')) {
@@ -622,7 +610,7 @@ function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const action = params.get('action');
   pageSource = params.get('source'); // 记录页面来源
-  
+
   // 如果是从快捷键、弹窗或悬浮球打开的，隐藏主内容，只显示添加/编辑表单
   if (pageSource === 'shortcut' || pageSource === 'popup' || pageSource === 'floating-ball') {
     const appContainer = document.querySelector('.app-container');
@@ -632,7 +620,7 @@ function checkUrlParams() {
       const main = document.querySelector('main');
       if (sidebar) sidebar.style.display = 'none';
       if (main) main.style.display = 'none';
-      
+
       // 设置页面样式，居中显示模态框
       document.body.style.display = 'flex';
       document.body.style.alignItems = 'center';
@@ -643,7 +631,7 @@ function checkUrlParams() {
       document.body.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
     }
   }
-  
+
   if (action === 'add') {
     const url = params.get('url');
     const title = params.get('title');
@@ -682,21 +670,21 @@ function setupEventListeners() {
   // 视图切换按钮：同时支持点击和触摸事件（解决安卓上点击没效果的问题）
   if (viewToggle) {
     console.log('[视图切换] viewToggle 元素找到:', viewToggle);
-    
+
     viewToggle.addEventListener('click', (e) => {
       console.log('[视图切换] click 事件触发', e);
       e.preventDefault();
       e.stopPropagation();
       toggleView();
     });
-    
+
     viewToggle.addEventListener('touchend', (e) => {
       console.log('[视图切换] touchend 事件触发', e);
       e.preventDefault();
       e.stopPropagation();
       toggleView();
     });
-    
+
     viewToggle.addEventListener('touchstart', (e) => {
       console.log('[视图切换] touchstart 事件触发', e);
     });
@@ -708,10 +696,10 @@ function setupEventListeners() {
   syncBtn.addEventListener('click', handleSync);
   closeModal.addEventListener('click', hideModal);
   cancelBtn.addEventListener('click', hideModal);
-  
+
   bookmarkForm.addEventListener('submit', handleSubmit);
   addFolderBtn.addEventListener('click', handleAddFolder);
-  
+
   // 绑定创建文件夹按钮（在添加书签表单中）
   const createFolderBtn = document.getElementById('createFolderBtn');
   if (createFolderBtn) {
@@ -726,7 +714,7 @@ function setupEventListeners() {
       showAddForm();
     });
   }
-  
+
   // 场景切换按钮
   const sceneSwitchBtn = document.getElementById('sceneSwitchBtn');
   const sceneMenu = document.getElementById('sceneMenu');
@@ -735,7 +723,7 @@ function setupEventListeners() {
       e.stopPropagation();
       sceneMenu.style.display = sceneMenu.style.display === 'none' ? 'block' : 'none';
     });
-    
+
     // 点击外部关闭场景菜单
     document.addEventListener('click', (e) => {
       if (sceneSwitchBtn && sceneMenu && !sceneSwitchBtn.contains(e.target) && !sceneMenu.contains(e.target)) {
@@ -743,7 +731,7 @@ function setupEventListeners() {
       }
     });
   }
-  
+
   // 导航项点击
   document.querySelectorAll('.nav-item').forEach(item => {
     item.addEventListener('click', () => {
@@ -827,31 +815,31 @@ function setupEventListeners() {
       if (e.target.closest('.bookmark-in-folder')) {
         return;
       }
-      
+
       // 获取文件夹路径（从 dataset 中读取，确保与渲染时使用的路径一致）
       const folderPath = row.dataset.folder || '';
       const isMobile = window.innerWidth <= 768;
       console.log('[文件夹点击] 点击文件夹:', { folderPath, isMobile, expandedFoldersBefore: Array.from(expandedFolders) });
-      
+
       // 保存文件夹路径用于后续筛选（在重新渲染前保存）
       const normalizedFolderPath = normalizeFolderPath(folderPath);
-      
+
       if (isMobile) {
         // 移动端：只执行筛选操作，不展开/折叠文件夹树
         // 设置筛选
         currentFilter = 'folder:' + normalizedFolderPath;
         console.log('[文件夹点击] 移动端设置筛选:', { folderPath, normalizedFolderPath, currentFilter });
-        
+
         // 更新激活状态
         foldersList.querySelectorAll('.folder-label').forEach(i => i.classList.remove('active'));
         const label = row.querySelector('.folder-label');
         if (label) {
           label.classList.add('active');
         }
-        
+
         // 渲染书签列表
         renderBookmarks();
-        
+
         // 关闭侧边栏
         closeSidebarIfMobile();
       } else {
@@ -864,14 +852,14 @@ function setupEventListeners() {
           expandedFolders.add(folderPath);
           console.log('[文件夹点击] 桌面端展开:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
         }
-        
+
         // 保存展开状态到本地存储
         saveFolderState();
-        
+
         // 重新渲染文件夹树
         await loadFolders();
         console.log('[文件夹点击] 桌面端渲染完成，验证展开状态:', { folderPath, isExpanded: expandedFolders.has(folderPath), expandedFolders: Array.from(expandedFolders) });
-        
+
         // 同时执行筛选操作
         const escapedPath = folderPath.replace(/"/g, '\\"');
         const newRow = foldersList.querySelector(`[data-folder="${escapedPath}"]`);
@@ -896,7 +884,7 @@ function setupEventListeners() {
       e.stopPropagation(); // 阻止事件冒泡到文件夹行
       const folderPath = btn.dataset.folder || '';
       console.log('[展开/折叠按钮] 点击:', { folderPath, expandedFoldersBefore: Array.from(expandedFolders) });
-      
+
       // 切换展开/折叠状态
       if (expandedFolders.has(folderPath)) {
         expandedFolders.delete(folderPath);
@@ -905,10 +893,10 @@ function setupEventListeners() {
         expandedFolders.add(folderPath);
         console.log('[展开/折叠按钮] 展开:', { folderPath });
       }
-      
+
       // 保存展开状态到本地存储
       saveFolderState();
-      
+
       // 重新渲染文件夹树
       await loadFolders();
     });
@@ -998,7 +986,7 @@ async function loadScenes() {
         sceneNameEl.textContent = currentScene ? currentScene.name : '未知';
       }
     }
-    
+
     // 更新场景菜单
     if (sceneMenuEl) {
       sceneMenuEl.innerHTML = scenes.map(scene => {
@@ -1009,7 +997,7 @@ async function loadScenes() {
           </div>
         `;
       }).join('');
-      
+
       // 绑定点击事件
       sceneMenuEl.querySelectorAll('.scene-menu-item').forEach(item => {
         item.addEventListener('click', async () => {
@@ -1017,13 +1005,13 @@ async function loadScenes() {
           if (sceneId !== currentSceneId) {
             await storage.saveCurrentScene(sceneId);
             currentSceneId = sceneId; // 立即更新，避免后续读取旧值
-            
+
             // 检查 WebDAV 配置是否有效
             const config = await storage.getConfig();
             const hasValidConfig = config && config.serverUrl;
             // 检查该场景是否已同步过
             const isSceneSynced = await storage.isSceneSynced(sceneId);
-            
+
             // WebDAV配置有效且该场景从未同步过，需要执行云端同步
             if (hasValidConfig && !isSceneSynced) {
               try {
@@ -1093,7 +1081,7 @@ async function loadBookmarks() {
     });
     // 关键：补齐中间父级路径，确保树上可见但未显式存储的节点也参与排序（例如 "2.学习&娱乐"）
     currentFolders = expandFolderPathsPreserveOrder(currentFolders);
-    
+
     // 注意：不再在这里排序，因为：
     // 1. 保存时已经确保数据按文件夹顺序排列（添加、编辑、删除、批量操作都会排序）
     // 2. 从云端同步来的数据在后台已经按文件夹顺序排列（如果后台实现了排序）
@@ -1121,7 +1109,7 @@ function countSubfoldersInTree(node) {
 function checkFolderHasChildren(folderPath) {
   // 规范化文件夹路径
   const normalizedPath = normalizeFolderPath(folderPath || '');
-  
+
   // 检查是否有书签（只要有书签就算有内容）
   const hasBookmarks = currentBookmarks.some(b => {
     const bFolder = normalizeFolderPath(b.folder || '');
@@ -1131,16 +1119,16 @@ function checkFolderHasChildren(folderPath) {
     }
     return matches;
   });
-  
+
   console.log('[文件夹检查] 检查文件夹:', { folderPath: normalizedPath, hasBookmarks, totalBookmarks: currentBookmarks.length });
-  
+
   // 合并所有文件夹（包括从书签中提取的）
   const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
   const allFolders = [...new Set([...currentFolders, ...bookmarkFolders])];
-  
+
   // 构建临时树结构来检查是否有子文件夹
   const tree = buildFolderTree(allFolders);
-  
+
   // 如果 folderPath 为空，检查根节点
   if (!normalizedPath) {
     const hasSubfolders = Object.keys(tree.children || {}).length > 0;
@@ -1148,7 +1136,7 @@ function checkFolderHasChildren(folderPath) {
     console.log('[文件夹检查] 根节点检查:', { hasSubfolders, hasBookmarks, result });
     return result;
   }
-  
+
   // 查找对应的节点
   const parts = normalizedPath.split('/');
   let node = tree;
@@ -1160,13 +1148,13 @@ function checkFolderHasChildren(folderPath) {
     }
     node = node.children[part];
   }
-  
+
   // 检查该节点是否有子文件夹
   const hasSubfolders = Object.keys(node.children || {}).length > 0;
   const result = hasSubfolders || hasBookmarks;
-  
+
   console.log('[文件夹检查] 最终结果:', { folderPath: normalizedPath, hasSubfolders, hasBookmarks, result });
-  
+
   // 只要有子文件夹或书签，就算有内容
   return result;
 }
@@ -1180,8 +1168,8 @@ async function loadFolderState() {
     const result = typeof browser !== 'undefined' && browser.storage
       ? await browser.storage.local.get(['bookmarksPageFolderState'])
       : await new Promise(resolve => {
-          chrome.storage.local.get(['bookmarksPageFolderState'], resolve);
-        });
+        chrome.storage.local.get(['bookmarksPageFolderState'], resolve);
+      });
     const state = result && result.bookmarksPageFolderState;
 
     if (state && Array.isArray(state.expanded) && state.expanded.length) {
@@ -1220,7 +1208,7 @@ function saveFolderState() {
       browser.storage.local.set(state);
     } else {
       // Chrome/Edge: 使用回调
-      chrome.storage.local.set(state, () => {});
+      chrome.storage.local.set(state, () => { });
     }
   } catch (e) {
     console.warn('保存文件夹展开状态失败', e);
@@ -1280,7 +1268,7 @@ async function loadFolders() {
 
   html += renderFolderTree(tree.children, folderCountMap, tree, folderBookmarksMap);
   foldersList.innerHTML = html;
-  
+
   // 初始化时，如果 expandedFolders 只有根节点且未初始化过，默认展开所有第一层文件夹
   if (!foldersInitialized && expandedFolders.size === 1 && expandedFolders.has('')) {
     const firstLevelFolders = Object.keys(tree.children || {});
@@ -1334,7 +1322,7 @@ function buildFolderTree(folders) {
     // 确保路径是规范化的（虽然传入的应该已经是规范化的，但为了安全再次规范化）
     const normalizedFolder = normalizeFolderPath(folder);
     if (!normalizedFolder) return;
-    
+
     const parts = normalizedFolder.split('/');
     let node = root;
     let currentPath = '';
@@ -1360,7 +1348,7 @@ function buildFolderTree(folders) {
  */
 function renderFolderTree(children, folderCountMap = new Map(), rootNode = null, folderBookmarksMap = new Map()) {
   // 如果没有 order 数组，回退到 Object.values（兼容旧代码）
-  const entries = rootNode && rootNode.order 
+  const entries = rootNode && rootNode.order
     ? rootNode.order.map(key => children[key]).filter(Boolean)
     : Object.values(children);
   if (entries.length === 0) return '';
@@ -1368,27 +1356,27 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
   return `
     <ul class="folder-tree">
       ${entries.map(child => {
-        // 统计：书签数量 + 子文件夹数量
-        const bookmarkCount = folderCountMap.get(child.path) || 0;
-        const subfolderCount = countSubfoldersInTree(child);
-        const totalCount = bookmarkCount + subfolderCount;
-        // 检查是否有子文件夹（仅用于决定是否显示子文件夹内容）
-        const hasSubfolders = Object.keys(child.children).length > 0;
-        // 检查展开状态：只要 expandedFolders 中包含该路径，就展开，不管是否有子文件夹或书签
-        const expanded = expandedFolders.has(child.path);
-        
-        // 根据展开状态选择图标（展开用📂，折叠用📁）
-        const icon = expanded ? '📂' : '📁';
-        
-        // 展开时，获取该文件夹下的书签并渲染
-        let bookmarksHtml = '';
-        if (expanded && bookmarkCount > 0) {
-          // 从预构建的 Map 中获取书签（性能优化：避免每次展开都过滤所有书签）
-          const normalizedPath = normalizeFolderPath(child.path);
-          const folderBookmarks = folderBookmarksMap.get(normalizedPath) || [];
-          
-          // 渲染书签列表
-          bookmarksHtml = folderBookmarks.map(b => `
+    // 统计：书签数量 + 子文件夹数量
+    const bookmarkCount = folderCountMap.get(child.path) || 0;
+    const subfolderCount = countSubfoldersInTree(child);
+    const totalCount = bookmarkCount + subfolderCount;
+    // 检查是否有子文件夹（仅用于决定是否显示子文件夹内容）
+    const hasSubfolders = Object.keys(child.children).length > 0;
+    // 检查展开状态：只要 expandedFolders 中包含该路径，就展开，不管是否有子文件夹或书签
+    const expanded = expandedFolders.has(child.path);
+
+    // 根据展开状态选择图标（展开用📂，折叠用📁）
+    const icon = expanded ? '📂' : '📁';
+
+    // 展开时，获取该文件夹下的书签并渲染
+    let bookmarksHtml = '';
+    if (expanded && bookmarkCount > 0) {
+      // 从预构建的 Map 中获取书签（性能优化：避免每次展开都过滤所有书签）
+      const normalizedPath = normalizeFolderPath(child.path);
+      const folderBookmarks = folderBookmarksMap.get(normalizedPath) || [];
+
+      // 渲染书签列表
+      bookmarksHtml = folderBookmarks.map(b => `
             <li class="bookmark-in-folder" data-url="${escapeHtml(b.url)}">
               <a href="${escapeHtml(b.url)}" target="_blank" title="${escapeHtml(b.title || b.url)}">
                 <span class="bookmark-title">${escapeHtml(b.title || '无标题')}</span>
@@ -1396,18 +1384,18 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
               </a>
             </li>
           `).join('');
-        }
-        
-        // 展开时显示子文件夹内容
-        const childContent = expanded ? renderFolderTree(child.children, folderCountMap, child, folderBookmarksMap) : '';
-        
-        // 只要展开就显示内容区域：先显示书签，再显示子文件夹
-        const expandedContent = expanded ? `
+    }
+
+    // 展开时显示子文件夹内容
+    const childContent = expanded ? renderFolderTree(child.children, folderCountMap, child, folderBookmarksMap) : '';
+
+    // 只要展开就显示内容区域：先显示书签，再显示子文件夹
+    const expandedContent = expanded ? `
           ${bookmarksHtml ? `<ul class="bookmarks-in-folder">${bookmarksHtml}</ul>` : ''}
           ${hasSubfolders ? childContent : (bookmarksHtml ? '' : '<ul class="folder-tree"></ul>')}
         ` : '';
-        
-        return `
+
+    return `
         <li class="folder-node">
           <div class="folder-row" data-folder="${escapeHtml(child.path)}">
             <span class="folder-label" data-folder="${escapeHtml(child.path)}" title="${escapeHtml(child.path)}">
@@ -1424,7 +1412,7 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
           ${expandedContent}
         </li>
       `;
-      }).join('')}
+  }).join('')}
     </ul>
   `;
 }
@@ -1449,7 +1437,7 @@ async function renameFolderPath(oldPath, newPath) {
     }
     return b;
   });
-  
+
   // 更新文件夹列表：保留所有现有文件夹（包括空文件夹），并更新重命名的文件夹路径
   const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
   currentFolders = currentFolders.map(f => {
@@ -1463,12 +1451,12 @@ async function renameFolderPath(oldPath, newPath) {
   });
   // 合并：更新后的文件夹列表 + 从书签中提取的文件夹（确保不丢失）
   currentFolders = [...new Set([...currentFolders, ...bookmarkFolders])];
-  
+
   // 如果是自定义排序模式，确保移动/重命名后仍按文件夹顺序排列
   if (currentSort === 'custom') {
     currentBookmarks = sortBookmarksByFolder(currentBookmarks);
   }
-  
+
   await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
   await syncToCloud();
 }
@@ -1478,20 +1466,20 @@ async function renameFolderPath(oldPath, newPath) {
  */
 async function renameFolderName(folderPath, newName) {
   if (!folderPath || !newName || !newName.trim()) return;
-  
+
   // 提取父级路径和当前文件夹名称
   const lastSlashIndex = folderPath.lastIndexOf('/');
   const parentPath = lastSlashIndex >= 0 ? folderPath.substring(0, lastSlashIndex) : '';
   const newPath = parentPath ? `${parentPath}/${newName.trim()}` : newName.trim();
   const normalizedNewPath = normalizeFolderPath(newPath);
-  
+
   if (normalizedNewPath === folderPath) return; // 名称未改变
-  
+
   if (currentBookmarks.some(b => b.folder === normalizedNewPath)) {
     const proceed = confirm('目标路径已存在同名文件夹，是否继续重命名？');
     if (!proceed) return;
   }
-  
+
   await renameFolderPath(folderPath, normalizedNewPath);
 }
 
@@ -1500,28 +1488,28 @@ async function renameFolderName(folderPath, newName) {
  */
 async function moveFolderToParent(folderPath, newParentPath) {
   if (!folderPath) return;
-  
+
   // 提取当前文件夹名称
   const lastSlashIndex = folderPath.lastIndexOf('/');
   const folderName = lastSlashIndex >= 0 ? folderPath.substring(lastSlashIndex + 1) : folderPath;
-  
+
   // 构建新路径
   const newPath = newParentPath ? `${newParentPath}/${folderName}` : folderName;
   const normalizedNewPath = normalizeFolderPath(newPath);
-  
+
   if (normalizedNewPath === folderPath) return; // 位置未改变
-  
+
   // 检查是否移动到自己的子文件夹中（不允许）
   if (normalizedNewPath.startsWith(folderPath + '/')) {
     alert('不能将文件夹移动到自己的子文件夹中');
     return;
   }
-  
+
   if (currentBookmarks.some(b => b.folder === normalizedNewPath)) {
     const proceed = confirm('目标路径已存在同名文件夹，是否继续移动？');
     if (!proceed) return;
   }
-  
+
   await renameFolderPath(folderPath, normalizedNewPath);
 }
 
@@ -1603,21 +1591,21 @@ function openFolderMenu(anchorBtn, folderPath) {
   document.body.appendChild(menu);
   const rect = anchorBtn.getBoundingClientRect();
   const menuRect = menu.getBoundingClientRect();
-  
+
   // 计算菜单位置，确保不会超出视口
   let top = rect.bottom + window.scrollY + 4;
   let left = rect.left + window.scrollX - 40;
-  
+
   // 检查右边界
   if (left + menuRect.width > window.innerWidth) {
     left = window.innerWidth - menuRect.width - 10;
   }
-  
+
   // 检查下边界
   if (top + menuRect.height > window.innerHeight + window.scrollY) {
     top = rect.top + window.scrollY - menuRect.height - 4;
   }
-  
+
   menu.style.top = `${top}px`;
   menu.style.left = `${left}px`;
 
@@ -1661,19 +1649,19 @@ function openFolderMenu(anchorBtn, folderPath) {
         // 移动到新的父级文件夹
         menu.remove();
         document.removeEventListener('click', closeMenu);
-        
+
         // 获取当前文件夹的父级路径
         const lastSlashIndex = folderPath.lastIndexOf('/');
         const currentParentPath = lastSlashIndex >= 0 ? folderPath.substring(0, lastSlashIndex) : '';
-        
+
         // 显示文件夹选择对话框，排除当前文件夹及其子文件夹
         const targetParentPath = await showFolderSelectDialog({ excludeFolderPath: folderPath });
         if (targetParentPath === null) return; // 用户取消
-        
+
         // 如果选择的父级路径和当前相同，不执行移动
         const normalizedTargetParent = targetParentPath.trim() ? normalizeFolderPath(targetParentPath) : '';
         if (normalizedTargetParent === currentParentPath) return;
-        
+
         await moveFolderToParent(folderPath, normalizedTargetParent);
         await loadBookmarks();
         await loadFolders();
@@ -1874,17 +1862,17 @@ async function loadTags() {
       allTags.push(...bookmark.tags);
     }
   });
-  
+
   const uniqueTags = [...new Set(allTags)];
   uniqueTags.sort();
-  
+
   tagsList.innerHTML = uniqueTags.map(tag => `
     <div class="tag-item" data-tag="${escapeHtml(tag)}">
       <span>#</span>
       <span>${escapeHtml(tag)}</span>
     </div>
   `).join('');
-  
+
   tagsList.querySelectorAll('.tag-item').forEach(item => {
     item.addEventListener('click', () => {
       document.querySelectorAll('.tag-item').forEach(i => i.classList.remove('active'));
@@ -1901,7 +1889,7 @@ async function loadTags() {
  */
 function renderBookmarks() {
   let filtered = [...currentBookmarks];
-  
+
   // 应用筛选
   if (currentFilter === 'starred') {
     filtered = filtered.filter(b => b.starred);
@@ -1924,25 +1912,25 @@ function renderBookmarks() {
     const tag = currentFilter.replace('tag:', '');
     filtered = filtered.filter(b => b.tags && b.tags.includes(tag));
   }
-  
+
   // 应用搜索
   const query = searchInput.value.trim();
   if (query) {
     filtered = searchBookmarks(filtered, query);
   }
-  
+
   // 应用排序（自定义排序 custom 时保持当前顺序，不再二次排序）
   if (currentSort !== 'custom') {
     // 先按文件夹分组排序，然后在每个文件夹内排序
     filtered.sort((a, b) => {
       const aFolder = normalizeFolderPath(a.folder || '');
       const bFolder = normalizeFolderPath(b.folder || '');
-      
+
       // 如果文件夹不同，按文件夹在文件夹列表中的顺序排序
       if (aFolder !== bFolder) {
         const aFolderIndex = currentFolders.indexOf(aFolder);
         const bFolderIndex = currentFolders.indexOf(bFolder);
-        
+
         // 如果文件夹不在列表中，放到最后
         if (aFolderIndex === -1 && bFolderIndex === -1) {
           // 都不在列表中，按文件夹路径字符串排序
@@ -1950,10 +1938,10 @@ function renderBookmarks() {
         }
         if (aFolderIndex === -1) return 1;
         if (bFolderIndex === -1) return -1;
-        
+
         return aFolderIndex - bFolderIndex;
       }
-      
+
       // 文件夹相同，按选择的排序方式排序
       switch (currentSort) {
         case 'created-desc':
@@ -1973,7 +1961,7 @@ function renderBookmarks() {
       }
     });
   }
-  
+
   // 渲染
   if (filtered.length === 0) {
     bookmarksGrid.innerHTML = '';
@@ -1981,7 +1969,7 @@ function renderBookmarks() {
   } else {
     emptyState.style.display = 'none';
     bookmarksGrid.innerHTML = filtered.map(bookmark => renderBookmarkCard(bookmark)).join('');
-    
+
     // 自定义排序模式下允许拖拽书签卡片
     bookmarksGrid.querySelectorAll('.bookmark-card').forEach(card => {
       if (currentSort === 'custom' && !batchMode) {
@@ -1991,26 +1979,20 @@ function renderBookmarks() {
       }
     });
 
-    // 恢复滚动位置（延迟执行，确保DOM完全渲染）
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        restoreBookmarksPageScrollPosition();
-      });
-    });
-    
+
     // 添加事件监听
     bookmarksGrid.querySelectorAll('.bookmark-card').forEach(card => {
       const bookmarkId = card.dataset.id;
       const bookmark = currentBookmarks.find(b => b.id === bookmarkId);
-      
+
       // 处理 favicon 图片加载错误（Firefox CSP 要求，不能使用内联 onerror）
       const faviconImg = card.querySelector('.bookmark-favicon[data-fallback-icon]');
       if (faviconImg) {
-        faviconImg.addEventListener('error', function() {
+        faviconImg.addEventListener('error', function () {
           this.src = 'data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath fill=%27%23999%27 d=%27M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z%27/%3E%3C/svg%3E';
         });
       }
-      
+
       // 批量选择模式
       if (batchMode) {
         const checkbox = card.querySelector('.bookmark-select-checkbox');
@@ -2041,7 +2023,7 @@ function renderBookmarks() {
         card.querySelector('.bookmark-info').addEventListener('click', () => {
           tabsAPI.create({ url: bookmark.url });
         });
-        
+
         // 收藏/取消收藏
         const starBtn = card.querySelector('.bookmark-star');
         if (starBtn) {
@@ -2050,7 +2032,7 @@ function renderBookmarks() {
             toggleStar(bookmarkId);
           });
         }
-        
+
         // 编辑
         const editBtn = card.querySelector('.edit-btn');
         if (editBtn) {
@@ -2059,7 +2041,7 @@ function renderBookmarks() {
             showEditForm(bookmark);
           });
         }
-        
+
         // 删除
         const deleteBtn = card.querySelector('.delete-btn');
         if (deleteBtn) {
@@ -2108,7 +2090,7 @@ function renderBookmarkCard(bookmark) {
   const domain = getDomain(bookmark.url);
   const isSelected = selectedBookmarkIds.has(bookmark.id);
   const showMobileReorder = currentSort === 'custom' && !batchMode && isMobileView();
-  
+
   return `
     <div class="bookmark-card ${bookmark.starred ? 'starred' : ''} ${isSelected ? 'selected' : ''}" data-id="${bookmark.id}">
       ${batchMode ? `
@@ -2155,21 +2137,21 @@ function showAddForm(data = {}) {
     clearTimeout(autoCloseTimer);
     autoCloseTimer = null;
   }
-  
+
   editingBookmarkId = null;
   document.getElementById('modalTitle').textContent = '添加书签';
   bookmarkForm.reset();
-  
+
   if (data.url) {
     document.getElementById('bookmarkUrl').value = data.url;
   }
   if (data.title) {
     document.getElementById('bookmarkTitle').value = data.title;
   }
-  
+
   // 加载文件夹选项
   loadFolderOptions();
-  
+
   bookmarkModal.style.display = 'flex';
 }
 
@@ -2182,19 +2164,19 @@ function showEditForm(bookmark) {
     clearTimeout(autoCloseTimer);
     autoCloseTimer = null;
   }
-  
+
   editingBookmarkId = bookmark.id;
   document.getElementById('modalTitle').textContent = '编辑书签';
-  
+
   document.getElementById('bookmarkTitle').value = bookmark.title || '';
   document.getElementById('bookmarkUrl').value = bookmark.url || '';
   document.getElementById('bookmarkDescription').value = bookmark.description || '';
   document.getElementById('bookmarkNotes').value = bookmark.notes || '';
   document.getElementById('bookmarkTags').value = bookmark.tags ? bookmark.tags.join(', ') : '';
   document.getElementById('bookmarkStarred').checked = bookmark.starred || false;
-  
+
   loadFolderOptions(bookmark.folder);
-  
+
   bookmarkModal.style.display = 'flex';
 }
 
@@ -2225,19 +2207,19 @@ function renderFolderTreeOptions(node, level = 0, selected = '') {
   let html = '';
   const indent = '&nbsp;&nbsp;&nbsp;&nbsp;'.repeat(level);
   const icon = level === 0 ? '' : '📁';
-  
+
   // 渲染当前节点（如果不是根节点）
   if (level > 0) {
     const isSelected = node.path === selected;
     html += `<option value="${escapeHtml(node.path)}" ${isSelected ? 'selected' : ''}>${indent}${icon} ${escapeHtml(node.name)}</option>`;
   }
-  
+
   // 递归渲染子节点
   const children = Object.values(node.children).sort((a, b) => a.name.localeCompare(b.name));
   children.forEach(child => {
     html += renderFolderTreeOptions(child, level + 1, selected);
   });
-  
+
   return html;
 }
 
@@ -2253,21 +2235,21 @@ function loadFolderOptions(selected = '') {
   const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
   const allFolders = [...new Set([...bookmarkFolders, ...currentFolders])];
   allFolders.sort();
-  
+
   // 构建树结构
   const tree = buildFolderTreeForSelect(allFolders);
-  
+
   // 渲染选项
   let html = '<option value="">📁 未分类</option>';
   html += renderFolderTreeOptions(tree, 0, selected);
-  
+
   select.innerHTML = html;
-  
+
   // 如果指定了 selected，确保选中
   if (selected) {
     select.value = selected;
   }
-  
+
   // 添加搜索功能（如果选项很多）
   if (allFolders.length > 10) {
     // 为 select 添加搜索提示
@@ -2283,21 +2265,21 @@ function loadFolderOptions(selected = '') {
 async function handleCreateFolderInForm() {
   const select = document.getElementById('bookmarkFolder');
   if (!select) return;
-  
+
   // 获取当前选择的文件夹路径（空字符串表示"未分类"）
   const currentSelectedPath = select.value.trim();
-  
+
   // 显示创建文件夹对话框
   const result = await showCreateFolderDialog(currentSelectedPath);
   if (!result) {
     return; // 用户取消
   }
-  
+
   const folderName = result.trim();
   if (!folderName) {
     return; // 输入为空
   }
-  
+
   // 构建完整路径
   let newPath = '';
   if (currentSelectedPath) {
@@ -2307,25 +2289,25 @@ async function handleCreateFolderInForm() {
     // 在根目录创建（"未分类"下不能直接创建子文件夹，只能在根目录创建）
     newPath = normalizeFolderPath(folderName);
   }
-  
+
   if (!newPath) {
     alert('文件夹路径不能为空');
     return;
   }
-  
+
   // 检查文件夹是否已存在
   const existingFolders = [...new Set([
     ...currentBookmarks.map(b => b.folder).filter(f => f),
     ...currentFolders
   ])];
-  
+
   if (existingFolders.includes(newPath)) {
     alert('该文件夹已存在');
     // 如果已存在，直接选中它
     loadFolderOptions(newPath);
     return;
   }
-  
+
   // 添加到文件夹列表（不排序，保持添加顺序，但去重）
   if (!currentFolders.includes(newPath)) {
     currentFolders = insertFolderPathSmart(currentFolders, newPath);
@@ -2334,7 +2316,7 @@ async function handleCreateFolderInForm() {
     // 仅更新内存和表单/侧边栏，不立即同步；真正保存和上行在用户点击“保存书签”时一起进行
     // 重新加载文件夹选项并自动选中新创建的文件夹
     loadFolderOptions(newPath);
-    
+
     // 同时更新侧边栏的文件夹列表
     await loadFolders();
   } else {
@@ -2361,7 +2343,7 @@ function showCreateFolderDialog(currentSelectedPath) {
       z-index: 2000;
       animation: fadeIn 0.2s ease-out;
     `;
-    
+
     // 添加动画样式
     if (!document.getElementById('dialog-animations')) {
       const style = document.createElement('style');
@@ -2378,7 +2360,7 @@ function showCreateFolderDialog(currentSelectedPath) {
       `;
       document.head.appendChild(style);
     }
-    
+
     const dialog = document.createElement('div');
     dialog.className = 'dialog-container';
     // 检测是否为移动设备
@@ -2394,12 +2376,12 @@ function showCreateFolderDialog(currentSelectedPath) {
       animation: slideUp 0.3s ease-out;
       position: relative;
     `;
-    
+
     // 构建提示信息
     let title = '创建新文件夹';
     let hintText = '';
     let placeholderText = '';
-    
+
     if (currentSelectedPath) {
       // 如果已选择了某个文件夹，在该文件夹下创建子文件夹
       title = '创建子文件夹';
@@ -2411,7 +2393,7 @@ function showCreateFolderDialog(currentSelectedPath) {
       hintText = '提示："未分类"不是真正的文件夹，新文件夹将在根目录创建。支持用 / 创建多级文件夹，如：项目/前端/UI';
       placeholderText = '请输入文件夹名称（支持用/创建多级）';
     }
-    
+
     dialog.innerHTML = `
       <div style="margin-bottom: 20px;">
         <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a; display: flex; align-items: center; gap: 8px;">
@@ -2507,7 +2489,7 @@ function hideModal() {
   }
   bookmarkModal.style.display = 'none';
   editingBookmarkId = null;
-  
+
   // 如果是从弹窗、悬浮球或快捷键打开的，关闭整个页面
   if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
     // 先尝试通过后台脚本关闭标签页
@@ -2532,7 +2514,7 @@ function hideModal() {
 function showSuccessInModal(message = '添加成功') {
   const modalBody = bookmarkForm;
   if (!modalBody) return;
-  
+
   // 显示成功消息（替换表单内容）
   modalBody.innerHTML = `
     <div style="
@@ -2560,7 +2542,7 @@ function showSuccessInModal(message = '添加成功') {
       </button>
     </div>
   `;
-  
+
   // 绑定关闭按钮事件
   const closeBtn = document.getElementById('successCloseBtn');
   if (closeBtn) {
@@ -2588,7 +2570,7 @@ function showSuccessInModal(message = '添加成功') {
  */
 async function handleSubmit(e) {
   e.preventDefault();
-  
+
   const bookmark = {
     title: document.getElementById('bookmarkTitle').value.trim(),
     url: document.getElementById('bookmarkUrl').value.trim(),
@@ -2601,20 +2583,20 @@ async function handleSubmit(e) {
     scene: currentSceneId || 'home', // 添加场景字段
     updatedAt: Date.now()
   };
-  
+
   if (!bookmark.title || !bookmark.url) {
     alert('请填写标题和URL');
     return;
   }
-  
+
   if (!isValidUrl(bookmark.url)) {
     alert('请输入有效的URL');
     return;
   }
-  
+
   try {
     const isNewBookmark = !editingBookmarkId;
-    
+
     if (editingBookmarkId) {
       // 更新
       const index = currentBookmarks.findIndex(b => b.id === editingBookmarkId);
@@ -2630,25 +2612,25 @@ async function handleSubmit(e) {
       bookmark.createdAt = Date.now();
       currentBookmarks = insertBookmarkSmart(currentBookmarks, bookmark);
     }
-    
+
     // 如果是自定义排序模式，自动按文件夹分组排序
     if (currentSort === 'custom') {
       currentBookmarks = sortBookmarksByFolder(currentBookmarks);
     }
-    
+
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-    
+
     // 同步到云端（同步当前场景的书签）
     await syncToCloud();
-    
+
     await loadBookmarks();
     await loadFolders();
     await loadTags();
-    
+
     // 不立即关闭模态框，先显示成功消息
     // 在模态框中显示成功提示
     showSuccessInModal('添加成功');
-    
+
     // 如果是从弹窗/悬浮球/快捷键打开的，操作完成后关闭页面
     if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
       if (isNewBookmark) {
@@ -2685,7 +2667,7 @@ async function toggleStar(bookmarkId) {
   if (bookmark) {
     bookmark.starred = !bookmark.starred;
     bookmark.updatedAt = Date.now();
-    
+
     try {
       await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
       await syncToCloud();
@@ -2703,21 +2685,21 @@ async function deleteBookmark(bookmarkId) {
   if (!confirm('确定要删除这个书签吗？')) {
     return;
   }
-  
+
   currentBookmarks = currentBookmarks.filter(b => b.id !== bookmarkId);
-  
+
   // 如果是自定义排序模式，确保删除后仍按文件夹顺序排列
   if (currentSort === 'custom') {
     currentBookmarks = sortBookmarksByFolder(currentBookmarks);
   }
-  
+
   try {
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
     await syncToCloud();
     await loadBookmarks();
     await loadFolders();
     await loadTags();
-    
+
     // 删除完成后不关闭页面，保持在书签管理页面
   } catch (error) {
     console.error('删除失败:', error);
@@ -2744,7 +2726,7 @@ function toggleView() {
   if (currentSort === 'custom') {
     renderBookmarks();
   }
-  
+
   try {
     applyViewMode();
     console.log('[视图切换] applyViewMode 执行完成');
@@ -2762,7 +2744,7 @@ function handleExport() {
   const menu = document.createElement('div');
   menu.className = 'export-menu';
   menu.style.cssText = 'position: fixed; top: 60px; right: 20px; background: white; border: 1px solid #ddd; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 1000; padding: 8px; min-width: 150px;';
-  
+
   const jsonBtn = document.createElement('button');
   jsonBtn.textContent = '导出为JSON';
   jsonBtn.className = 'btn btn-secondary';
@@ -2771,7 +2753,7 @@ function handleExport() {
     exportAsJson();
     menu.remove();
   };
-  
+
   const htmlBtn = document.createElement('button');
   htmlBtn.textContent = '导出为HTML';
   htmlBtn.className = 'btn btn-secondary';
@@ -2780,11 +2762,11 @@ function handleExport() {
     exportAsHtml();
     menu.remove();
   };
-  
+
   menu.appendChild(jsonBtn);
   menu.appendChild(htmlBtn);
   document.body.appendChild(menu);
-  
+
   // 点击外部关闭
   setTimeout(() => {
     const closeMenu = (e) => {
@@ -2850,13 +2832,13 @@ function applyViewMode() {
   console.log('[视图切换] bookmarksGrid:', bookmarksGrid);
   console.log('[视图切换] viewToggle:', viewToggle);
   console.log('[视图切换] 窗口宽度:', window.innerWidth, '是否为移动端:', window.innerWidth <= 768);
-  
+
   if (bookmarksGrid) {
     const newClassName = `bookmarks-grid view-${currentView}`;
     console.log('[视图切换] 设置 className:', newClassName);
     bookmarksGrid.className = newClassName;
     console.log('[视图切换] 实际 className:', bookmarksGrid.className);
-    
+
     // 检查计算后的样式
     setTimeout(() => {
       const computedStyle = window.getComputedStyle(bookmarksGrid);
@@ -2866,7 +2848,7 @@ function applyViewMode() {
   } else {
     console.error('[视图切换] bookmarksGrid 元素未找到！');
   }
-  
+
   if (viewToggle) {
     const newText = currentView === 'grid' ? '📋' : '⊞';
     console.log('[视图切换] 设置按钮文本:', newText);
@@ -2889,7 +2871,7 @@ async function loadSettings() {
     } else {
       viewOptions = { ...defaultViewOptions };
     }
-    
+
     // viewMode 从本地存储读取，不从云端同步的设置中读取
     let localViewMode = null;
     if (typeof browser !== 'undefined' && browser.storage) {
@@ -2902,7 +2884,7 @@ async function loadSettings() {
         });
       });
     }
-    
+
     if (localViewMode) {
       currentView = localViewMode;
     } else {
@@ -2956,7 +2938,7 @@ async function exportAsJson() {
     // 只导出当前场景的书签
     const data = await storage.getBookmarks(currentSceneId);
     const jsonData = JSON.stringify(data, null, 2);
-    
+
     const blob = new Blob([jsonData], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2964,7 +2946,7 @@ async function exportAsJson() {
     a.download = `bookmarks_${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    
+
     alert('导出成功');
   } catch (error) {
     alert('导出失败: ' + error.message);
@@ -2979,10 +2961,10 @@ async function exportAsHtml() {
     // 只导出当前场景的书签
     const data = await storage.getBookmarks(currentSceneId);
     const bookmarks = data.bookmarks || [];
-    
+
     if (typeof exportToHtml === 'function') {
       const htmlData = exportToHtml(bookmarks, data.folders || []);
-      
+
       const blob = new Blob([htmlData], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -2990,7 +2972,7 @@ async function exportAsHtml() {
       a.download = `bookmarks_${Date.now()}.html`;
       a.click();
       URL.revokeObjectURL(url);
-      
+
       alert('导出成功');
     } else {
       alert('HTML导出功能未加载');
@@ -3006,7 +2988,7 @@ async function exportAsHtml() {
 async function handleSync() {
   syncBtn.disabled = true;
   syncBtn.textContent = '同步中...';
-  
+
   try {
     const response = await sendMessageCompat({ action: 'sync' });
     if (response && response.success) {
@@ -3119,21 +3101,21 @@ async function batchMoveBookmarks() {
     alert('请先选择要移动的书签');
     return;
   }
-  
+
   // 显示文件夹选择对话框
   const targetFolder = await showFolderSelectDialog();
   if (targetFolder === null) return; // 用户取消（null 表示取消，空字符串表示"未分类"）
-  
+
   try {
     const bookmarksToMove = currentBookmarks.filter(b => selectedBookmarkIds.has(b.id));
-    
+
     // 更新书签的文件夹（与单个编辑逻辑一致：空字符串转为 undefined）
     const normalizedTargetFolder = targetFolder.trim() ? normalizeFolderPath(targetFolder) : undefined;
     bookmarksToMove.forEach(bookmark => {
       bookmark.folder = normalizedTargetFolder;
       bookmark.updatedAt = Date.now();
     });
-    
+
     // 更新 currentFolders：保留现有顺序，添加新文件夹
     const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
     const bookmarkFoldersSet = new Set(bookmarkFolders);
@@ -3141,25 +3123,25 @@ async function batchMoveBookmarks() {
     const existingFolders = currentFolders.filter(f => bookmarkFoldersSet.has(f));
     const newFolders = bookmarkFolders.filter(f => !currentFolders.includes(f));
     currentFolders = [...existingFolders, ...newFolders];
-    
+
     // 如果是自定义排序模式，确保移动后仍按文件夹顺序排列
     if (currentSort === 'custom') {
       currentBookmarks = sortBookmarksByFolder(currentBookmarks);
     }
-    
+
     // 保存到本地
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-    
+
     // 同步到云端（与单个编辑逻辑一致：使用 syncToCloud）
     await syncToCloud();
-    
+
     // 退出批量模式并刷新
     toggleBatchMode();
     await loadBookmarks();
     await loadFolders();
     await loadTags();
     renderBookmarks();
-    
+
     alert(`已成功移动 ${bookmarksToMove.length} 个书签`);
   } catch (error) {
     console.error('批量移动失败:', error);
@@ -3175,42 +3157,42 @@ async function batchDeleteBookmarks() {
     alert('请先选择要删除的书签');
     return;
   }
-  
+
   const count = selectedBookmarkIds.size;
   const confirmMessage = `确定要删除选中的 ${count} 个书签吗？此操作不可恢复。`;
-  
+
   if (!confirm(confirmMessage)) {
     return;
   }
-  
+
   try {
     // 删除选中的书签
     currentBookmarks = currentBookmarks.filter(b => !selectedBookmarkIds.has(b.id));
-    
+
     // 更新文件夹列表：保留现有顺序，移除不再使用的文件夹
     const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
     const bookmarkFoldersSet = new Set(bookmarkFolders);
     // 保留 currentFolders 中仍然有书签使用的文件夹（保持顺序）
     currentFolders = currentFolders.filter(f => bookmarkFoldersSet.has(f));
-    
+
     // 如果是自定义排序模式，确保删除后仍按文件夹顺序排列
     if (currentSort === 'custom') {
       currentBookmarks = sortBookmarksByFolder(currentBookmarks);
     }
-    
+
     // 保存到本地
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-    
+
     // 同步到云端
     await syncToCloud();
-    
+
     // 退出批量模式并刷新
     toggleBatchMode();
     await loadBookmarks();
     await loadFolders();
     await loadTags();
     renderBookmarks();
-    
+
     alert(`已成功删除 ${count} 个书签`);
   } catch (error) {
     console.error('批量删除失败:', error);
@@ -3239,7 +3221,7 @@ function showFolderSelectDialog(options = {}) {
       z-index: 2000;
       animation: fadeIn 0.2s ease-out;
     `;
-    
+
     const dialog = document.createElement('div');
     dialog.className = 'dialog-container';
     // 检测是否为移动设备
@@ -3258,11 +3240,11 @@ function showFolderSelectDialog(options = {}) {
       animation: slideUp 0.3s ease-out;
       position: relative;
     `;
-    
+
     // 与单个编辑时的 loadFolderOptions 逻辑一致：合并从书签中提取的文件夹和 currentFolders 中的文件夹
     const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
     let folders = [...new Set([...bookmarkFolders, ...currentFolders])];
-    
+
     // 如果指定了要排除的文件夹，过滤掉该文件夹及其子文件夹
     if (excludeFolderPath) {
       folders = folders.filter(f => {
@@ -3273,23 +3255,23 @@ function showFolderSelectDialog(options = {}) {
         return true;
       });
     }
-    
+
     folders.sort();
-    
+
     // 构建树结构
     const tree = buildFolderTreeForSelect(folders);
-    
+
     // 渲染选项
     let folderOptions = '<option value="">📁 未分类</option>';
     folderOptions += renderFolderTreeOptions(tree, 0, '');
-    
+
     const selectSize = isMobile ? 8 : 12;
     const inputPadding = isMobile ? '12px' : '8px 12px';
     const inputFontSize = isMobile ? '16px' : '14px';
     const selectFontSize = isMobile ? '16px' : '14px';
     const minHeight = isMobile ? '250px' : '200px';
     const maxHeight = isMobile ? '50vh' : '400px';
-    
+
     dialog.innerHTML = `
       <div style="margin-bottom: 20px;">
         <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a; display: flex; align-items: center; gap: 8px;">
@@ -3317,7 +3299,7 @@ function showFolderSelectDialog(options = {}) {
     const searchInput = dialog.querySelector('#folderSearchInput');
     const cancelBtn = dialog.querySelector('#folderSelectCancelBtn');
     const okBtn = dialog.querySelector('#folderSelectOkBtn');
-    
+
     // 添加搜索功能
     if (searchInput) {
       // 搜索框焦点样式
@@ -3329,7 +3311,7 @@ function showFolderSelectDialog(options = {}) {
         searchInput.style.borderColor = '#e0e0e0';
         searchInput.style.boxShadow = 'none';
       });
-      
+
       const allOptions = Array.from(folderSelect.options);
       searchInput.addEventListener('input', (e) => {
         const query = e.target.value.toLowerCase().trim();
@@ -3340,7 +3322,7 @@ function showFolderSelectDialog(options = {}) {
           });
           return;
         }
-        
+
         // 过滤选项
         allOptions.forEach(opt => {
           const text = opt.textContent.toLowerCase();
@@ -3393,89 +3375,5 @@ selectAllBtn.addEventListener('click', toggleSelectAll);
 // 全局函数供HTML调用
 window.showAddForm = showAddForm;
 
-/**
- * 保存滚动位置（书签管理页面）
- */
-function saveBookmarksPageScrollPosition() {
-  try {
-    const bookmarksContainer = document.querySelector('.bookmarks-container');
-    let scrollTop = 0;
-    
-    if (bookmarksContainer) {
-      scrollTop = bookmarksContainer.scrollTop;
-    } else {
-      scrollTop = window.scrollY || window.pageYOffset || 0;
-    }
-    
-    if (scrollTop === undefined || scrollTop === null || scrollTop < 0) return;
-    
-    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
-    const state = {
-      bookmarksPageScrollPosition: scrollTop
-    };
-    if (typeof browser !== 'undefined' && browser.storage) {
-      browser.storage.local.set(state);
-    } else {
-      chrome.storage.local.set(state, () => {});
-    }
-  } catch (e) {
-    console.warn('保存滚动位置失败:', e);
-  }
-}
-
-/**
- * 恢复滚动位置（书签管理页面）
- */
-async function restoreBookmarksPageScrollPosition() {
-  try {
-    const bookmarksContainer = document.querySelector('.bookmarks-container');
-    if (!bookmarksContainer) {
-      // 如果没有容器，尝试使用 window
-      const result = typeof browser !== 'undefined' && browser.storage
-        ? await browser.storage.local.get(['bookmarksPageScrollPosition'])
-        : await new Promise(resolve => {
-            chrome.storage.local.get(['bookmarksPageScrollPosition'], resolve);
-          });
-      const scrollTop = result && result.bookmarksPageScrollPosition;
-      if (scrollTop !== undefined && scrollTop !== null && scrollTop >= 0) {
-        window.scrollTo(0, scrollTop);
-      }
-      return;
-    }
-    
-    const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
-    const result = typeof browser !== 'undefined' && browser.storage
-      ? await browser.storage.local.get(['bookmarksPageScrollPosition'])
-      : await new Promise(resolve => {
-          chrome.storage.local.get(['bookmarksPageScrollPosition'], resolve);
-        });
-    const scrollTop = result && result.bookmarksPageScrollPosition;
-    if (scrollTop !== undefined && scrollTop !== null && scrollTop >= 0) {
-      // 确保元素已渲染且有内容
-      const maxScroll = bookmarksContainer.scrollHeight - bookmarksContainer.clientHeight;
-      const targetScroll = Math.min(scrollTop, maxScroll);
-      
-      // 如果内容高度足够，立即设置；否则等待内容加载
-      if (maxScroll > 0) {
-        bookmarksContainer.scrollTop = targetScroll;
-      } else {
-        // 内容可能还在加载，使用轮询方式等待
-        let retries = 10;
-        const tryRestore = () => {
-          const currentMaxScroll = bookmarksContainer.scrollHeight - bookmarksContainer.clientHeight;
-          if (currentMaxScroll > 0 || retries <= 0) {
-            bookmarksContainer.scrollTop = Math.min(scrollTop, currentMaxScroll);
-          } else {
-            retries--;
-            setTimeout(tryRestore, 50);
-          }
-        };
-        setTimeout(tryRestore, 100);
-      }
-    }
-  } catch (e) {
-    console.warn('恢复滚动位置失败:', e);
-  }
-}
 
 
