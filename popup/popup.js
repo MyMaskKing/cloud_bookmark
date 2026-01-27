@@ -1039,9 +1039,8 @@ addCurrentBtn.addEventListener('click', async () => {
   let targetUrl, targetTitle;
 
   if (urlFromParams && titleFromParams) {
-    // 使用从悬浮球传递过来的信息（从 content script 直接获取，准确）
-    targetUrl = decodeURIComponent(urlFromParams);
-    targetTitle = decodeURIComponent(titleFromParams);
+    targetUrl = urlFromParams;
+    targetTitle = titleFromParams;
     pushOpLog(`addCurrent: using params from floating ball url=${targetUrl}`);
   } else {
     // 回退到查询标签页（PC 端或非悬浮球触发的情况）
