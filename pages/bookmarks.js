@@ -1457,8 +1457,11 @@ async function renameFolderPath(oldPath, newPath) {
     currentBookmarks = sortBookmarksByFolder(currentBookmarks);
   }
 
+  // 1. 保存到本地
   await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-  await syncToCloud();
+
+  // 2. 异步同步到云端
+  syncToCloud().catch(err => console.error('重命名后台同步失败:', err));
 }
 
 /**
@@ -1526,8 +1529,13 @@ async function handleAddFolder() {
   }
   currentFolders = insertFolderPathSmart(currentFolders, normalized);
   currentFolders = expandFolderPathsPreserveOrder(currentFolders);
+  // 1. 保存到本地
   await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-  await syncToCloud();
+
+  // 2. 异步同步到云端
+  syncToCloud().catch(err => console.error('新增文件夹后台同步失败:', err));
+
+  // 3. 立即刷新 UI
   await loadFolders();
   await loadTags();
 }
@@ -1546,8 +1554,11 @@ async function deleteFolderPath(folderPath) {
   });
   // 删除文件夹记录
   currentFolders = currentFolders.filter(f => f !== folderPath && !f.startsWith(folderPath + '/'));
+  // 1. 保存到本地
   await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-  await syncToCloud();
+
+  // 2. 异步同步到云端
+  syncToCloud().catch(err => console.error('删除文件夹后台同步失败:', err));
 }
 
 /**
@@ -1631,8 +1642,13 @@ function openFolderMenu(anchorBtn, folderPath) {
         }
         currentFolders = insertFolderPathSmart(currentFolders, newPath);
         currentFolders = expandFolderPathsPreserveOrder(currentFolders);
+        // 1. 保存到本地
         await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-        await syncToCloud();
+
+        // 2. 异步同步到云端
+        syncToCloud().catch(err => console.error('菜单新增子文件夹后台同步失败:', err));
+
+        // 3. 刷新 UI
         await loadFolders();
         await loadTags();
       } else if (action === 'rename') {
@@ -2571,6 +2587,14 @@ function showSuccessInModal(message = '添加成功') {
 async function handleSubmit(e) {
   e.preventDefault();
 
+  // 获取提交按钮并立即禁用，防止重复提交
+  const submitBtn = bookmarkForm.querySelector('button[type="submit"]');
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    const originalText = submitBtn.textContent;
+    submitBtn.textContent = '保存中...';
+  }
+
   const bookmark = {
     title: document.getElementById('bookmarkTitle').value.trim(),
     url: document.getElementById('bookmarkUrl').value.trim(),
@@ -2586,11 +2610,19 @@ async function handleSubmit(e) {
 
   if (!bookmark.title || !bookmark.url) {
     alert('请填写标题和URL');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '保存';
+    }
     return;
   }
 
   if (!isValidUrl(bookmark.url)) {
     alert('请输入有效的URL');
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '保存';
+    }
     return;
   }
 
@@ -2618,37 +2650,36 @@ async function handleSubmit(e) {
       currentBookmarks = sortBookmarksByFolder(currentBookmarks);
     }
 
+    // 1. 先保存到本地存储（核心反馈点）
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
-    // 同步到云端（同步当前场景的书签）
-    await syncToCloud();
+    // 2. 异步触发云端同步，不 await，不阻塞 UI
+    syncToCloud().catch(err => console.error('背景同步失败:', err));
 
+    // 3. 立即刷新本地 UI
     await loadBookmarks();
     await loadFolders();
     await loadTags();
 
-    // 不立即关闭模态框，先显示成功消息
-    // 在模态框中显示成功提示
-    showSuccessInModal('添加成功');
+    // 4. 显示成功提示并快速后续处理
+    showSuccessInModal(isNewBookmark ? '添加成功' : '保存成功');
 
     // 如果是从弹窗/悬浮球/快捷键打开的，操作完成后关闭页面
     if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
       if (isNewBookmark) {
-        // 新增书签：显示成功提示，1.5秒后关闭页面
+        // 新增书签：显示成功提示，0.8秒后快速关闭页面（缩短时间，提高响应感）
         autoCloseTimer = setTimeout(() => {
-          // 先关闭模态框
           hideModal();
-          // hideModal 中会处理关闭页面
-        }, 1500);
+        }, 800);
       } else {
-        // 编辑书签：直接关闭模态框（hideModal 中会处理关闭页面）
+        // 编辑书签：直接关闭模态框
         hideModal();
       }
     } else if (isNewBookmark) {
-      // 其他情况：新增书签显示成功提示，1.5秒后关闭模态框
+      // 其他情况：新增书签显示成功提示，0.8秒后关闭模态框
       autoCloseTimer = setTimeout(() => {
         hideModal();
-      }, 1500);
+      }, 800);
     } else {
       // 其他情况：编辑书签直接关闭模态框
       hideModal();
@@ -2656,6 +2687,10 @@ async function handleSubmit(e) {
   } catch (error) {
     console.error('保存失败:', error);
     alert('保存失败: ' + error.message);
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '保存';
+    }
   }
 }
 
@@ -2669,9 +2704,14 @@ async function toggleStar(bookmarkId) {
     bookmark.updatedAt = Date.now();
 
     try {
+      // 1. 先保存到本地
       await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-      await syncToCloud();
+
+      // 2. 立即渲染界面
       renderBookmarks();
+
+      // 3. 异步触发云端同步
+      syncToCloud().catch(err => console.error('收藏状态后台同步失败:', err));
     } catch (error) {
       console.error('更新失败:', error);
     }
@@ -2694,13 +2734,15 @@ async function deleteBookmark(bookmarkId) {
   }
 
   try {
+    // 1. 先保存到本地并刷新 UI（乐观更新）
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-    await syncToCloud();
+
     await loadBookmarks();
     await loadFolders();
     await loadTags();
 
-    // 删除完成后不关闭页面，保持在书签管理页面
+    // 2. 异步触发云端同步
+    syncToCloud().catch(err => console.error('删除书签后台同步失败:', err));
   } catch (error) {
     console.error('删除失败:', error);
     alert('删除失败: ' + error.message);
@@ -3130,17 +3172,18 @@ async function batchMoveBookmarks() {
     }
 
     // 保存到本地
+    // 1. 保存到本地存储
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
-    // 同步到云端（与单个编辑逻辑一致：使用 syncToCloud）
-    await syncToCloud();
-
-    // 退出批量模式并刷新
+    // 2. 立即渲染界面（乐观更新）
     toggleBatchMode();
     await loadBookmarks();
     await loadFolders();
     await loadTags();
     renderBookmarks();
+
+    // 3. 异步触发云端同步
+    syncToCloud().catch(err => console.error('批量移动后台同步失败:', err));
 
     alert(`已成功移动 ${bookmarksToMove.length} 个书签`);
   } catch (error) {
@@ -3180,18 +3223,18 @@ async function batchDeleteBookmarks() {
       currentBookmarks = sortBookmarksByFolder(currentBookmarks);
     }
 
-    // 保存到本地
+    // 1. 保存到本地
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
-    // 同步到云端
-    await syncToCloud();
-
-    // 退出批量模式并刷新
+    // 2. 立即刷新本地 UI 状态（乐观更新）
     toggleBatchMode();
     await loadBookmarks();
     await loadFolders();
     await loadTags();
     renderBookmarks();
+
+    // 3. 异步触发云端同步
+    syncToCloud().catch(err => console.error('批量删除后台同步失败:', err));
 
     alert(`已成功删除 ${count} 个书签`);
   } catch (error) {

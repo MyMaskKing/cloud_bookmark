@@ -1462,7 +1462,7 @@ async function handleDeleteBookmark(bookmarkId) {
     // 删除指定的书签
     const remainingBookmarks = allBookmarks.filter(b => b.id !== bookmarkId);
 
-    // 更新文件夹列表（移除不再使用的文件夹，但保留父级层级，避免云端 folders 缺层）
+    // 更新文件夹列表
     const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
     const expandFolderPathsPreserveOrder = (paths) => {
       const out = [];
@@ -1485,28 +1485,30 @@ async function handleDeleteBookmark(bookmarkId) {
 
     const usedLeafFolders = remainingBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean);
     const { seen: usedWithParentsSet, out: usedWithParentsOrder } = expandFolderPathsPreserveOrder(usedLeafFolders);
-    // 先保留现有 allFolders 的顺序，再补齐缺失的父级/层级
     const remainingFolders = [
       ...(allFolders || []).map(normalizeFolder).filter(f => f && usedWithParentsSet.has(f)),
       ...usedWithParentsOrder.filter(f => f && !(allFolders || []).includes(f))
     ];
 
-    // 保存到本地
+    // 1. 先保存到本地并立即更新 UI（乐观更新）
     await storage.saveBookmarks(remainingBookmarks, remainingFolders, currentSceneId);
 
-    // 同步到云端
-    await sendMessageCompat({
+    // 立即重新加载弹出页书签列表，展示删除后的结果
+    await loadBookmarksForPopup();
+
+    // 2. 异步触发云端同步，不 await
+    sendMessageCompat({
       action: 'syncToCloud',
       bookmarks: remainingBookmarks,
       folders: remainingFolders,
       sceneId: currentSceneId
-    });
+    }).catch(err => console.error('删除后的后台同步失败:', err));
 
-    // 重新加载书签
-    await loadBookmarksForPopup();
   } catch (error) {
     console.error('删除书签失败:', error);
     alert('删除失败: ' + error.message);
+    // 错误时重新加载以恢复 UI 状态
+    await loadBookmarksForPopup();
   }
 }
 

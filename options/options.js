@@ -6,9 +6,9 @@ const storage = new StorageManager();
 const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
 
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
-const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function(message, callback) {
+const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function (message, callback) {
   const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
-  
+
   if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
     // Firefox: 使用 Promise
     return runtime.sendMessage(message).then(response => {
@@ -22,13 +22,13 @@ const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : fun
         String(error).includes('Receiving end does not exist') ||
         String(error).includes('Could not establish connection')
       );
-      
+
       if (isReceivingEndError) {
         // 静默处理，返回 null 而不是抛出错误
         if (callback) callback(null);
         return null;
       }
-      
+
       // 其他错误正常抛出
       if (callback) callback(null);
       throw error;
@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadFloatingBallSetting();
   await loadShortcutDisplay();
   await loadScenes();
-  
+
   // 定时更新同步状态
   setInterval(updateSyncStatus, 5000);
 });
@@ -164,7 +164,7 @@ async function loadConfig() {
  */
 configForm.addEventListener('submit', async (e) => {
   e.preventDefault();
-  
+
   const config = {
     serverUrl: serverUrlInput.value.trim(),
     username: usernameInput.value.trim(),
@@ -172,7 +172,7 @@ configForm.addEventListener('submit', async (e) => {
     path: pathInput.value.trim() || '/bookmarks/',
     syncInterval: parseInt(syncIntervalInput.value) || 5
   };
-  
+
   try {
     // 先测试连接，失败则中断保存
     const tester = new WebDAVClient(config);
@@ -189,23 +189,23 @@ configForm.addEventListener('submit', async (e) => {
     await storage.saveConfig(config);
     // WebDAV配置变更后，清空已同步场景列表，让所有场景重新同步
     await storage.clearSyncedScenes();
-    
+
     if (isFirstTime) {
       showMessage('配置已保存，正在归档本地书签并同步到云端…', 'success');
     } else {
       showMessage('配置已保存，正在清空本地数据并从云端重新同步…', 'success');
     }
-    
+
     try {
       // 通知后台更新同步任务
-      await sendMessageCompat({ 
+      await sendMessageCompat({
         action: 'configUpdated',
-        config 
+        config
       });
 
       // Firefox 中可能需要等待 background script 准备好，添加短暂延迟
       await new Promise(resolve => setTimeout(resolve, 100));
-      
+
       // 非首次保存时，先清空本地数据，避免旧数据被同步到新云端
       if (!isFirstTime) {
         console.log('[保存配置] 非首次保存，先清空本地数据');
@@ -218,18 +218,18 @@ configForm.addEventListener('submit', async (e) => {
           console.warn('[保存配置] 清空本地数据时出错，继续同步:', error.message);
         }
       }
-      
+
       // 从新云端同步设置（非首次保存时，本地数据已清空，会使用新云端的内容）
       // 非首次保存时，传递 forceClear: true，确保即使云端没有场景列表也清空本地场景列表
       try {
-        const syncSettingsResponse = await sendMessageCompat({ 
+        const syncSettingsResponse = await sendMessageCompat({
           action: 'syncSettingsFromCloud',
           forceClear: !isFirstTime  // 非首次保存时，强制清空场景列表
         });
         // 如果返回 null（Firefox 中 background script 未准备好），等待后重试一次
         if (syncSettingsResponse === null) {
           await new Promise(resolve => setTimeout(resolve, 300));
-          await sendMessageCompat({ 
+          await sendMessageCompat({
             action: 'syncSettingsFromCloud',
             forceClear: !isFirstTime  // 非首次保存时，强制清空场景列表
           });
@@ -245,7 +245,7 @@ configForm.addEventListener('submit', async (e) => {
           console.warn('同步设置失败:', error.message || error);
         }
       }
-      
+
       // 等待设备注册完成（带重试机制）
       // 非首次保存时，本地数据已清空，注册设备时会从新云端拉取设备列表
       let registerSuccess = false;
@@ -287,7 +287,7 @@ configForm.addEventListener('submit', async (e) => {
           }
         }
       }
-      
+
       const currentSceneId = await storage.getCurrentScene();
       try {
         // 保存配置时只注册设备，不进行设备检测（skipDeviceDetection: true）
@@ -295,10 +295,10 @@ configForm.addEventListener('submit', async (e) => {
         // skipDeviceListSync: true - 跳过设备列表同步，避免覆盖刚注册的设备（首次保存时）
         // clearLocalFirst: false - 非首次保存时，已经在前面清空了本地数据，这里不再清空
         const syncResponse = await sendWithRetry(
-          { 
-            action: 'sync', 
-            sceneId: currentSceneId, 
-            skipDeviceDetection: true, 
+          {
+            action: 'sync',
+            sceneId: currentSceneId,
+            skipDeviceDetection: true,
             skipDeviceListSync: isFirstTime, // 首次保存时跳过设备列表同步，非首次保存时同步设备列表
             clearLocalFirst: false // 非首次保存时已经在前面清空了，这里不再清空
           },
@@ -313,7 +313,7 @@ configForm.addEventListener('submit', async (e) => {
           console.warn('同步失败:', error.message || error);
         }
       }
-      
+
       // 刷新设置页面显示云端同步的最新数据
       loadScenes();
       loadDevices();
@@ -340,19 +340,19 @@ testBtn.addEventListener('click', async () => {
     password: passwordInput.value,
     path: pathInput.value.trim() || '/bookmarks/'
   };
-  
+
   if (!config.serverUrl || !config.username || !config.password) {
     showMessage('请填写完整的配置信息', 'error');
     return;
   }
-  
+
   testBtn.disabled = true;
   testBtn.textContent = '测试中...';
-  
+
   try {
     const webdav = new WebDAVClient(config);
     const result = await webdav.testConnection();
-    
+
     if (result.success) {
       showMessage('连接成功', 'success');
     } else {
@@ -376,9 +376,9 @@ exportConfigBtn.addEventListener('click', async () => {
       showMessage('没有可导出的配置', 'error');
       return;
     }
-    
+
     const configText = `${config.serverUrl}\n${config.username || ''}\n${config.password || ''}`;
-    
+
     // 复制到剪贴板
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(configText);
@@ -410,14 +410,14 @@ exportConfigBtn.addEventListener('click', async () => {
 importConfigBtn.addEventListener('click', async () => {
   const result = await showImportConfigDialog();
   if (!result) return;
-  
+
   const { serverUrl, username, password } = result;
-  
+
   // 填充到表单
   serverUrlInput.value = serverUrl || '';
   usernameInput.value = username || '';
   passwordInput.value = password || '';
-  
+
   showMessage('配置已导入，请检查后保存', 'success');
 });
 
@@ -488,17 +488,17 @@ function showImportConfigDialog() {
         alert('请输入配置信息');
         return;
       }
-      
+
       const lines = text.split('\n').map(line => line.trim()).filter(line => line);
       if (lines.length < 1) {
         alert('配置格式不正确，至少需要提供服务器地址');
         return;
       }
-      
+
       const serverUrl = lines[0];
       const username = lines[1] || '';
       const password = lines[2] || '';
-      
+
       cleanup();
       resolve({ serverUrl, username, password });
     };
@@ -513,9 +513,9 @@ function showImportConfigDialog() {
 syncNowBtn.addEventListener('click', async () => {
   syncNowBtn.disabled = true;
   syncNowBtn.textContent = '同步中...';
-  
+
   try {
-  const response = await sendMessageCompat({ action: 'sync' });
+    const response = await sendMessageCompat({ action: 'sync' });
     if (response && response.success) {
       showMessage('同步成功', 'success');
       setTimeout(updateSyncStatus, 1000);
@@ -537,7 +537,7 @@ syncUploadBtn.addEventListener('click', async () => {
   syncUploadBtn.disabled = true;
   syncUploadBtn.textContent = '上传中...';
   try {
-  const response = await sendMessageCompat({ action: 'syncUpload' });
+    const response = await sendMessageCompat({ action: 'syncUpload' });
     if (response && response.success) {
       showMessage('上传成功', 'success');
     } else {
@@ -556,23 +556,23 @@ syncUploadBtn.addEventListener('click', async () => {
  */
 async function updateSyncStatus() {
   const status = await storage.getSyncStatus();
-  
+
   const statusMap = {
     'idle': '空闲',
     'syncing': '同步中',
     'success': '成功',
     'error': '错误'
   };
-  
+
   statusText.textContent = statusMap[status.status] || '-';
   statusText.className = 'value ' + status.status;
-  
+
   if (status.lastSync) {
     lastSync.textContent = formatTime(status.lastSync);
   } else {
     lastSync.textContent = '从未同步';
   }
-  
+
   if (status.error) {
     errorItem.style.display = 'flex';
     errorText.textContent = status.error;
@@ -590,7 +590,7 @@ exportJsonBtn.addEventListener('click', async () => {
     const currentSceneId = await storage.getCurrentScene();
     const data = await storage.getBookmarks(currentSceneId);
     const jsonData = JSON.stringify(data, null, 2);
-    
+
     const blob = new Blob([jsonData], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -598,7 +598,7 @@ exportJsonBtn.addEventListener('click', async () => {
     a.download = `bookmarks_${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
-    
+
     showMessage('导出成功', 'success');
   } catch (error) {
     showMessage('导出失败: ' + error.message, 'error');
@@ -614,10 +614,10 @@ exportHtmlBtn.addEventListener('click', async () => {
     const currentSceneId = await storage.getCurrentScene();
     const data = await storage.getBookmarks(currentSceneId);
     const bookmarks = data.bookmarks || [];
-    
+
     if (typeof exportToHtml === 'function') {
       const htmlData = exportToHtml(bookmarks, data.folders || []);
-      
+
       const blob = new Blob([htmlData], { type: 'text/html' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -625,7 +625,7 @@ exportHtmlBtn.addEventListener('click', async () => {
       a.download = `bookmarks_${Date.now()}.html`;
       a.click();
       URL.revokeObjectURL(url);
-      
+
       showMessage('导出成功', 'success');
     } else {
       showMessage('HTML导出功能未加载', 'error');
@@ -642,7 +642,7 @@ importBrowserBtn.addEventListener('click', async () => {
   if (!confirm('这将导入浏览器书签栏中的所有书签，是否继续？')) {
     return;
   }
-  
+
   try {
     // 选择导入场景
     const targetSceneId = await showSceneSelectDialog();
@@ -650,14 +650,14 @@ importBrowserBtn.addEventListener('click', async () => {
       // 用户取消了选择
       return;
     }
-    
+
     if (typeof importFromBrowserBookmarks === 'function') {
       const data = await importFromBrowserBookmarks();
       if (data.unsupported) {
         showMessage(data.reason || '当前浏览器不支持书签 API，请改用 HTML 导入或桌面浏览器', 'error');
         return;
       }
-      
+
       // 规范化路径 + 补齐父级路径（保证 folders 与画面树一致，例如补齐 “.../4.仕事&邮件”）
       const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
       const expandFolderPathsPreserveOrder = (paths) => {
@@ -689,7 +689,7 @@ importBrowserBtn.addEventListener('click', async () => {
       const sceneBookmarks = sceneData.bookmarks || [];
       const urlMap = new Map();
       sceneBookmarks.forEach(b => urlMap.set(b.url, b));
-      
+
       let added = 0;
       importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
@@ -698,7 +698,7 @@ importBrowserBtn.addEventListener('click', async () => {
           added += 1;
         }
       });
-      
+
       // folders：优先使用导入返回的 folders（完整层级），并补齐父级；再补上书签中引用的 folder
       const importedFoldersRaw = (data.folders || []).map(normalizeFolder).filter(Boolean);
       const bookmarkFoldersRaw = sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean);
@@ -706,15 +706,15 @@ importBrowserBtn.addEventListener('click', async () => {
 
       // 仅更新目标场景（保留其他场景不变），并保存该场景的 folders（包含父级层级）
       await storage.saveBookmarks(sceneBookmarks, foldersForScene, targetSceneId);
-      
+
       // 同步到云端（同步到选择的场景）
-      await sendMessageCompat({ 
-        action: 'syncToCloud', 
+      await sendMessageCompat({
+        action: 'syncToCloud',
         bookmarks: sceneBookmarks,
         folders: foldersForScene,
         sceneId: targetSceneId // 明确指定场景ID
       });
-      
+
       const scenes = await storage.getScenes();
       const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
       showMessage(`导入成功，新增 ${added} 个书签到"${sceneName}"场景`, 'success');
@@ -731,45 +731,45 @@ importBrowserBtn.addEventListener('click', async () => {
  */
 checkInvalidUrlsBtn.addEventListener('click', async () => {
   if (!checkInvalidUrlsBtn) return;
-  
+
   const originalText = checkInvalidUrlsBtn.textContent;
   checkInvalidUrlsBtn.disabled = true;
   checkInvalidUrlsBtn.textContent = '检测中...';
-  
+
   try {
     // 获取当前场景的所有书签
     const currentSceneId = await storage.getCurrentScene();
     const data = await storage.getBookmarks(currentSceneId);
     let bookmarks = data.bookmarks || [];
-    
+
     if (bookmarks.length === 0) {
       showMessage('当前场景没有书签', 'info');
       checkInvalidUrlsBtn.disabled = false;
       checkInvalidUrlsBtn.textContent = originalText;
       return;
     }
-    
+
     // 获取已移除的失效网站列表（按场景存储）
     const settings = await storage.getSettings();
     const ignoredInvalidUrls = settings?.ignoredInvalidUrls || {}; // { sceneId: [url1, url2, ...] }
     const currentSceneIgnoredUrls = new Set(ignoredInvalidUrls[currentSceneId] || []);
-    
+
     // 过滤掉已移除的失效网站
     bookmarks = bookmarks.filter(bookmark => {
       return !currentSceneIgnoredUrls.has(bookmark.url);
     });
-    
+
     if (bookmarks.length === 0) {
       showMessage('当前场景没有需要检测的书签（已移除的网站已排除）', 'info');
       checkInvalidUrlsBtn.disabled = false;
       checkInvalidUrlsBtn.textContent = originalText;
       return;
     }
-    
+
     // 检测每个书签的URL是否有效
     const invalidBookmarks = [];
     let checkedCount = 0;
-    
+
     // 使用 Promise.all 并发检测，但限制并发数量（避免过多请求）
     const concurrency = 5;
     const checkUrl = async (bookmark) => {
@@ -777,14 +777,14 @@ checkInvalidUrlsBtn.addEventListener('click', async () => {
         // 兼容性：检查 AbortController 是否支持
         let controller = null;
         let timeoutId = null;
-        
+
         // 直接使用 GET 方法检测（更准确，因为很多网站不支持 HEAD）
         let fetchOptions = {
           method: 'GET',
           mode: 'cors',
           cache: 'no-cache'
         };
-        
+
         if (typeof AbortController !== 'undefined') {
           controller = new AbortController();
           timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
@@ -794,15 +794,15 @@ checkInvalidUrlsBtn.addEventListener('click', async () => {
             throw new Error('请求超时');
           }, 10000);
         }
-        
+
         let response;
         try {
           response = await fetch(bookmark.url, fetchOptions);
-          
+
           if (timeoutId) {
             clearTimeout(timeoutId);
           }
-          
+
           // 成功获取响应，检查状态码
           const status = response.status;
           if ((status >= 200 && status < 400) || status == 403) {
@@ -810,9 +810,9 @@ checkInvalidUrlsBtn.addEventListener('click', async () => {
             return { bookmark, valid: true, statusCode: status };
           } else {
             // 4xx 和 5xx 视为失效
-            return { 
-              bookmark, 
-              valid: false, 
+            return {
+              bookmark,
+              valid: false,
               statusCode: status,
               status: `HTTP ${status}`,
               error: `HTTP ${status} ${response.statusText || ''}`.trim()
@@ -823,14 +823,14 @@ checkInvalidUrlsBtn.addEventListener('click', async () => {
           if (timeoutId) {
             clearTimeout(timeoutId);
           }
-          
+
           // 重新设置超时
           if (typeof AbortController !== 'undefined') {
             controller = new AbortController();
             timeoutId = setTimeout(() => controller.abort(), 10000);
             fetchOptions.signal = controller.signal;
           }
-          
+
           fetchOptions.mode = 'no-cors';
           try {
             response = await fetch(bookmark.url, fetchOptions);
@@ -844,20 +844,20 @@ checkInvalidUrlsBtn.addEventListener('click', async () => {
             if (timeoutId) {
               clearTimeout(timeoutId);
             }
-            
+
             // 检查错误类型：如果是网络错误（如 DNS 失败、连接拒绝），可能是真的失效
             // 如果是 CORS 相关错误，可能是网站有保护机制，但不一定失效
             const errorMsg = noCorsError.message || '';
-            const isNetworkError = errorMsg.includes('Failed to fetch') || 
-                                  errorMsg.includes('NetworkError') ||
-                                  errorMsg.includes('ERR_') ||
-                                  errorMsg.includes('aborted');
-            
+            const isNetworkError = errorMsg.includes('Failed to fetch') ||
+              errorMsg.includes('NetworkError') ||
+              errorMsg.includes('ERR_') ||
+              errorMsg.includes('aborted');
+
             if (isNetworkError) {
               // 真正的网络错误，可能是失效
-              return { 
-                bookmark, 
-                valid: false, 
+              return {
+                bookmark,
+                valid: false,
                 statusCode: null,
                 status: '无法访问',
                 error: '网络错误：' + (noCorsError.message || '无法连接到服务器')
@@ -870,21 +870,21 @@ checkInvalidUrlsBtn.addEventListener('click', async () => {
         }
       } catch (error) {
         // 其他错误（如超时）
-        return { 
-          bookmark, 
-          valid: false, 
+        return {
+          bookmark,
+          valid: false,
           statusCode: null,
           status: '检测失败',
           error: error.message || '无法访问'
         };
       }
     };
-    
+
     // 分批检测
     for (let i = 0; i < bookmarks.length; i += concurrency) {
       const batch = bookmarks.slice(i, i + concurrency);
       const results = await Promise.all(batch.map(checkUrl));
-      
+
       results.forEach(({ bookmark, valid, statusCode, status, error }) => {
         checkedCount++;
         if (!valid) {
@@ -897,22 +897,22 @@ checkInvalidUrlsBtn.addEventListener('click', async () => {
           });
         }
       });
-      
+
       // 更新进度
       checkInvalidUrlsBtn.textContent = `检测中... (${checkedCount}/${bookmarks.length})`;
     }
-    
+
     checkInvalidUrlsBtn.disabled = false;
     checkInvalidUrlsBtn.textContent = originalText;
-    
+
     if (invalidBookmarks.length === 0) {
       showMessage('所有网站检测通过，未发现失效网站', 'success');
       return;
     }
-    
+
     // 显示失效网站确认弹窗
     showInvalidUrlsDialog(invalidBookmarks, currentSceneId);
-    
+
   } catch (error) {
     checkInvalidUrlsBtn.disabled = false;
     checkInvalidUrlsBtn.textContent = originalText;
@@ -937,7 +937,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
     z-index: 2000;
     animation: fadeIn 0.2s ease-out;
   `;
-  
+
   const dialog = document.createElement('div');
   dialog.className = 'dialog-container';
   const isMobile = window.innerWidth <= 768;
@@ -954,7 +954,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
     flex-direction: column;
     animation: slideUp 0.3s ease-out;
   `;
-  
+
   const listHtml = invalidBookmarks.map((item, index) => {
     // 根据状态码确定样式（更明显的样式）
     let statusStyle = '';
@@ -962,7 +962,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
     const isMobile = window.innerWidth <= 768;
     const padding = isMobile ? '6px 10px' : '4px 8px';
     const fontSize = isMobile ? '13px' : '12px';
-    
+
     if (item.statusCode !== null && item.statusCode !== undefined) {
       if (item.statusCode >= 400 && item.statusCode < 500) {
         // 4xx 客户端错误 - 黄色警告
@@ -982,7 +982,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       statusStyle = `background: #e2e3e5; color: #383d41; border: 2px solid #d6d8db; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(214, 216, 219, 0.3);`;
       statusText = item.status || '无法访问';
     }
-    
+
     return `
     <div class="invalid-bookmark-item" data-index="${index}" data-url="${escapeHtml(item.bookmark.url)}" style="
       padding: 12px;
@@ -1024,7 +1024,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
     </div>
   `;
   }).join('');
-  
+
   dialog.innerHTML = `
     <div style="margin-bottom: 20px;">
       <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a;">
@@ -1039,17 +1039,17 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       <button id="confirmDeleteBtn" class="btn btn-primary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500; background: #dc3545;">删除所有失效网站</button>
     </div>
   `;
-  
+
   overlay.appendChild(dialog);
   document.body.appendChild(overlay);
-  
+
   const cancelBtn = dialog.querySelector('#cancelDeleteBtn');
   const confirmBtn = dialog.querySelector('#confirmDeleteBtn');
-  
+
   // 存储当前显示的失效网站列表（用于移除操作）
   let currentInvalidBookmarks = [...invalidBookmarks];
   let hasPendingSync = false; // 标记是否有待同步的更改
-  
+
   // 同步到云端的函数（在提交或取消时调用）
   const syncToCloud = async () => {
     if (hasPendingSync) {
@@ -1070,16 +1070,16 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       }
     }
   };
-  
+
   // 移除失效网站项的函数
   const removeInvalidItem = async (index) => {
     if (index >= 0 && index < currentInvalidBookmarks.length) {
       const removedItem = currentInvalidBookmarks[index];
       const removedUrl = removedItem.bookmark.url;
-      
+
       // 从列表中移除
       currentInvalidBookmarks.splice(index, 1);
-      
+
       // 保存到已移除列表（按场景存储）
       try {
         const settings = await storage.getSettings();
@@ -1091,12 +1091,12 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         if (!ignoredInvalidUrls[sceneId].includes(removedUrl)) {
           ignoredInvalidUrls[sceneId].push(removedUrl);
           settings.ignoredInvalidUrls = ignoredInvalidUrls;
-          
+
           // 只保存到本地，不立即同步（在提交或取消时统一同步）
           await storage.saveSettings(settings);
           hasPendingSync = true; // 标记有待同步的更改
           console.log('[失效网站移除] 已保存到本地，场景ID:', sceneId, 'URL:', removedUrl);
-          
+
           // 显示提示信息
           showMessage('已保存，关闭弹窗时将同步到云端', 'success', 2000);
         }
@@ -1105,17 +1105,17 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         // 显示错误提示
         showMessage('保存失败，请重试', 'error', 2000);
       }
-      
+
       // 重新渲染列表
       updateInvalidBookmarksList();
     }
   };
-  
+
   // 更新失效网站列表显示
   const updateInvalidBookmarksList = () => {
     const listContainer = dialog.querySelector('#invalidBookmarksList');
     if (!listContainer) return;
-    
+
     // 重新生成列表 HTML
     const listHtml = currentInvalidBookmarks.map((item, index) => {
       // 根据状态码确定样式
@@ -1124,7 +1124,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       const isMobile = window.innerWidth <= 768;
       const padding = isMobile ? '6px 10px' : '4px 8px';
       const fontSize = isMobile ? '13px' : '12px';
-      
+
       if (item.statusCode !== null && item.statusCode !== undefined) {
         if (item.statusCode >= 400 && item.statusCode < 500) {
           statusStyle = `background: #fff3cd; color: #856404; border: 2px solid #ffc107; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(255, 193, 7, 0.3);`;
@@ -1140,7 +1140,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         statusStyle = `background: #e2e3e5; color: #383d41; border: 2px solid #d6d8db; padding: ${padding}; border-radius: 6px; font-weight: 700; display: inline-block; font-size: ${fontSize}; box-shadow: 0 2px 4px rgba(214, 216, 219, 0.3);`;
         statusText = item.status || '无法访问';
       }
-      
+
       return `
       <div class="invalid-bookmark-item" data-index="${index}" data-url="${escapeHtml(item.bookmark.url)}" style="
         padding: 12px;
@@ -1182,15 +1182,15 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       </div>
     `;
     }).join('');
-    
+
     listContainer.innerHTML = listHtml;
-    
+
     // 更新标题
     const title = dialog.querySelector('h3');
     if (title) {
       title.textContent = `发现 ${currentInvalidBookmarks.length} 个失效网站`;
     }
-    
+
     // 更新删除按钮状态
     if (confirmBtn) {
       if (currentInvalidBookmarks.length === 0) {
@@ -1201,11 +1201,11 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         confirmBtn.textContent = `删除 ${currentInvalidBookmarks.length} 个失效网站`;
       }
     }
-    
+
     // 重新绑定事件
     bindInvalidBookmarkEvents();
   };
-  
+
   // 绑定失效网站项的事件
   const bindInvalidBookmarkEvents = () => {
     dialog.querySelectorAll('.invalid-bookmark-item').forEach(item => {
@@ -1216,13 +1216,13 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       item.addEventListener('mouseleave', () => {
         item.style.backgroundColor = 'transparent';
       });
-      
+
       // 点击打开网站
       item.addEventListener('click', (e) => {
         // 如果点击的是链接或移除按钮，不处理
-        if (e.target.tagName === 'A' || e.target.closest('a') || 
-            e.target.classList.contains('remove-invalid-item-btn') || 
-            e.target.closest('.remove-invalid-item-btn')) {
+        if (e.target.tagName === 'A' || e.target.closest('a') ||
+          e.target.classList.contains('remove-invalid-item-btn') ||
+          e.target.closest('.remove-invalid-item-btn')) {
           return;
         }
         const url = item.dataset.url;
@@ -1230,7 +1230,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
           window.open(url, '_blank', 'noopener,noreferrer');
         }
       });
-      
+
       // 链接点击时阻止事件冒泡
       const link = item.querySelector('.invalid-url-link');
       if (link) {
@@ -1239,7 +1239,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         });
       }
     });
-    
+
     // 绑定移除按钮事件
     dialog.querySelectorAll('.remove-invalid-item-btn').forEach(btn => {
       btn.addEventListener('click', (e) => {
@@ -1249,7 +1249,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
           removeInvalidItem(index);
         }
       });
-      
+
       // 悬停效果
       btn.addEventListener('mouseenter', () => {
         btn.style.background = '#e9ecef';
@@ -1263,43 +1263,43 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       });
     });
   };
-  
+
   // 初始绑定事件
   bindInvalidBookmarkEvents();
-  
+
   const cleanup = async () => {
     // 弹窗关闭时，如果有待同步的更改，立即同步
     await syncToCloud();
-    
+
     overlay.style.animation = 'fadeIn 0.2s ease-out reverse';
     setTimeout(() => overlay.remove(), 200);
   };
-  
+
   cancelBtn.onclick = cleanup;
-  
+
   confirmBtn.onclick = async () => {
     try {
       // 获取当前场景的所有书签
       const data = await storage.getBookmarks(sceneId);
       const allBookmarks = data.bookmarks || [];
       const allFolders = data.folders || [];
-      
+
       // 获取要删除的书签ID（使用更新后的列表）
       const invalidIds = new Set(currentInvalidBookmarks.map(item => item.bookmark.id));
-      
+
       // 删除失效的书签
       const remainingBookmarks = allBookmarks.filter(b => !invalidIds.has(b.id));
-      
+
       // 更新文件夹列表（移除不再使用的文件夹）
       const bookmarkFolders = new Set(remainingBookmarks.map(b => b.folder).filter(Boolean));
       const remainingFolders = allFolders.filter(f => bookmarkFolders.has(f));
-      
+
       // 保存到本地
       await storage.saveBookmarks(remainingBookmarks, remainingFolders, sceneId);
-      
+
       // 先同步已移除列表到云端（如果有待同步的更改）
       await syncToCloud();
-      
+
       // 同步书签到云端
       await sendMessageCompat({
         action: 'syncToCloud',
@@ -1307,10 +1307,10 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         folders: remainingFolders,
         sceneId
       });
-      
+
       cleanup();
       showMessage(`已删除 ${currentInvalidBookmarks.length} 个失效网站并同步到云端`, 'success');
-      
+
       // 刷新页面（如果是在书签管理页面）
       if (window.location.pathname.includes('bookmarks.html')) {
         window.location.reload();
@@ -1319,7 +1319,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       showMessage('删除失败: ' + error.message, 'error');
     }
   };
-  
+
   // ESC键关闭
   const onKeyDown = (e) => {
     if (e.key === 'Escape') {
@@ -1328,7 +1328,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
     }
   };
   document.addEventListener('keydown', onKeyDown);
-  
+
   // 点击背景关闭
   overlay.onclick = (e) => {
     if (e.target === overlay) {
@@ -1352,24 +1352,24 @@ async function loadUiSettings() {
   const settings = await storage.getSettings();
   const popup = (settings && settings.popup) || {};
   expandFirstLevelCheckbox.checked = !!popup.expandFirstLevel;
-  
+
   // 加载滚动条位置记忆设置（默认选中）
   if (rememberScrollPosition) {
     rememberScrollPosition.checked = popup.rememberScrollPosition !== false; // 默认true
   }
-  
+
   // 加载显示更新按钮设置（默认不显示）
   if (showUpdateButtonCheckbox) {
     showUpdateButtonCheckbox.checked = !!popup.showUpdateButton; // 默认false
   }
-  
+
   // 加载同步失败通知开关（默认开启）
   const syncErrorNotification = settings?.syncErrorNotification || {};
   enableSyncErrorNotification.checked = syncErrorNotification.enabled !== false;
   if (stickySyncErrorToast) {
     stickySyncErrorToast.checked = !!syncErrorNotification.sticky;
   }
-  
+
   // 加载悬浮球弹窗高度设置
   const floatingBallPopup = settings?.floatingBallPopup || {};
   if (floatingBallPopupHeightPc) {
@@ -1380,7 +1380,7 @@ async function loadUiSettings() {
     // 移动端高度（默认85vh）
     floatingBallPopupHeightMobile.value = floatingBallPopup.heightMobile || 85;
   }
-  
+
   // 加载插件图标弹窗高度设置
   const iconPopup = settings?.iconPopup || {};
   if (iconPopupHeightPc) {
@@ -1391,7 +1391,7 @@ async function loadUiSettings() {
     // 移动端高度（默认90vh）
     iconPopupHeightMobile.value = iconPopup.heightMobile || 90;
   }
-  
+
   // 更新同步按钮状态
   updateSyncButtonStates();
 }
@@ -1698,7 +1698,7 @@ function getCommandsCompat() {
         });
         return;
       }
-    } catch (_) {}
+    } catch (_) { }
     resolve(null);
   });
 }
@@ -1712,7 +1712,7 @@ function showSceneSelectDialog() {
     try {
       const scenes = await storage.getScenes();
       const currentSceneId = await storage.getCurrentScene();
-      
+
       // 渲染场景列表
       sceneSelectList.innerHTML = scenes.map(scene => {
         const isCurrent = scene.id === currentSceneId;
@@ -1723,7 +1723,7 @@ function showSceneSelectDialog() {
           </div>
         `;
       }).join('');
-      
+
       // 绑定点击事件
       let selectedSceneId = currentSceneId;
       sceneSelectList.querySelectorAll('.scene-select-item').forEach(item => {
@@ -1733,31 +1733,31 @@ function showSceneSelectDialog() {
           selectedSceneId = item.dataset.id;
         });
       });
-      
+
       // 显示对话框
       sceneSelectModal.style.display = 'flex';
-      
+
       // 关闭对话框的处理函数
       const closeDialog = (result) => {
         sceneSelectModal.style.display = 'none';
         resolve(result);
       };
-      
+
       // 绑定关闭事件（只绑定一次）
       const handleClose = () => closeDialog(null);
       const handleConfirm = () => closeDialog(selectedSceneId);
-      
+
       sceneSelectClose.onclick = handleClose;
       sceneSelectCancel.onclick = handleClose;
       sceneSelectConfirm.onclick = handleConfirm;
-      
+
       // 点击背景关闭
       sceneSelectModal.onclick = (e) => {
         if (e.target === sceneSelectModal) {
           handleClose();
         }
       };
-      
+
       // ESC键关闭
       const handleEsc = (e) => {
         if (e.key === 'Escape') {
@@ -1766,7 +1766,7 @@ function showSceneSelectDialog() {
         }
       };
       document.addEventListener('keydown', handleEsc);
-      
+
     } catch (error) {
       console.error('显示场景选择对话框失败:', error);
       resolve(null);
@@ -1784,11 +1784,11 @@ importBtn.addEventListener('click', () => {
 importFile.addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (!file) return;
-  
+
   try {
     const text = await file.text();
     let data;
-    
+
     if (file.name.endsWith('.json')) {
       data = JSON.parse(text);
     } else if (file.name.endsWith('.html')) {
@@ -1803,7 +1803,7 @@ importFile.addEventListener('change', async (e) => {
       showMessage('不支持的文件格式', 'error');
       return;
     }
-    
+
     if (data.bookmarks && Array.isArray(data.bookmarks)) {
       // 选择导入场景
       const targetSceneId = await showSceneSelectDialog();
@@ -1812,7 +1812,7 @@ importFile.addEventListener('change', async (e) => {
         importFile.value = '';
         return;
       }
-      
+
       // 规范化路径 + 补齐父级路径（保证 folders 与画面树一致）
       const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
       const expandFolderPathsPreserveOrder = (paths) => {
@@ -1844,7 +1844,7 @@ importFile.addEventListener('change', async (e) => {
       const sceneBookmarks = sceneData.bookmarks || [];
       const urlMap = new Map();
       sceneBookmarks.forEach(b => urlMap.set(b.url, b));
-      
+
       let added = 0;
       importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
@@ -1853,7 +1853,7 @@ importFile.addEventListener('change', async (e) => {
           added += 1;
         }
       });
-      
+
       // folders：优先使用导入数据携带的 folders（若有），并补齐父级；再补上书签引用的 folder
       const importedFoldersRaw = (data.folders || []).map(normalizeFolder).filter(Boolean);
       const bookmarkFoldersRaw = sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean);
@@ -1861,15 +1861,15 @@ importFile.addEventListener('change', async (e) => {
 
       // 仅更新目标场景（保留其他场景不变），并保存该场景的 folders（包含父级层级）
       await storage.saveBookmarks(sceneBookmarks, foldersForScene, targetSceneId);
-      
+
       // 同步到云端（同步到选择的场景）
-      await sendMessageCompat({ 
-        action: 'syncToCloud', 
+      await sendMessageCompat({
+        action: 'syncToCloud',
         bookmarks: sceneBookmarks,
         folders: foldersForScene,
         sceneId: targetSceneId // 明确指定场景ID
       });
-      
+
       const scenes = await storage.getScenes();
       const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
       showMessage(`导入成功，新增 ${added} 个书签到"${sceneName}"场景`, 'success');
@@ -1879,7 +1879,7 @@ importFile.addEventListener('change', async (e) => {
   } catch (error) {
     showMessage('导入失败: ' + error.message, 'error');
   }
-  
+
   importFile.value = '';
 });
 
@@ -1993,12 +1993,12 @@ async function loadFloatingBallSetting() {
     const settings = await storage.getSettings();
     const floatingBall = (settings && settings.floatingBall) || {};
     enableFloatingBall.checked = !!floatingBall.enabled;
-    
+
     // 加载默认位置设置（默认值为 'auto'）
     floatingBallDefaultPosition.value = floatingBall.defaultPosition || 'auto';
     // 加载点击行为设置（默认值为 popup）
     floatingBallClickAction.value = floatingBall.clickAction || 'popup';
-    
+
     // 根据是否启用悬浮球显示/隐藏默认位置选择器
     const visible = enableFloatingBall.checked;
     floatingBallPositionGroup.style.display = visible ? 'block' : 'none';
@@ -2030,12 +2030,12 @@ enableFloatingBall.addEventListener('change', async () => {
     }
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
-    
+
     // 显示/隐藏默认位置选择器
     const visible = enableFloatingBall.checked;
     floatingBallPositionGroup.style.display = visible ? 'block' : 'none';
     floatingBallActionGroup.style.display = visible ? 'block' : 'none';
-    
+
     // 立即同步到云端
     await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
     // 通知所有标签页更新悬浮球状态
@@ -2043,7 +2043,7 @@ enableFloatingBall.addEventListener('change', async () => {
     try {
       const tabs = await tabsAPI.query({});
       tabs.forEach(tab => {
-        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => {});
+        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => { });
       });
     } catch (e) {
       // 忽略错误
@@ -2064,16 +2064,16 @@ floatingBallDefaultPosition.addEventListener('change', async () => {
     floatingBall.defaultPosition = floatingBallDefaultPosition.value;
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
-    
-    // 立即同步到云端
-    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
-    
+
+    // 立即同步到云端（不阻塞）
+    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球位置同步失败:', e));
+
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     try {
       const tabs = await tabsAPI.query({});
       tabs.forEach(tab => {
-        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => {});
+        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => { });
       });
     } catch (e) {
       // 忽略错误
@@ -2094,16 +2094,16 @@ floatingBallClickAction.addEventListener('change', async () => {
     floatingBall.clickAction = floatingBallClickAction.value || 'popup';
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
-    
+
     // 立即同步到云端
     await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
-    
+
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     try {
       const tabs = await tabsAPI.query({});
       tabs.forEach(tab => {
-        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => {});
+        tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => { });
       });
     } catch (e) {
       // 忽略错误
@@ -2190,45 +2190,42 @@ async function loadScenes() {
         const action = btn.dataset.action;
         const sceneId = btn.dataset.id;
         const scene = scenes.find(s => s.id === sceneId);
-        
+
         if (action === 'switch') {
+          // 1. 立即更新本地场景并刷新 UI（乐观渲染）
           await storage.saveCurrentScene(sceneId);
-          showMessage(`已切换到"${scene.name}"场景`, 'success');
-          
-          // 检查 WebDAV 配置是否有效
-          const config = await storage.getConfig();
-          const hasValidConfig = config && config.serverUrl;
-          // 检查该场景是否已同步过
-          const isSceneSynced = await storage.isSceneSynced(sceneId);
-          
-          // WebDAV配置有效且该场景从未同步过，需要执行云端同步
-          if (hasValidConfig && !isSceneSynced) {
-            try {
-              await sendMessageCompat({ action: 'sync', sceneId });
-            } catch (e) {
-              // 忽略单次同步失败，继续后续逻辑
-            }
-            const afterSync = await storage.getBookmarks(sceneId);
-            const hasAfter = (afterSync.bookmarks && afterSync.bookmarks.length) || (afterSync.folders && afterSync.folders.length);
-            if (!hasAfter) {
-              // 云端也没有，创建一个空文件以便后续同步
-              try {
-                await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
-              } catch (e) {
-                // 忽略，等待用户后续添加书签再同步
-              }
-            }
-            // 场景切换不同步到云端，只保存在本地
-          }
           await loadScenes();
+          showMessage(`已切换到"${scene.name}"场景`, 'success');
+
+          // 2. 检查同步状态并在后台触发
+          const config = await storage.getConfig();
+          const isSceneSynced = await storage.isSceneSynced(sceneId);
+
+          if (config && config.serverUrl && !isSceneSynced) {
+            console.log('[设置] 切换场景：开始后台同步场景', sceneId);
+            sendMessageCompat({ action: 'sync', sceneId }).then(async () => {
+              // 同步完成后再一次性刷新（如果发现有数据）
+              const afterSync = await storage.getBookmarks(sceneId);
+              if ((afterSync.bookmarks && afterSync.bookmarks.length > 0) ||
+                (afterSync.folders && afterSync.folders.length > 0)) {
+                await loadScenes(); // 刷新场景列表可能显示的统计或状态
+              }
+            }).catch(e => console.error('[设置] 切换场景后台同步失败:', e));
+          }
+
+          // 通知其他页面场景已切换
+          sendMessageCompat({ action: 'sceneChanged' }).catch(() => { });
         } else if (action === 'rename') {
           const newName = prompt(`重命名场景"${scene.name}"：`, scene.name);
           if (newName && newName.trim() && newName !== scene.name) {
             try {
+              // 1. 立即更新本地并加载
               await storage.updateScene(sceneId, { name: newName.trim() });
-              showMessage('场景已重命名', 'success');
-              await sendMessageCompat({ action: 'syncSettings' });
               await loadScenes();
+              showMessage('场景已重命名', 'success');
+
+              // 2. 背景同步设置
+              sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('重命名场景同步失败:', err));
             } catch (e) {
               showMessage('重命名失败: ' + e.message, 'error');
             }
@@ -2239,7 +2236,7 @@ async function loadScenes() {
           }
           const confirmDelete = confirm('再次确认：删除场景将同时删除云端和本地的所有相关书签，确定继续？');
           if (!confirmDelete) return;
-          
+
           try {
             // 删除场景
             await storage.deleteScene(sceneId);
@@ -2268,12 +2265,14 @@ async function loadScenes() {
             const filteredBookmarks = (allBookmarks.bookmarks || []).filter(b => b.scene !== sceneId);
             // 保留父级层级，避免云端 folders 缺层（跨场景全量保存时同样适用）
             const filteredFolders = expandFolderPathsPreserveOrder(filteredBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean));
+            // 1. 立即执行本地删除并反馈 UI
             await storage.saveBookmarks(filteredBookmarks, filteredFolders);
-            // 通知后台删除云端文件
-            await sendMessageCompat({ action: 'deleteSceneBookmarks', sceneId });
-            showMessage('场景已删除', 'success');
-            await sendMessageCompat({ action: 'syncSettings' });
             await loadScenes();
+            showMessage('场景已删除', 'success');
+
+            // 2. 后台通知删除云端文件和同步设置
+            sendMessageCompat({ action: 'deleteSceneBookmarks', sceneId }).catch(err => console.error('后台删除场景书签失败:', err));
+            sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('删除场景后同步设置失败:', err));
           } catch (e) {
             showMessage('删除失败: ' + e.message, 'error');
           }
@@ -2391,16 +2390,19 @@ addSceneBtn.addEventListener('click', async () => {
     alert('场景ID已存在，请换一个');
     return;
   }
-  
+
   try {
+    // 1. 本地增加并立即显示
     await storage.addScene({
       id: sceneId,
       name: name.trim(),
       isDefault: false
     });
-    showMessage('场景已添加', 'success');
-    await sendMessageCompat({ action: 'syncSettings' });
     await loadScenes();
+    showMessage('场景已添加', 'success');
+
+    // 2. 后台触发设置同步
+    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('添加场景后台同步失败:', err));
   } catch (e) {
     showMessage('添加失败: ' + e.message, 'error');
   }
@@ -2430,7 +2432,7 @@ function showMessage(message, type = 'info', duration = 3000) {
     }, 100);
     return;
   }
-  
+
   // 根据类型设置颜色
   let backgroundColor, textColor;
   switch (type) {
@@ -2448,10 +2450,10 @@ function showMessage(message, type = 'info', duration = 3000) {
       textColor = 'white';
       break;
   }
-  
+
   // 检测是否为移动设备
   const isMobile = window.innerWidth <= 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  
+
   const toast = document.createElement('div');
   toast.textContent = message;
   toast.style.cssText = `
@@ -2474,10 +2476,10 @@ function showMessage(message, type = 'info', duration = 3000) {
     text-align: center;
     line-height: 1.5;
   `;
-  
+
   try {
     document.body.appendChild(toast);
-    
+
     setTimeout(() => {
       if (toast && toast.parentNode) {
         toast.parentNode.removeChild(toast);
