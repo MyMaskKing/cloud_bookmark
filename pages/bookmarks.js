@@ -2200,7 +2200,7 @@ function showEditForm(bookmark) {
  * 构建文件夹树结构
  */
 function buildFolderTreeForSelect(folders) {
-  const root = { name: '', path: '', children: {} };
+  const root = { name: '', path: '', children: {}, order: [] };
   folders.forEach(folder => {
     const parts = folder.split('/');
     let node = root;
@@ -2208,7 +2208,8 @@ function buildFolderTreeForSelect(folders) {
     parts.forEach(part => {
       currentPath = currentPath ? `${currentPath}/${part}` : part;
       if (!node.children[part]) {
-        node.children[part] = { name: part, path: currentPath, children: {} };
+        node.children[part] = { name: part, path: currentPath, children: {}, order: [] };
+        node.order.push(part);
       }
       node = node.children[part];
     });
@@ -2230,10 +2231,13 @@ function renderFolderTreeOptions(node, level = 0, selected = '') {
     html += `<option value="${escapeHtml(node.path)}" ${isSelected ? 'selected' : ''}>${indent}${icon} ${escapeHtml(node.name)}</option>`;
   }
 
-  // 递归渲染子节点
-  const children = Object.values(node.children).sort((a, b) => a.name.localeCompare(b.name));
-  children.forEach(child => {
-    html += renderFolderTreeOptions(child, level + 1, selected);
+  // 递归渲染子节点（尊重 order 数组中的顺序）
+  const order = node.order || [];
+  order.forEach(name => {
+    const child = node.children[name];
+    if (child) {
+      html += renderFolderTreeOptions(child, level + 1, selected);
+    }
   });
 
   return html;
@@ -2249,8 +2253,10 @@ function loadFolderOptions(selected = '') {
   // 只使用当前场景的书签和文件夹（currentBookmarks 和 currentFolders 已经是当前场景的数据）
   // 合并从书签中提取的文件夹和 currentFolders 中的文件夹
   const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
-  const allFolders = [...new Set([...bookmarkFolders, ...currentFolders])];
-  allFolders.sort();
+  // 保持 currentFolders 的顺序，并将不在 currentFolders 中的 bookmarkFolders 追加到后面
+  const currentFoldersSet = new Set(currentFolders);
+  const missingFolders = bookmarkFolders.filter(f => !currentFoldersSet.has(f));
+  const allFolders = [...currentFolders, ...missingFolders];
 
   // 构建树结构
   const tree = buildFolderTreeForSelect(allFolders);
@@ -3286,7 +3292,9 @@ function showFolderSelectDialog(options = {}) {
 
     // 与单个编辑时的 loadFolderOptions 逻辑一致：合并从书签中提取的文件夹和 currentFolders 中的文件夹
     const bookmarkFolders = [...new Set(currentBookmarks.map(b => b.folder).filter(f => f))];
-    let folders = [...new Set([...bookmarkFolders, ...currentFolders])];
+    const currentFoldersSet = new Set(currentFolders);
+    const missingFolders = bookmarkFolders.filter(f => !currentFoldersSet.has(f));
+    let folders = [...currentFolders, ...missingFolders];
 
     // 如果指定了要排除的文件夹，过滤掉该文件夹及其子文件夹
     if (excludeFolderPath) {
@@ -3298,8 +3306,6 @@ function showFolderSelectDialog(options = {}) {
         return true;
       });
     }
-
-    folders.sort();
 
     // 构建树结构
     const tree = buildFolderTreeForSelect(folders);
