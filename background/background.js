@@ -103,6 +103,36 @@ const storage = new StorageManager();
 let syncInterval = 5 * 60 * 1000; // 默认5分钟
 let syncAlarmName = 'syncBookmarks';
 let currentDevice = null;
+
+/**
+ * 同步队列类：确保后台任务按顺序执行，避免并发上传导致的数据竞争
+ */
+class SyncQueue {
+  constructor() {
+    this.queue = Promise.resolve();
+  }
+
+  /**
+   * 将任务加入队列
+   * @param {Function} task - 返回 Promise 的异步函数
+   * @returns {Promise} 任务执行结果的 Promise
+   */
+  enqueue(task) {
+    const result = this.queue.then(async () => {
+      try {
+        return await task();
+      } catch (error) {
+        console.error('[同步队列] 任务执行失败:', error);
+        throw error;
+      }
+    });
+    // 更新队列起点（忽略错误，确保后续任务继续执行）
+    this.queue = result.catch(() => { });
+    return result;
+  }
+}
+
+const syncQueue = new SyncQueue();
 // 防抖变量：用于返回检测时的防抖机制
 let focusCheckTimeout = null;
 let tabActivatedCheckTimeout = null;
@@ -492,8 +522,8 @@ runtimeAPI.onInstalled.addListener(async () => {
 runtimeAPI.onStartup.addListener(async () => {
   await setupSyncAlarm();
   await ensureDeviceRegistered();
-  // 尝试同步一次设置，保证设备列表/当前场景及时更新
-  await syncSettingsFromCloud().catch(() => { });
+  // 尝试同步一次设置，保证设备列表/当前场景及时更新（加入队列）
+  syncQueue.enqueue(() => syncSettingsFromCloud()).catch(() => { });
 });
 
 /**
@@ -554,8 +584,8 @@ async function checkAndSyncOnReturn() {
     const needSync = await shouldSyncOnReturn();
     if (needSync) {
       console.log('[返回检测] 触发立即同步');
-      // 触发同步（不跳过设备检测，不清空本地数据）
-      await syncFromCloud().catch(error => {
+      // 触发同步（不跳过设备检测，不清空本地数据）（加入队列）
+      syncQueue.enqueue(() => syncFromCloud()).catch(error => {
         console.error('[返回检测] 同步失败:', error);
       });
     }
@@ -764,24 +794,21 @@ if (commandsAPI && commandsAPI.onCommand && typeof commandsAPI.onCommand.addList
 }
 
 // 监听定时任务
-alarmsAPI.onAlarm.addListener(async (alarm) => {
+alarmsAPI.onAlarm.addListener((alarm) => {
   if (alarm.name === syncAlarmName) {
-    await syncFromCloud();
+    syncQueue.enqueue(() => syncFromCloud()).catch(err => console.error('[定时同步] 失败:', err));
   }
 });
 
 // 监听来自popup或pages的消息
 runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
-    // skipDeviceDetection: 保存配置时使用，只注册设备不进行设备检测
-    // skipDeviceListSync: 刚注册设备后使用，避免覆盖刚注册的设备列表
-    // clearLocalFirst: 非首次保存时，先清空本地数据再同步
-    syncFromCloud(request.sceneId, request.skipDeviceDetection, request.skipDeviceListSync, request.clearLocalFirst).then((result) => {
-      // syncFromCloud 现在会返回 {success, error, ...}
+    syncQueue.enqueue(() =>
+      syncFromCloud(request.sceneId, request.skipDeviceDetection, request.skipDeviceListSync, request.clearLocalFirst)
+    ).then((result) => {
       if (result && typeof result.success === 'boolean') {
         sendResponse(result);
       } else {
-        // 兜底：旧逻辑
         sendResponse({ success: true });
       }
     }).catch(error => {
@@ -791,7 +818,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'syncToCloud') {
-    syncToCloud(request.bookmarks, request.folders, request.sceneId).then(() => {
+    syncQueue.enqueue(() => syncToCloud(request.bookmarks, request.folders, request.sceneId)).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -800,7 +827,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'registerDevice') {
-    ensureDeviceInCloud().then(() => sendResponse({ success: true }))
+    syncQueue.enqueue(() => ensureDeviceInCloud()).then(() => sendResponse({ success: true }))
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
@@ -1190,7 +1217,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === 'syncSettings') {
     console.log('[设置同步] 收到同步设置到云端的请求');
-    syncSettingsToCloud().then(() => {
+    syncQueue.enqueue(() => syncSettingsToCloud()).then(() => {
       console.log('[设置同步] 同步设置到云端成功');
       sendResponse({ success: true });
     }).catch(error => {
@@ -1204,7 +1231,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     // 支持传递 skipDevices 和 forceClear 参数
     const skipDevices = request.skipDevices || false;
     const forceClear = request.forceClear || false;
-    syncSettingsFromCloud(skipDevices, forceClear).then(() => {
+    syncQueue.enqueue(() => syncSettingsFromCloud(skipDevices, forceClear)).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -1213,7 +1240,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'syncUpload') {
-    syncUpload().then(() => {
+    syncQueue.enqueue(() => syncUpload()).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -1249,9 +1276,12 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         return;
       }
       try {
-        const webdav = new WebDAVClient(config);
-        await webdav.deleteSceneBookmarks(request.sceneId);
-        sendResponse({ success: true });
+        const result = await syncQueue.enqueue(async () => {
+          const webdav = new WebDAVClient(config);
+          await webdav.deleteSceneBookmarks(request.sceneId);
+          return { success: true };
+        });
+        sendResponse(result);
       } catch (error) {
         sendResponse({ success: false, error: error.message });
       }
