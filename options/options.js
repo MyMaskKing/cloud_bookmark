@@ -707,17 +707,17 @@ importBrowserBtn.addEventListener('click', async () => {
       // 仅更新目标场景（保留其他场景不变），并保存该场景的 folders（包含父级层级）
       await storage.saveBookmarks(sceneBookmarks, foldersForScene, targetSceneId);
 
-      // 同步到云端（同步到选择的场景）
-      await sendMessageCompat({
+      // 1. 同步到云端（异步执行，不阻塞 UI 反馈）
+      sendMessageCompat({
         action: 'syncToCloud',
         bookmarks: sceneBookmarks,
         folders: foldersForScene,
-        sceneId: targetSceneId // 明确指定场景ID
-      });
+        sceneId: targetSceneId
+      }).catch(err => console.error('导入后后台同步失败:', err));
 
       const scenes = await storage.getScenes();
       const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
-      showMessage(`导入成功，新增 ${added} 个书签到"${sceneName}"场景`, 'success');
+      showMessage(`导入完成，正在后台同步 ${added} 个书签到"${sceneName}"场景`, 'success');
     } else {
       showMessage('浏览器书签导入功能未加载', 'error');
     }
@@ -1410,8 +1410,8 @@ expandFirstLevelCheckbox.addEventListener('change', async () => {
         lastExpandFirstLevel: !!popup.expandFirstLevel
       }
     });
-    showMessage('界面设置已保存（已同步至云端）', 'success');
-    await sendMessageCompat({ action: 'syncSettings' });
+    showMessage('界面设置已保存（后台同步中）', 'success');
+    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
     // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
     try {
       if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1445,8 +1445,8 @@ if (showUpdateButtonCheckbox) {
       popup.showUpdateButton = showUpdateButtonCheckbox.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('弹窗画面更新按钮显示设置已保存（已同步至云端）', 'success');
-      await sendMessageCompat({ action: 'syncSettings' });
+      showMessage('弹窗画面更新按钮显示设置已保存（后台同步中）', 'success');
+      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1481,8 +1481,8 @@ if (rememberScrollPosition) {
       popup.rememberScrollPosition = rememberScrollPosition.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('界面设置已保存（已同步至云端）', 'success');
-      await sendMessageCompat({ action: 'syncSettings' });
+      showMessage('界面设置已保存（后台同步中）', 'success');
+      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1548,9 +1548,8 @@ async function syncFloatingBallPopupHeightToCloud() {
     };
     const newSettings = { ...(settings || {}), floatingBallPopup };
     await storage.saveSettings(newSettings);
-    showMessage('高度设置已保存，正在同步到云端...', 'success');
-    await sendMessageCompat({ action: 'syncSettings' });
-    showMessage('高度设置已同步到云端', 'success');
+    showMessage('高度设置已保存，正在后台同步到云端...', 'success');
+    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('高度设置同步失败:', err));
   } catch (e) {
     showMessage('同步失败: ' + e.message, 'error');
   }
@@ -1587,9 +1586,8 @@ async function syncIconPopupHeightToCloud() {
     };
     const newSettings = { ...(settings || {}), iconPopup };
     await storage.saveSettings(newSettings);
-    showMessage('高度设置已保存，正在同步到云端...', 'success');
-    await sendMessageCompat({ action: 'syncSettings' });
-    showMessage('高度设置已同步到云端', 'success');
+    showMessage('高度设置已保存，正在后台同步到云端...', 'success');
+    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('高度设置同步失败:', err));
   } catch (e) {
     showMessage('同步失败: ' + e.message, 'error');
   }
@@ -1862,17 +1860,17 @@ importFile.addEventListener('change', async (e) => {
       // 仅更新目标场景（保留其他场景不变），并保存该场景的 folders（包含父级层级）
       await storage.saveBookmarks(sceneBookmarks, foldersForScene, targetSceneId);
 
-      // 同步到云端（同步到选择的场景）
-      await sendMessageCompat({
+      // 1. 同步到云端（异步执行，不阻塞 UI 反馈）
+      sendMessageCompat({
         action: 'syncToCloud',
         bookmarks: sceneBookmarks,
         folders: foldersForScene,
-        sceneId: targetSceneId // 明确指定场景ID
-      });
+        sceneId: targetSceneId
+      }).catch(err => console.error('导入后后台同步失败:', err));
 
       const scenes = await storage.getScenes();
       const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
-      showMessage(`导入成功，新增 ${added} 个书签到"${sceneName}"场景`, 'success');
+      showMessage(`导入完成，正在后台同步 ${added} 个书签到"${sceneName}"场景`, 'success');
     } else {
       showMessage('文件格式不正确', 'error');
     }
@@ -1977,9 +1975,9 @@ enableDeviceDetection.addEventListener('change', async () => {
     const deviceDetection = { enabled: enableDeviceDetection.checked };
     const newSettings = { ...(settings || {}), deviceDetection };
     await storage.saveSettings(newSettings);
-    // 立即同步到云端
-    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
-    showMessage('设备检测设置已保存（已同步至云端）', 'success');
+    // 立即同步到云端（不阻塞）
+    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('设备检测设置同步失败:', e));
+    showMessage('设备检测设置已保存（后台同步中）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
@@ -2036,8 +2034,8 @@ enableFloatingBall.addEventListener('change', async () => {
     floatingBallPositionGroup.style.display = visible ? 'block' : 'none';
     floatingBallActionGroup.style.display = visible ? 'block' : 'none';
 
-    // 立即同步到云端
-    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+    // 立即同步到云端（不阻塞）
+    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球启用同步失败:', e));
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     try {
@@ -2095,8 +2093,8 @@ floatingBallClickAction.addEventListener('change', async () => {
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
 
-    // 立即同步到云端
-    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+    // 立即同步到云端（不阻塞）
+    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球点击行为同步失败:', e));
 
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
@@ -2123,9 +2121,9 @@ enableSyncErrorNotification.addEventListener('change', async () => {
     const syncErrorNotification = { ...(settings?.syncErrorNotification || {}), enabled: enableSyncErrorNotification.checked };
     const newSettings = { ...(settings || {}), syncErrorNotification };
     await storage.saveSettings(newSettings);
-    // 立即同步到云端
-    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
-    showMessage('同步失败通知设置已保存（已同步至云端）', 'success');
+    // 立即同步到云端（不阻塞）
+    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('同步失败通知同步失败:', e));
+    showMessage('同步失败通知设置已保存（后台同步中）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
@@ -2139,8 +2137,8 @@ if (stickySyncErrorToast) {
       const syncErrorNotification = { ...(settings?.syncErrorNotification || {}), sticky: !!stickySyncErrorToast.checked };
       const newSettings = { ...(settings || {}), syncErrorNotification };
       await storage.saveSettings(newSettings);
-      await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
-      showMessage('调试设置已保存（已同步至云端）', 'success');
+      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('调试设置同步失败:', e));
+      showMessage('调试设置已保存（后台同步中）', 'success');
     } catch (e) {
       showMessage('保存失败: ' + (e?.message || e), 'error');
     }
@@ -2192,29 +2190,35 @@ async function loadScenes() {
         const scene = scenes.find(s => s.id === sceneId);
 
         if (action === 'switch') {
-          // 1. 立即更新本地场景并刷新 UI（乐观渲染）
           await storage.saveCurrentScene(sceneId);
-          await loadScenes();
           showMessage(`已切换到"${scene.name}"场景`, 'success');
 
-          // 2. 检查同步状态并在后台触发
+          // 检查 WebDAV 配置是否有效
           const config = await storage.getConfig();
+          const hasValidConfig = config && config.serverUrl;
+          // 检查该场景是否已同步过
           const isSceneSynced = await storage.isSceneSynced(sceneId);
 
-          if (config && config.serverUrl && !isSceneSynced) {
-            console.log('[设置] 切换场景：开始后台同步场景', sceneId);
-            sendMessageCompat({ action: 'sync', sceneId }).then(async () => {
-              // 同步完成后再一次性刷新（如果发现有数据）
-              const afterSync = await storage.getBookmarks(sceneId);
-              if ((afterSync.bookmarks && afterSync.bookmarks.length > 0) ||
-                (afterSync.folders && afterSync.folders.length > 0)) {
-                await loadScenes(); // 刷新场景列表可能显示的统计或状态
+          // WebDAV配置有效且该场景从未同步过，需要执行云端同步
+          if (hasValidConfig && !isSceneSynced) {
+            try {
+              await sendMessageCompat({ action: 'sync', sceneId });
+            } catch (e) {
+              // 忽略单次同步失败，继续后续逻辑
+            }
+            const afterSync = await storage.getBookmarks(sceneId);
+            const hasAfter = (afterSync.bookmarks && afterSync.bookmarks.length) || (afterSync.folders && afterSync.folders.length);
+            if (!hasAfter) {
+              // 云端也没有，创建一个空文件以便后续同步
+              try {
+                await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
+              } catch (e) {
+                // 忽略，等待用户后续添加书签再同步
               }
-            }).catch(e => console.error('[设置] 切换场景后台同步失败:', e));
+            }
+            // 场景切换不同步到云端，只保存在本地
           }
-
-          // 通知其他页面场景已切换
-          sendMessageCompat({ action: 'sceneChanged' }).catch(() => { });
+          await loadScenes();
         } else if (action === 'rename') {
           const newName = prompt(`重命名场景"${scene.name}"：`, scene.name);
           if (newName && newName.trim() && newName !== scene.name) {
