@@ -466,27 +466,6 @@ async function loadScenes() {
               console.log('[弹窗] 切换场景：开始同步场景', sceneId);
               const syncResult = await sendMessageCompat({ action: 'sync', sceneId });
               console.log('[弹窗] 切换场景：同步完成', syncResult);
-
-              // 等待同步完成后再读取数据，确保数据是最新的
-              // 使用轮询方式等待数据更新（最多等待3秒）
-              let retries = 30;
-              let hasData = false;
-              while (retries > 0 && !hasData) {
-                await new Promise(resolve => setTimeout(resolve, 100));
-                const afterSync = await storage.getBookmarks(sceneId);
-                hasData = (afterSync.bookmarks && afterSync.bookmarks.length > 0) ||
-                  (afterSync.folders && afterSync.folders.length > 0);
-                retries--;
-              }
-
-              if (!hasData) {
-                // 云端也没有，创建一个空文件以便后续同步
-                try {
-                  await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
-                } catch (e) {
-                  // 忽略，等待用户后续添加书签再同步
-                }
-              }
             } catch (e) {
               console.error('[弹窗] 切换场景：同步失败', e);
               // 忽略单次同步失败，继续后续逻辑

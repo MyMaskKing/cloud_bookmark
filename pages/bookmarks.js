@@ -1019,17 +1019,6 @@ async function loadScenes() {
               } catch (e) {
                 // 忽略单次同步失败，继续后续逻辑
               }
-              const afterSync = await storage.getBookmarks(sceneId);
-              const hasAfter = (afterSync.bookmarks && afterSync.bookmarks.length) || (afterSync.folders && afterSync.folders.length);
-              if (!hasAfter) {
-                // 云端也没有，创建一个空文件以便后续同步
-                try {
-                  await sendMessageCompat({ action: 'syncToCloud', bookmarks: [], folders: [], sceneId });
-                } catch (e) {
-                  // 忽略，等待用户后续添加书签再同步
-                }
-              }
-              // 场景切换不同步到云端，只保存在本地
             }
             await loadCurrentScene();
             await loadScenes();
