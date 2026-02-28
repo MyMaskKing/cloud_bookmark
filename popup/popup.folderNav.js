@@ -73,33 +73,51 @@
     );
   }
 
+  function getAncestorPaths(path) {
+    const n = safeNormalizePath(path);
+    if (!n) return [];
+    const parts = n.split('/').filter(Boolean);
+    const result = [];
+    for (let i = 1; i < parts.length; i++) {
+      result.push(parts.slice(0, i).join('/'));
+    }
+    return result;
+  }
+
   function expandFolderIfNeeded(path, callback) {
     const normalized = safeNormalizePath(path);
     if (!normalized) {
       callback(null);
       return;
     }
-    let row = findFolderRowByPath(normalized);
-    if (!row) {
-      console.warn('[弹窗导航] 未找到目标文件夹行:', normalized);
-      callback(null);
-      return;
+    const ancestors = getAncestorPaths(normalized);
+    const allToExpand = [...ancestors, normalized];
+
+    function doExpand(index) {
+      if (index >= allToExpand.length) {
+        const row = findFolderRowByPath(normalized);
+        callback(row || null);
+        return;
+      }
+      const p = allToExpand[index];
+      const row = findFolderRowByPath(p);
+      if (!row) {
+        console.warn('[弹窗导航] 未找到文件夹行:', p);
+        callback(null);
+        return;
+      }
+      const block = row.closest('.folder-block');
+      const hasChildren = block && block.querySelector('.folder-children');
+      if (hasChildren) {
+        doExpand(index + 1);
+        return;
+      }
+      row.click();
+      requestAnimationFrame(() => {
+        doExpand(index + 1);
+      });
     }
-
-    const block = row.closest('.folder-block');
-    const hasChildren = block && block.querySelector('.folder-children');
-
-    if (hasChildren) {
-      callback(row);
-      return;
-    }
-
-    // 当前为折叠状态，模拟点击以展开，等待渲染完成后再滚动
-    row.click();
-    requestAnimationFrame(() => {
-      const newRow = findFolderRowByPath(normalized) || row;
-      callback(newRow);
-    });
+    doExpand(0);
   }
 
   function scrollToFolder(path) {
@@ -111,13 +129,10 @@
 
       const containerRect = container.getBoundingClientRect();
       const rowRect = targetRow.getBoundingClientRect();
-      const stickyEl = document.getElementById('currentFolderSticky');
-      const stickyVisible =
-        stickyEl && stickyEl.style.display !== 'none' && stickyEl.offsetHeight > 0;
-      const stickyHeight = stickyVisible ? stickyEl.offsetHeight : 0;
 
+      // 粘性条已在滚动容器外部，这里不再扣除粘性条高度，只让目标文件夹靠近容器顶部
       const offset = rowRect.top - containerRect.top;
-      const targetTop = container.scrollTop + offset - stickyHeight - 4;
+      const targetTop = container.scrollTop + offset - 8;
 
       console.log('[弹窗导航] 滚动到文件夹并展开:', safeNormalizePath(path), 'targetTop=', targetTop);
       container.scrollTo({
@@ -216,14 +231,6 @@
     if (!drawerTree || !drawerTabs || !modeLabel) return;
 
     const rows = collectFolderRows();
-    if (!rows.length) {
-      drawerTree.innerHTML =
-        '<div class="folder-drawer-empty">当前视图中没有可用的文件夹目录。</div>';
-      drawerTabs.innerHTML =
-        '<div class="folder-drawer-empty">当前视图中没有可用的文件夹目录。</div>';
-      modeLabel.textContent = '无可用目录';
-      return;
-    }
 
     if (folderNavMode === 'tabs') {
       modeLabel.textContent = '横向标签';
@@ -390,35 +397,77 @@
       drawerTree.style.display = 'flex';
       drawerTabs.style.display = 'none';
 
-      drawerTree.innerHTML = rows
-        .map((row) => {
-          const isActive =
-            safeNormalizePath(row.path) === safeNormalizePath(currentFolderPath);
-          const depth = Math.min(Math.max(row.depth, 1), 5);
-          return `
-            <div
-              class="folder-drawer-item depth-${depth} ${
-                isActive ? 'active' : ''
-              }"
-              data-folder="${row.path}"
-              title="${row.path}"
-            >
-              <span class="folder-drawer-item-label">${row.name}</span>
-              <span class="folder-drawer-item-count">${row.count}</span>
-            </div>
-          `;
-        })
-        .join('');
+      const bookmarksForTree = Array.isArray(lastRenderedBookmarks)
+        ? lastRenderedBookmarks
+        : [];
+      const foldersForTree =
+        (window.__popupFoldersForDrawer && Array.isArray(window.__popupFoldersForDrawer))
+          ? window.__popupFoldersForDrawer
+          : null;
 
-      drawerTree
-        .querySelectorAll('.folder-drawer-item')
-        .forEach((item) =>
-          item.addEventListener('click', () => {
-            const path = item.dataset.folder || '';
-            scrollToFolder(path);
-            closeFolderDrawer();
-          })
-        );
+      if (!bookmarksForTree.length || typeof buildFolderTree !== 'function') {
+        drawerTree.innerHTML =
+          '<div class="folder-drawer-empty">当前视图中没有可用的文件夹目录。</div>';
+      } else {
+        const tree = buildFolderTree(bookmarksForTree, foldersForTree);
+
+        function countTotal(node) {
+          const foldersMap = node.folders || {};
+          const items = node.items || [];
+          let total = items.length;
+          Object.keys(foldersMap).forEach((key) => {
+            total += countTotal(foldersMap[key]);
+          });
+          return total;
+        }
+
+        function renderTree(node, depth) {
+          const foldersMap = node.folders || {};
+          const order = node.order || Object.keys(foldersMap);
+          const entries = order.map((key) => foldersMap[key]).filter(Boolean);
+
+          return entries
+            .map((child) => {
+              const childDepth = Math.min(Math.max(depth + 1, 1), 5);
+              const isActive =
+                safeNormalizePath(child.path) === safeNormalizePath(currentFolderPath);
+              const totalCount = countTotal(child);
+              const childrenHtml = renderTree(child, childDepth);
+              return `
+                <div class="folder-block">
+                  <div
+                    class="folder-drawer-item depth-${childDepth} ${
+                      isActive ? 'active' : ''
+                    } has-children"
+                    data-folder="${child.path}"
+                    title="${child.path}"
+                  >
+                    <span class="folder-drawer-item-label">${child.name}</span>
+                    <span class="folder-drawer-item-count">${totalCount}</span>
+                  </div>
+                  ${childrenHtml}
+                </div>
+              `;
+            })
+            .join('');
+        }
+
+        drawerTree.innerHTML = renderTree(tree, 0);
+
+        drawerTree
+          .querySelectorAll('.folder-drawer-item')
+          .forEach((item) =>
+            item.addEventListener('click', () => {
+              const path = item.dataset.folder || '';
+              const normalized = safeNormalizePath(path);
+              if (!normalized) return;
+              currentFolderPath = normalized;
+              // 树形目录：点击目录项时，打开/定位并关闭抽屉，方便快速跳转
+              scrollToFolder(normalized);
+              closeFolderDrawer();
+            })
+          );
+      }
     }
 
     // 打开时让当前文件夹位置滚动到可见范围

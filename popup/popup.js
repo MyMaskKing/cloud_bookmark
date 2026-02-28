@@ -544,6 +544,8 @@ async function loadBookmarksForPopup() {
     }
 
     lastRenderedBookmarks = sorted;
+    // 提供给目录抽屉使用的完整文件夹列表
+    window.__popupFoldersForDrawer = folders;
     renderBookmarks(sorted, { searchMode: false, folders: folders });
 
     // 恢复滚动位置（延迟执行，确保DOM完全渲染）

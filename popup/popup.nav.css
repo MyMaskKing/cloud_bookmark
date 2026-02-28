@@ -228,6 +228,14 @@ body {
   gap: 2px;
 }
 
+/* 覆盖主列表的卡片样式，抽屉里的树形目录只做缩进列表，不使用白色块背景 */
+.folder-drawer-tree .folder-block {
+  border: none;
+  background: transparent;
+  margin: 0;
+  padding: 0;
+}
+
 .folder-drawer-item {
   display: flex;
   align-items: center;
