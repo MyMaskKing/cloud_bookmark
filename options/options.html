@@ -122,6 +122,14 @@
           </label>
           <small>开启后，弹窗和悬浮球打开的弹窗中每个书签项旁边会显示更新按钮，默认只显示删除按钮。</small>
         </div>
+        <div class="form-group">
+          <label for="popupFolderNavMode">弹窗目录展示方式</label>
+          <select id="popupFolderNavMode">
+            <option value="tree">树形目录（默认）</option>
+            <option value="tabs">横向标签</option>
+          </select>
+          <small>控制弹窗右上角目录导航的展示方式，仅影响弹窗目录抽屉，右侧书签列表结构保持不变。</small>
+        </div>
         <div class="form-group checkbox-row">
           <label>
             <input type="checkbox" id="enableFloatingBall">
@@ -262,6 +270,7 @@
   <script src="../utils/utils.js"></script>
   <script src="../utils/bookmarkParser.js"></script>
   <script src="options.js"></script>
+  <script src="options.popupNavSettings.js"></script>
 </body>
 </html>
 

@@ -1,0 +1,382 @@
+body {
+  font-family: 'PingFang SC', 'Microsoft YaHei', 'Hiragino Sans GB',
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, sans-serif;
+}
+
+.popup-container {
+  position: relative;
+}
+
+/* 头部目录按钮 */
+.header-icon-btn {
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  transition: all 0.2s ease;
+}
+
+.header-icon-btn-inner {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #edf2ff, #e7f5ff);
+  box-shadow: 0 0 0 1px rgba(80, 120, 255, 0.15);
+}
+
+.icon-folder-drawer {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(135deg, #4a90e2, #6a5af9);
+  position: relative;
+}
+
+.icon-folder-drawer::before,
+.icon-folder-drawer::after {
+  content: '';
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.icon-folder-drawer::before {
+  top: 4px;
+}
+
+.icon-folder-drawer::after {
+  top: 8px;
+}
+
+.header-icon-btn:hover .header-icon-btn-inner {
+  box-shadow: 0 0 0 1px rgba(80, 120, 255, 0.3),
+    0 6px 14px rgba(15, 23, 42, 0.16);
+  transform: translateY(-1px);
+}
+
+.header-icon-btn:active .header-icon-btn-inner {
+  transform: translateY(0);
+  box-shadow: 0 0 0 1px rgba(80, 120, 255, 0.4),
+    0 3px 8px rgba(15, 23, 42, 0.24);
+}
+
+/* 当前文件夹粘性提示条 */
+.current-folder-sticky {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  margin-bottom: 8px;
+  background: linear-gradient(
+    135deg,
+    rgba(248, 250, 252, 0.98),
+    rgba(239, 246, 255, 0.98)
+  );
+  backdrop-filter: blur(8px);
+  border-radius: 8px;
+  box-shadow: 0 1px 0 rgba(148, 163, 184, 0.2);
+}
+
+.current-folder-inner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.current-folder-icon {
+  font-size: 14px;
+}
+
+.current-folder-label {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.current-folder-path {
+  font-size: 12px;
+  color: #111827;
+  font-weight: 500;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 抽屉式目录 */
+.folder-drawer-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
+.folder-drawer-mask {
+  flex: 1;
+  background: linear-gradient(
+    to left,
+    rgba(15, 23, 42, 0.45),
+    rgba(15, 23, 42, 0.15)
+  );
+  backdrop-filter: blur(6px);
+}
+
+.folder-drawer-panel {
+  width: 240px;
+  max-width: 80%;
+  height: 100%;
+  background: radial-gradient(circle at top left, #0f172a, #020617 60%);
+  color: #e5e7eb;
+  box-shadow: -10px 0 30px rgba(15, 23, 42, 0.6);
+  display: flex;
+  flex-direction: column;
+}
+
+.folder-drawer-header {
+  padding: 12px 14px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+}
+
+.folder-drawer-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.folder-drawer-back {
+  border: none;
+  background: rgba(15, 23, 42, 0.6);
+  color: #9ca3af;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+  transition: all 0.2s ease;
+}
+
+.folder-drawer-back:hover {
+  background: rgba(148, 163, 184, 0.25);
+  color: #e5e7eb;
+}
+
+.folder-drawer-mode {
+  margin-left: auto;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.18);
+  color: #bfdbfe;
+}
+
+.folder-drawer-close {
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.folder-drawer-close:hover {
+  background: rgba(148, 163, 184, 0.2);
+  color: #e5e7eb;
+}
+
+.folder-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 8px 10px;
+}
+
+.folder-drawer-empty {
+  padding: 16px 10px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+/* 树形模式 */
+.folder-drawer-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.folder-drawer-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #e5e7eb;
+  transition: background 0.16s ease, transform 0.08s ease,
+    box-shadow 0.16s ease;
+}
+
+.folder-drawer-item::before {
+  content: '';
+  width: 3px;
+  height: 10px;
+  border-radius: 999px;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.folder-drawer-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.folder-drawer-item-count {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+.folder-drawer-item.depth-1 {
+  padding-left: 10px;
+}
+
+.folder-drawer-item.depth-2 {
+  padding-left: 18px;
+}
+
+.folder-drawer-item.depth-3 {
+  padding-left: 26px;
+}
+
+.folder-drawer-item.depth-4 {
+  padding-left: 34px;
+}
+
+.folder-drawer-item.depth-5 {
+  padding-left: 42px;
+}
+
+.folder-drawer-item:hover {
+  background: radial-gradient(circle at left, rgba(59, 130, 246, 0.14), transparent);
+}
+
+.folder-drawer-item.active {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.4), rgba(129, 140, 248, 0.4));
+  box-shadow: 0 0 0 1px rgba(191, 219, 254, 0.4);
+  transform: translateX(-1px);
+}
+
+.folder-drawer-item.active::before {
+  background: linear-gradient(180deg, #60a5fa, #a855f7);
+}
+
+.folder-drawer-item.has-children {
+  font-weight: 500;
+}
+
+.folder-drawer-item.has-children::before {
+  background: linear-gradient(180deg, #60a5fa, #38bdf8);
+}
+
+.folder-drawer-item.has-children::after {
+  content: '›';
+  font-size: 11px;
+  color: #9ca3af;
+  margin-left: 4px;
+}
+
+.folder-drawer-item:not(.has-children) {
+  opacity: 0.85;
+}
+
+.folder-drawer-item:not(.has-children):hover {
+  background: rgba(30, 64, 175, 0.25);
+}
+
+/* 横向标签模式 */
+.folder-drawer-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.folder-drawer-tab {
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  font-size: 12px;
+  cursor: pointer;
+  color: #e5e7eb;
+  background: rgba(15, 23, 42, 0.4);
+  transition: all 0.16s ease;
+}
+
+.folder-drawer-tab:hover {
+  border-color: rgba(129, 140, 248, 0.9);
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.5);
+}
+
+.folder-drawer-tab.active {
+  background: linear-gradient(135deg, #4f46e5, #0ea5e9);
+  border-color: transparent;
+  box-shadow: 0 0 0 1px rgba(191, 219, 254, 0.6);
+}
+
+.folder-drawer-tab-count {
+  margin-left: 4px;
+  font-size: 11px;
+  color: #d1d5db;
+}
+
+/* 书签卡片中的“所属文件夹”样式优化 */
+.bookmark-item-folder {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: #9ca3af;
+  font-weight: 400;
+}
+
+.bookmark-item-folder::before {
+  content: '🗂';
+  font-size: 13px;
+}
+
+@media (max-width: 480px) {
+  .folder-drawer-panel {
+    width: 78%;
+  }
+
+  .current-folder-inner {
+    padding-inline: 8px;
+  }
+}
+

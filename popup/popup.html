@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>云端书签</title>
   <link rel="stylesheet" href="popup.css">
+  <link rel="stylesheet" href="popup.nav.css">
 </head>
 <body>
   <div class="popup-container">
@@ -24,8 +25,22 @@
           <span class="status-dot" id="statusDot"></span>
           <span id="statusText">同步中</span>
         </div>
+        <button id="folderDrawerToggle" class="header-icon-btn" title="打开目录导航">
+          <span class="header-icon-btn-inner">
+            <span class="icon-folder-drawer"></span>
+          </span>
+        </button>
       </div>
     </header>
+
+    <!-- 当前文件夹粘性条：固定在列表区域顶部（搜索/快捷操作之上） -->
+    <div id="currentFolderSticky" class="current-folder-sticky" style="display: none;">
+      <div class="current-folder-inner">
+        <span class="current-folder-icon">📁</span>
+        <span class="current-folder-label">当前文件夹</span>
+        <span class="current-folder-path" id="currentFolderPathText"></span>
+      </div>
+    </div>
 
     <div class="popup-content">
       <div class="search-box">
@@ -60,6 +75,27 @@
     
     <button id="backToTopBtn" class="back-to-top" title="回到顶部">↑</button>
 
+    <!-- 抽屉式目录导航 -->
+    <div id="folderDrawer" class="folder-drawer-overlay" style="display: none;">
+      <div class="folder-drawer-mask"></div>
+      <div class="folder-drawer-panel">
+        <div class="folder-drawer-header">
+          <div class="folder-drawer-title">目录导航</div>
+          <button id="folderDrawerBack" class="folder-drawer-back" title="返回上一级" style="display: none;">←</button>
+          <div class="folder-drawer-mode" id="folderDrawerModeLabel">树形目录</div>
+          <button id="folderDrawerClose" class="folder-drawer-close" title="关闭目录">✕</button>
+        </div>
+        <div class="folder-drawer-body">
+          <div id="folderDrawerTabs" class="folder-drawer-tabs" data-mode="tabs" style="display: none;">
+            <!-- 横向标签目录内容由脚本动态渲染 -->
+          </div>
+          <div id="folderDrawerTree" class="folder-drawer-tree" data-mode="tree">
+            <!-- 树形/子目录内容由脚本动态渲染 -->
+          </div>
+        </div>
+      </div>
+    </div>
+
     <footer class="popup-footer">
       <div class="footer-actions">
         <button id="exportLogBtn" class="footer-btn">导出日志</button>
@@ -87,6 +123,7 @@
   <script src="../utils/storage.js"></script>
   <script src="../utils/utils.js"></script>
   <script src="popup.js"></script>
+  <script src="popup.folderNav.js"></script>
 </body>
 </html>
 

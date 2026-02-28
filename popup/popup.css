@@ -768,7 +768,7 @@ body {
 .back-to-top {
   position: fixed;
   right: 20px;
-  bottom: 80px; /* 位于 footer 上方 */
+  bottom: 60px; /* 更靠近 footer 一些 */
   width: 36px;
   height: 36px;
   border-radius: 50%;
@@ -803,7 +803,7 @@ body {
     width: 44px;
     height: 44px;
     font-size: 22px;
-    bottom: 90px;
+    bottom: 72px;
     right: 15px;
   }
 }

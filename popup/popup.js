@@ -341,9 +341,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       scrollContainer.addEventListener('scroll', () => {
         const currentScrollTop = scrollContainer.scrollTop;
 
-        // 处理"回到顶部"按钮显示/隐藏
+        // 处理"回到顶部"按钮显示/隐藏（目录抽屉打开时始终隐藏）
         if (backToTopBtn) {
-          if (currentScrollTop > 300) {
+          if (window.__folderDrawerOpen) {
+            backToTopBtn.style.display = 'none';
+          } else if (currentScrollTop > 300) {
             backToTopBtn.style.display = 'flex';
           } else {
             backToTopBtn.style.display = 'none';
@@ -585,7 +587,7 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
         <div class="bookmark-item-content">
           <div class="bookmark-item-title">${escapeHtml(bookmark.title || '无标题')}</div>
           <div class="bookmark-item-url">${escapeHtml(bookmark.url)}</div>
-          ${bookmark.folder ? `<div class="bookmark-item-folder">📁 ${escapeHtml(bookmark.folder)}</div>` : ''}
+          ${bookmark.folder ? `<div class="bookmark-item-folder">所在：${escapeHtml(bookmark.folder)}</div>` : ''}
         </div>
         <div class="bookmark-item-actions">
           <button class="bookmark-update-btn" data-id="${escapeHtml(bookmark.id)}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>
@@ -875,6 +877,7 @@ function renderFolderTreeHtml(node, indentPath) {
       <div class="bookmark-item-content">
         <div class="bookmark-item-title">${escapeHtml(b.title || '无标题')}</div>
         <div class="bookmark-item-url">${escapeHtml(b.url)}</div>
+        ${b.folder ? `<div class="bookmark-item-folder">所在：${escapeHtml(b.folder)}</div>` : ''}
       </div>
       <div class="bookmark-item-actions">
         <button class="bookmark-update-btn" data-id="${escapeHtml(b.id)}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>
