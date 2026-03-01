@@ -313,11 +313,24 @@ body {
   background: linear-gradient(180deg, #60a5fa, #38bdf8);
 }
 
-.folder-drawer-item.has-children::after {
-  content: '›';
-  font-size: 11px;
+.folder-drawer-item-expand {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  font-size: 14px;
   color: #9ca3af;
-  margin-left: 4px;
+  cursor: pointer;
+  margin-left: 2px;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+
+.folder-drawer-item-expand:hover {
+  background: rgba(59, 130, 246, 0.25);
+  color: #e5e7eb;
 }
 
 .folder-drawer-item:not(.has-children) {

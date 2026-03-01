@@ -223,6 +223,58 @@
     return rows.some((row) => getParentPath(row.path) === n);
   }
 
+  /**
+   * 从树结构递归收集所有文件夹（用于横向标签模式，不依赖 DOM 展开状态）
+   */
+  function collectFoldersFromTree(tree) {
+    const result = [];
+    const foldersMap = tree.folders || {};
+    const order = tree.order || Object.keys(foldersMap);
+
+    function countTotal(node) {
+      const foldersMap = node.folders || {};
+      const items = node.items || [];
+      let total = items.length;
+      Object.keys(foldersMap).forEach((key) => {
+        total += countTotal(foldersMap[key]);
+      });
+      return total;
+    }
+
+    order.forEach((key) => {
+      const node = foldersMap[key];
+      if (!node) return;
+      const path = node.path || '';
+      const name = node.name || key;
+      const depth = path ? path.split('/').filter(Boolean).length : 0;
+      const count = countTotal(node);
+      result.push({ path, name, depth, count });
+      result.push(...collectFoldersFromTree(node));
+    });
+    return result;
+  }
+
+  /**
+   * 横向标签模式使用的文件夹列表：从数据源（树）获取，确保所有文件夹都展示
+   */
+  function getRowsForTabsMode() {
+    const bookmarksForTree = Array.isArray(lastRenderedBookmarks)
+      ? lastRenderedBookmarks
+      : [];
+    const foldersForTree =
+      (window.__popupFoldersForDrawer && Array.isArray(window.__popupFoldersForDrawer))
+        ? window.__popupFoldersForDrawer
+        : null;
+    const hasData =
+      (bookmarksForTree && bookmarksForTree.length) ||
+      (foldersForTree && foldersForTree.length);
+    if (!hasData || typeof buildFolderTree !== 'function') {
+      return [];
+    }
+    const tree = buildFolderTree(bookmarksForTree, foldersForTree);
+    return collectFoldersFromTree(tree);
+  }
+
   function renderFolderDrawerContent() {
     const drawerTree = document.getElementById('folderDrawerTree');
     const drawerTabs = document.getElementById('folderDrawerTabs');
@@ -230,7 +282,10 @@
     const backBtn = document.getElementById('folderDrawerBack');
     if (!drawerTree || !drawerTabs || !modeLabel) return;
 
-    const rows = collectFolderRows();
+    const rows =
+      folderNavMode === 'tabs'
+        ? getRowsForTabsMode()
+        : collectFolderRows();
 
     if (folderNavMode === 'tabs') {
       modeLabel.textContent = '横向标签';
@@ -341,6 +396,7 @@
               >
                 <span class="folder-drawer-item-label">${row.name}</span>
                 <span class="folder-drawer-item-count">${row.count}</span>
+                ${clickable ? '<span class="folder-drawer-item-expand" title="展开子文件夹">›</span>' : ''}
               </div>
             `;
           })
@@ -348,25 +404,27 @@
 
         drawerTree
           .querySelectorAll('.folder-drawer-item')
-          .forEach((item) =>
-            item.addEventListener('click', () => {
+          .forEach((item) => {
+            item.addEventListener('click', (e) => {
               const path = item.dataset.folder || '';
               const normalized = safeNormalizePath(path);
               if (!normalized) return;
 
-              currentFolderPath = normalized;
-
-              if (hasChildren(normalized, rows)) {
-                // 继续在抽屉内下钻到下一层级（互斥），不关闭抽屉
+              // 点击箭头：在抽屉内展开该文件夹的子文件夹
+              if (e.target.classList.contains('folder-drawer-item-expand')) {
+                e.preventDefault();
+                e.stopPropagation();
+                currentFolderPath = normalized;
                 currentTabsParentPath = normalized;
                 renderFolderDrawerContent();
-              } else {
-                // 叶子节点：只做快速定位，并关闭抽屉
-                scrollToFolder(normalized);
-                closeFolderDrawer();
+                return;
               }
-            })
-          );
+              // 点击名称/数量区域：主列表跳转到该文件夹并关闭抽屉
+              currentFolderPath = normalized;
+              scrollToFolder(normalized);
+              closeFolderDrawer();
+            });
+          });
       }
 
       renderChildrenForParent(parentPath);
