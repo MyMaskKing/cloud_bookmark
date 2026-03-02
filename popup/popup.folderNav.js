@@ -84,47 +84,87 @@
     return result;
   }
 
-  function expandFolderIfNeeded(path, callback) {
+  // 为避免快速连续点击导致展开过程互相打断，这里串行执行展开任务
+  let expandQueue = Promise.resolve();
+
+  function expandFolderIfNeeded(path) {
     const normalized = safeNormalizePath(path);
     if (!normalized) {
-      callback(null);
-      return;
+      return Promise.resolve(null);
     }
     const ancestors = getAncestorPaths(normalized);
     const allToExpand = [...ancestors, normalized];
 
-    function doExpand(index) {
-      if (index >= allToExpand.length) {
-        const row = findFolderRowByPath(normalized);
-        callback(row || null);
-        return;
-      }
-      const p = allToExpand[index];
-      const row = findFolderRowByPath(p);
-      if (!row) {
-        console.warn('[弹窗导航] 未找到文件夹行:', p);
-        callback(null);
-        return;
-      }
-      const block = row.closest('.folder-block');
-      const hasChildren = block && block.querySelector('.folder-children');
-      if (hasChildren) {
-        doExpand(index + 1);
-        return;
-      }
-      row.click();
-      requestAnimationFrame(() => {
-        doExpand(index + 1);
+    const task = () =>
+      new Promise((resolve) => {
+        function ensureExpandedAndResolve() {
+          const row = findFolderRowByPath(normalized);
+          if (!row) {
+            console.warn('[弹窗导航] 目标文件夹行缺失:', normalized);
+            resolve(null);
+            return;
+          }
+          const block = row.closest('.folder-block');
+          const children = block && block.querySelector('.folder-children');
+          if (children) {
+            resolve(row);
+            return;
+          }
+          // 理论上展开后一定会有 .folder-children；如果没有，再补一次点击重试
+          row.click();
+          requestAnimationFrame(() => {
+            const retryRow = findFolderRowByPath(normalized) || row;
+            const retryBlock = retryRow.closest('.folder-block');
+            const retryChildren =
+              retryBlock && retryBlock.querySelector('.folder-children');
+            if (!retryChildren) {
+              console.warn(
+                '[弹窗导航] 目标文件夹展开重试后仍未出现子内容:',
+                normalized
+              );
+            }
+            resolve(retryRow);
+          });
+        }
+
+        function doExpand(index) {
+          if (index >= allToExpand.length) {
+            ensureExpandedAndResolve();
+            return;
+          }
+          const p = allToExpand[index];
+          const row = findFolderRowByPath(p);
+          if (!row) {
+            console.warn('[弹窗导航] 未找到文件夹行:', p);
+            resolve(null);
+            return;
+          }
+          const block = row.closest('.folder-block');
+          const hasChildren = block && block.querySelector('.folder-children');
+          if (hasChildren) {
+            doExpand(index + 1);
+            return;
+          }
+          row.click();
+          requestAnimationFrame(() => {
+            doExpand(index + 1);
+          });
+        }
+        doExpand(0);
       });
-    }
-    doExpand(0);
+
+    // 串行排队执行展开逻辑，避免并发导致 DOM 状态错乱
+    expandQueue = expandQueue
+      .catch(() => null)
+      .then(() => task());
+    return expandQueue;
   }
 
   function scrollToFolder(path) {
     const container = getScrollContainer();
     if (!container) return;
 
-    expandFolderIfNeeded(path, (targetRow) => {
+    expandFolderIfNeeded(path).then((targetRow) => {
       if (!targetRow) return;
 
       const containerRect = container.getBoundingClientRect();
@@ -134,7 +174,12 @@
       const offset = rowRect.top - containerRect.top;
       const targetTop = container.scrollTop + offset - 8;
 
-      console.log('[弹窗导航] 滚动到文件夹并展开:', safeNormalizePath(path), 'targetTop=', targetTop);
+      console.log(
+        '[弹窗导航] 滚动到文件夹并展开:',
+        safeNormalizePath(path),
+        'targetTop=',
+        targetTop
+      );
       container.scrollTo({
         top: Math.max(targetTop, 0),
         behavior: 'smooth',
