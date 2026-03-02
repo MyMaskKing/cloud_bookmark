@@ -1660,16 +1660,24 @@ async function loadShortcutDisplay() {
 
   try {
     const cmds = await getCommandsCompat();
-    if (!cmds || !Array.isArray(cmds)) return;
+    const manifest = (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.getManifest) ? chrome.runtime.getManifest() : (typeof browser !== 'undefined' && browser.runtime && browser.runtime.getManifest ? browser.runtime.getManifest() : {});
+    const suggested = manifest.commands && manifest.commands['add-bookmark'] && manifest.commands['add-bookmark'].suggested_key;
+    const suggestedWin = suggested && (suggested.default || suggested.windows) ? (suggested.default || suggested.windows).replace(/\+/g, ' + ') : 'Ctrl+Shift+Z';
+    const suggestedMac = suggested && suggested.mac ? suggested.mac.replace(/\+/g, ' + ') : 'Command+Shift+Z';
+
+    if (!cmds || !Array.isArray(cmds)) {
+      setText(shortcutDisplayWin, `Windows / Linux：未设置（建议 ${suggestedWin}，请在扩展快捷键页设置）`);
+      setText(shortcutDisplayMac, `macOS：未设置（建议 ${suggestedMac}，请在扩展快捷键页设置）`);
+      return;
+    }
     const addCmd = cmds.find(c => c.name === 'add-bookmark');
     if (addCmd && addCmd.shortcut) {
-      // Firefox 返回如 "Ctrl+Shift+V"
       const shortcut = addCmd.shortcut.replace(/\+/g, ' + ');
       setText(shortcutDisplayWin, `Windows / Linux：${shortcut}`);
       setText(shortcutDisplayMac, `macOS：${shortcut.replace(/^Ctrl/, 'Command')}`);
     } else {
-      setText(shortcutDisplayWin, '未设置（请在 about:addons 设置）');
-      setText(shortcutDisplayMac, '未设置（请在 about:addons 设置）');
+      setText(shortcutDisplayWin, `Windows / Linux：未设置（建议 ${suggestedWin}，请见下方说明）`);
+      setText(shortcutDisplayMac, `macOS：未设置（建议 ${suggestedMac}，请见下方说明）`);
     }
   } catch (e) {
     console.warn('加载快捷键配置失败', e);
