@@ -843,24 +843,7 @@ function setupEventListeners() {
         // 关闭侧边栏
         closeSidebarIfMobile();
       } else {
-        // 桌面端：既展开又筛选（保持原有行为）
-        // 切换展开/折叠状态
-        if (expandedFolders.has(folderPath)) {
-          expandedFolders.delete(folderPath);
-          console.log('[文件夹点击] 桌面端折叠:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
-        } else {
-          expandedFolders.add(folderPath);
-          console.log('[文件夹点击] 桌面端展开:', { folderPath, expandedFoldersAfter: Array.from(expandedFolders) });
-        }
-
-        // 保存展开状态到本地存储
-        saveFolderState();
-
-        // 重新渲染文件夹树
-        await loadFolders();
-        console.log('[文件夹点击] 桌面端渲染完成，验证展开状态:', { folderPath, isExpanded: expandedFolders.has(folderPath), expandedFolders: Array.from(expandedFolders) });
-
-        // 同时执行筛选操作
+        // 桌面端：仅执行筛选，不再切换展开/折叠（展开/折叠只由三角图标控制）
         const escapedPath = folderPath.replace(/"/g, '\\"');
         const newRow = foldersList.querySelector(`[data-folder="${escapedPath}"]`);
         if (newRow) {
@@ -1387,16 +1370,14 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
     return `
         <li class="folder-node">
           <div class="folder-row" data-folder="${escapeHtml(child.path)}">
+            <button class="folder-expand-toggle" data-folder="${escapeHtml(child.path)}" title="${expanded ? '折叠' : '展开'}">
+              ${expanded ? '▼' : '▶'}
+            </button>
             <span class="folder-label" data-folder="${escapeHtml(child.path)}" title="${escapeHtml(child.path)}">
               <span class="folder-label-text">${icon} ${escapeHtml(child.name)}</span>
               <span class="folder-count">${totalCount}</span>
             </span>
-            <div class="folder-actions">
-              <button class="folder-expand-toggle" data-folder="${escapeHtml(child.path)}" title="${expanded ? '折叠' : '展开'}">
-                ${expanded ? '▼' : '▶'}
-              </button>
-              <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
-            </div>
+            <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
           </div>
           ${expandedContent}
         </li>
@@ -2103,10 +2084,6 @@ function renderBookmarkCard(bookmark) {
           <input type="checkbox" class="bookmark-select-checkbox" data-id="${bookmark.id}" ${isSelected ? 'checked' : ''}>
         </div>
       ` : ''}
-      <div class="bookmark-actions" style="${batchMode ? 'display: none;' : ''}">
-        <button class="action-btn edit-btn" title="编辑">✏️</button>
-        <button class="action-btn delete-btn" title="删除">🗑️</button>
-      </div>
       ${showMobileReorder ? `
         <div class="bookmark-reorder-mobile">
           <button class="action-btn move-up-btn" title="上移">⬆️</button>
@@ -2119,7 +2096,13 @@ function renderBookmarkCard(bookmark) {
           <div class="bookmark-title">${escapeHtml(bookmark.title || '无标题')}</div>
           ${viewOptions.showUrl ? `<div class="bookmark-url">${escapeHtml(domain || bookmark.url)}</div>` : ''}
         </div>
-        <div class="bookmark-star">${bookmark.starred ? '⭐' : '☆'}</div>
+        <div class="bookmark-header-right">
+          <div class="bookmark-actions" style="${batchMode ? 'display: none;' : ''}">
+            <button class="action-btn edit-btn" title="编辑">✏️</button>
+            <button class="action-btn delete-btn" title="删除">🗑️</button>
+          </div>
+          <div class="bookmark-star">${bookmark.starred ? '⭐' : '☆'}</div>
+        </div>
       </div>
       ${viewOptions.showDescription && bookmark.description ? `<div class="bookmark-description">${escapeHtml(bookmark.description)}</div>` : ''}
       ${viewOptions.showNotes && bookmark.notes ? `<div class="bookmark-notes">📝 ${escapeHtml(bookmark.notes)}</div>` : ''}

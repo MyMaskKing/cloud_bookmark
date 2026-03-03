@@ -25,6 +25,11 @@
           <span class="status-dot" id="statusDot"></span>
           <span id="statusText">同步中</span>
         </div>
+        <button id="favoriteDrawerToggle" class="header-icon-btn" title="查看收藏书签">
+          <span class="header-icon-btn-inner">
+            <span class="icon-star-drawer">★</span>
+          </span>
+        </button>
         <button id="folderDrawerToggle" class="header-icon-btn" title="打开目录导航">
           <span class="header-icon-btn-inner">
             <span class="icon-folder-drawer"></span>
@@ -91,6 +96,22 @@
           </div>
           <div id="folderDrawerTree" class="folder-drawer-tree" data-mode="tree">
             <!-- 树形/子目录内容由脚本动态渲染 -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 收藏书签抽屉 -->
+    <div id="favoriteDrawer" class="folder-drawer-overlay" style="display: none;">
+      <div class="folder-drawer-mask"></div>
+      <div class="folder-drawer-panel favorite-drawer-panel">
+        <div class="folder-drawer-header">
+          <div class="folder-drawer-title">收藏书签</div>
+          <button id="favoriteDrawerClose" class="folder-drawer-close" title="关闭收藏">✕</button>
+        </div>
+        <div class="favorite-drawer-body">
+          <div id="favoriteDrawerList" class="favorite-drawer-list">
+            <!-- 收藏内容由脚本动态渲染 -->
           </div>
         </div>
       </div>

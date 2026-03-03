@@ -107,7 +107,8 @@ let lastRenderedBookmarks = [];
 let popupSettings = {
   expandFirstLevel: false,
   rememberScrollPosition: true, // 默认启用滚动位置记忆
-  showUpdateButton: false // 默认不显示更新按钮，只显示删除按钮
+  showUpdateButton: false, // 默认不显示更新按钮，只显示删除按钮
+  favoriteAsDelete: false // 默认仍使用删除按钮
 };
 let shouldApplyDefaultExpand = true;
 const runtimeErrors = [];
@@ -123,6 +124,22 @@ document.addEventListener('click', (e) => {
       return;
     }
 
+    // 收藏抽屉中“所属：xxx”点击 -> 目录跳转
+    const favFolderLink = e.target.closest('[data-favorite-folder-link="1"]');
+    if (favFolderLink) {
+      e.preventDefault();
+      e.stopPropagation();
+      const folderPath = favFolderLink.dataset.folder || '';
+      if (folderPath && typeof window.scrollToFolderInPopup === 'function') {
+        window.scrollToFolderInPopup(folderPath);
+      }
+      const favDrawer = document.getElementById('favoriteDrawer');
+      if (favDrawer) {
+        favDrawer.style.display = 'none';
+      }
+      return;
+    }
+
     // 先检查是否点击了更新按钮
     const updateBtn = e.target.closest('.bookmark-update-btn');
     if (updateBtn) {
@@ -131,6 +148,18 @@ document.addEventListener('click', (e) => {
       const bookmarkId = updateBtn.dataset.id;
       if (bookmarkId) {
         handleUpdateBookmark(bookmarkId);
+      }
+      return;
+    }
+
+    // 收藏模式下：检查是否点击了收藏按钮
+    const favBtn = e.target.closest('.bookmark-fav-btn');
+    if (favBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const bookmarkId = favBtn.dataset.id;
+      if (bookmarkId) {
+        handleToggleFavorite(bookmarkId);
       }
       return;
     }
@@ -584,19 +613,30 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
   }
 
   if (searchMode) {
-    bookmarkList.innerHTML = bookmarks.map(bookmark => `
-      <div class="bookmark-item" data-url="${escapeHtml(bookmark.url)}" data-id="${escapeHtml(bookmark.id)}">
+    const useFavorite = popupSettings && popupSettings.favoriteAsDelete;
+    bookmarkList.innerHTML = bookmarks.map(bookmark => {
+      const id = escapeHtml(bookmark.id);
+      const folderHtml = bookmark.folder
+        ? `<div class="bookmark-item-folder">所在：${escapeHtml(bookmark.folder)}</div>`
+        : '';
+      const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
+      const actionBtnHtml = useFavorite
+        ? `<button class="bookmark-fav-btn" data-id="${id}" data-starred="${bookmark.starred ? 'true' : 'false'}" title="${bookmark.starred ? '取消收藏' : '添加到收藏'}">${bookmark.starred ? '★' : '☆'}</button>`
+        : `<button class="bookmark-delete-btn" data-id="${id}" title="删除">🗑️</button>`;
+      return `
+      <div class="bookmark-item" data-url="${escapeHtml(bookmark.url)}" data-id="${id}">
         <div class="bookmark-item-content">
           <div class="bookmark-item-title">${escapeHtml(bookmark.title || '无标题')}</div>
           <div class="bookmark-item-url">${escapeHtml(bookmark.url)}</div>
-          ${bookmark.folder ? `<div class="bookmark-item-folder">所在：${escapeHtml(bookmark.folder)}</div>` : ''}
+          ${folderHtml}
         </div>
         <div class="bookmark-item-actions">
-          <button class="bookmark-update-btn" data-id="${escapeHtml(bookmark.id)}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>
-          <button class="bookmark-delete-btn" data-id="${escapeHtml(bookmark.id)}" title="删除">🗑️</button>
+          ${updateBtnHtml}
+          ${actionBtnHtml}
         </div>
       </div>
-    `).join('');
+    `;
+    }).join('');
 
     // 搜索模式中的点击事件由全局事件委托处理，不需要单独绑定
     // 全局事件委托会先检查按钮点击，然后才处理书签项点击
@@ -696,13 +736,19 @@ async function loadPopupSettings() {
     popupSettings = {
       expandFirstLevel: !!(settings && settings.popup && settings.popup.expandFirstLevel),
       rememberScrollPosition: settings && settings.popup && settings.popup.rememberScrollPosition !== false, // 默认true
-      showUpdateButton: !!(settings && settings.popup && settings.popup.showUpdateButton) // 默认false
+      showUpdateButton: !!(settings && settings.popup && settings.popup.showUpdateButton), // 默认false
+      favoriteAsDelete: !!(settings && settings.popup && settings.popup.favoriteAsDelete) // 默认false
     };
     // 应用设置到UI
     applyPopupSettings();
   } catch (e) {
     console.warn('加载弹窗设置失败，使用默认值', e?.message || e);
-    popupSettings = { expandFirstLevel: false, rememberScrollPosition: true, showUpdateButton: false };
+    popupSettings = {
+      expandFirstLevel: false,
+      rememberScrollPosition: true,
+      showUpdateButton: false,
+      favoriteAsDelete: false
+    };
     applyPopupSettings();
   }
 }
@@ -722,6 +768,29 @@ function applyPopupSettings() {
     }
   });
   console.log('[弹窗设置] 应用设置，showUpdateButton:', shouldShow, '找到按钮数量:', updateButtons.length);
+}
+
+/**
+ * 切换当前场景下某个书签的收藏状态（弹窗内使用）
+ */
+async function handleToggleFavorite(bookmarkId) {
+  try {
+    const data = await storage.getBookmarks(currentSceneId);
+    const allBookmarks = data.bookmarks || [];
+    const allFolders = data.folders || [];
+    const target = allBookmarks.find(b => b.id === bookmarkId);
+    if (!target) {
+      console.warn('[弹窗] 找不到需要收藏/取消收藏的书签:', bookmarkId);
+      return;
+    }
+    target.starred = !target.starred;
+
+    await storage.saveBookmarks(allBookmarks, allFolders, currentSceneId);
+    // 重新加载弹窗列表以反映最新收藏状态
+    await loadBookmarksForPopup();
+  } catch (e) {
+    console.error('[弹窗] 切换收藏状态失败:', e);
+  }
 }
 
 async function loadFolderState() {
@@ -874,19 +943,30 @@ function renderFolderTreeHtml(node, indentPath) {
     `;
   }).join('');
 
-  const itemHtml = items.map(b => `
-    <div class="bookmark-item" data-url="${escapeHtml(b.url)}" data-id="${escapeHtml(b.id)}">
+  const useFavorite = popupSettings && popupSettings.favoriteAsDelete;
+  const itemHtml = items.map(b => {
+    const id = escapeHtml(b.id);
+    const folderHtml = b.folder
+      ? `<div class="bookmark-item-folder">所在：${escapeHtml(b.folder)}</div>`
+      : '';
+    const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
+    const actionBtnHtml = useFavorite
+      ? `<button class="bookmark-fav-btn" data-id="${id}" data-starred="${b.starred ? 'true' : 'false'}" title="${b.starred ? '取消收藏' : '添加到收藏'}">${b.starred ? '★' : '☆'}</button>`
+      : `<button class="bookmark-delete-btn" data-id="${id}" title="删除">🗑️</button>`;
+    return `
+    <div class="bookmark-item" data-url="${escapeHtml(b.url)}" data-id="${id}">
       <div class="bookmark-item-content">
         <div class="bookmark-item-title">${escapeHtml(b.title || '无标题')}</div>
         <div class="bookmark-item-url">${escapeHtml(b.url)}</div>
-        ${b.folder ? `<div class="bookmark-item-folder">所在：${escapeHtml(b.folder)}</div>` : ''}
+        ${folderHtml}
       </div>
       <div class="bookmark-item-actions">
-        <button class="bookmark-update-btn" data-id="${escapeHtml(b.id)}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>
-        <button class="bookmark-delete-btn" data-id="${escapeHtml(b.id)}" title="删除">🗑️</button>
+        ${updateBtnHtml}
+        ${actionBtnHtml}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
 
   return `
     ${itemHtml}

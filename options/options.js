@@ -92,6 +92,7 @@ const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
 const enableDeviceDetection = document.getElementById('enableDeviceDetection');
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const showUpdateButtonCheckbox = document.getElementById('showUpdateButton');
+const popupUseFavoriteInPopup = document.getElementById('popupUseFavoriteInPopup');
 const enableFloatingBall = document.getElementById('enableFloatingBall');
 const floatingBallPositionGroup = document.getElementById('floatingBallPositionGroup');
 const floatingBallDefaultPosition = document.getElementById('floatingBallDefaultPosition');
@@ -1363,6 +1364,11 @@ async function loadUiSettings() {
     showUpdateButtonCheckbox.checked = !!popup.showUpdateButton; // 默认false
   }
 
+  // 加载弹窗收藏按钮模式（默认关闭）
+  if (popupUseFavoriteInPopup) {
+    popupUseFavoriteInPopup.checked = !!popup.favoriteAsDelete;
+  }
+
   // 加载同步失败通知开关（默认开启）
   const syncErrorNotification = settings?.syncErrorNotification || {};
   enableSyncErrorNotification.checked = syncErrorNotification.enabled !== false;
@@ -1458,6 +1464,39 @@ if (showUpdateButtonCheckbox) {
           // Chrome/Edge: 使用回调包装成Promise
           chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
             // 忽略错误，可能没有打开的弹窗
+            if (chrome.runtime.lastError) {
+              // 静默处理错误
+            }
+          });
+        }
+      } catch (e) {
+        // 忽略错误
+      }
+    } catch (e) {
+      showMessage('保存失败: ' + e.message, 'error');
+    }
+  });
+}
+
+// 弹窗“删除按钮替换为收藏按钮”设置
+if (popupUseFavoriteInPopup) {
+  popupUseFavoriteInPopup.addEventListener('change', async () => {
+    try {
+      const settings = await storage.getSettings();
+      const popup = (settings && settings.popup) || {};
+      popup.favoriteAsDelete = popupUseFavoriteInPopup.checked;
+      const newSettings = { ...(settings || {}), popup };
+      await storage.saveSettings(newSettings);
+      showMessage('弹窗画面收藏按钮设置已保存（后台同步中）', 'success');
+      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => {
+            // 忽略错误
+          });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
             if (chrome.runtime.lastError) {
               // 静默处理错误
             }

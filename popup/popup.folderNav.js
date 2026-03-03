@@ -187,6 +187,9 @@
     });
   }
 
+  // 暴露给其他脚本使用（例如收藏抽屉中“所属目录”跳转）
+  window.scrollToFolderInPopup = scrollToFolder;
+
   function updateCurrentFolderSticky() {
     const sticky = document.getElementById('currentFolderSticky');
     const pathTextEl = document.getElementById('currentFolderPathText');
@@ -607,6 +610,65 @@
     window.__folderDrawerOpen = false;
   }
 
+  function renderFavoriteDrawer() {
+    const listEl = document.getElementById('favoriteDrawerList');
+    if (!listEl) return;
+
+    const source = Array.isArray(lastRenderedBookmarks) ? lastRenderedBookmarks : [];
+    const favorites = source.filter((b) => b && b.starred);
+
+    if (!favorites.length) {
+      listEl.innerHTML =
+        '<div class="folder-drawer-empty">暂无收藏书签。可以在弹窗中将删除按钮切换为收藏按钮后，给常用书签加星。</div>';
+      return;
+    }
+
+    listEl.innerHTML = favorites
+      .map((b) => {
+        const id = escapeHtml(b.id || '');
+        const folder =
+          typeof b.folder === 'string' && b.folder.trim()
+            ? b.folder.trim()
+            : '';
+        const folderHtml = folder
+          ? `<div class="bookmark-item-folder" data-favorite-folder-link="1" data-folder="${escapeHtml(
+              folder
+            )}">所在：${escapeHtml(folder)}</div>`
+          : '';
+        return `
+        <div class="bookmark-item" data-url="${escapeHtml(
+          b.url || ''
+        )}" data-id="${id}">
+          <div class="bookmark-item-content">
+            <div class="bookmark-item-title">${escapeHtml(
+              b.title || '无标题'
+            )}</div>
+            <div class="bookmark-item-url">${escapeHtml(b.url || '')}</div>
+            ${folderHtml}
+          </div>
+        </div>
+      `;
+      })
+      .join('');
+  }
+
+  function openFavoriteDrawer() {
+    const drawer = document.getElementById('favoriteDrawer');
+    if (!drawer) return;
+    const backToTopBtn = document.getElementById('backToTopBtn');
+    if (backToTopBtn) {
+      backToTopBtn.style.display = 'none';
+    }
+    renderFavoriteDrawer();
+    drawer.style.display = 'flex';
+  }
+
+  function closeFavoriteDrawer() {
+    const drawer = document.getElementById('favoriteDrawer');
+    if (!drawer) return;
+    drawer.style.display = 'none';
+  }
+
   function enhanceTooltips() {
     const list = document.getElementById('bookmarkList');
     if (!list) return;
@@ -679,25 +741,53 @@
       // ignore
     }
 
-    const toggleBtn = document.getElementById('folderDrawerToggle');
-    const drawerMask = document.querySelector('.folder-drawer-mask');
-    const drawerClose = document.getElementById('folderDrawerClose');
+    const folderToggleBtn = document.getElementById('folderDrawerToggle');
+    const folderDrawer = document.getElementById('folderDrawer');
+    const folderMask = folderDrawer
+      ? folderDrawer.querySelector('.folder-drawer-mask')
+      : null;
+    const folderClose = document.getElementById('folderDrawerClose');
 
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', () => {
+    if (folderToggleBtn) {
+      folderToggleBtn.addEventListener('click', () => {
         openFolderDrawer();
       });
     }
 
-    if (drawerMask) {
-      drawerMask.addEventListener('click', () => {
+    if (folderMask) {
+      folderMask.addEventListener('click', () => {
         closeFolderDrawer();
       });
     }
 
-    if (drawerClose) {
-      drawerClose.addEventListener('click', () => {
+    if (folderClose) {
+      folderClose.addEventListener('click', () => {
         closeFolderDrawer();
+      });
+    }
+
+    const favoriteToggleBtn = document.getElementById('favoriteDrawerToggle');
+    const favoriteDrawer = document.getElementById('favoriteDrawer');
+    const favoriteMask = favoriteDrawer
+      ? favoriteDrawer.querySelector('.folder-drawer-mask')
+      : null;
+    const favoriteClose = document.getElementById('favoriteDrawerClose');
+
+    if (favoriteToggleBtn) {
+      favoriteToggleBtn.addEventListener('click', () => {
+        openFavoriteDrawer();
+      });
+    }
+
+    if (favoriteMask) {
+      favoriteMask.addEventListener('click', () => {
+        closeFavoriteDrawer();
+      });
+    }
+
+    if (favoriteClose) {
+      favoriteClose.addEventListener('click', () => {
+        closeFavoriteDrawer();
       });
     }
 

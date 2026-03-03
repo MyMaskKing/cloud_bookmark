@@ -101,6 +101,8 @@
 
       <section class="section">
         <h2>界面设置</h2>
+        <h3 class="section-subtitle">弹窗书签按钮</h3>
+        <p class="section-desc">控制弹窗中每条书签右侧使用「删除」还是「收藏」以及是否显示「更新」按钮，仅影响弹窗，不影响完整书签管理页面。</p>
         <div class="form-group checkbox-row">
           <label>
             <input type="checkbox" id="expandFirstLevel">
@@ -121,6 +123,13 @@
             显示更新按钮
           </label>
           <small>开启后，弹窗和悬浮球打开的弹窗中每个书签项旁边会显示更新按钮，默认只显示删除按钮。</small>
+        </div>
+        <div class="form-group checkbox-row">
+          <label>
+            <input type="checkbox" id="popupUseFavoriteInPopup">
+            将弹窗中的“删除”按钮替换为“收藏”按钮
+          </label>
+          <small>开启后，弹窗列表中的删除按钮会变为「★ 收藏」开关；删除请在完整书签管理页面中进行。</small>
         </div>
         <div class="form-group">
           <label for="popupFolderNavMode">弹窗目录展示方式</label>

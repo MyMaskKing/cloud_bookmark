@@ -134,7 +134,7 @@ body {
 .folder-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 6px;
   padding: 6px 10px;
   border-radius: 6px;
@@ -224,27 +224,28 @@ body {
 
 .folder-expand-toggle {
   border: none;
-  background: transparent;
+  background: radial-gradient(circle at 30% 20%, #eef2ff, #dbeafe);
   cursor: pointer;
-  font-size: 12px;
-  color: #888;
-  padding: 2px 6px;
-  border-radius: 6px;
-  transition: background 0.2s, color 0.2s;
-  min-width: 20px;
-  text-align: center;
+  font-size: 11px;
+  color: #4f46e5;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.35),
+    0 3px 8px rgba(15, 23, 42, 0.22);
+  transition: background 0.18s ease, color 0.18s ease, transform 0.16s ease,
+    box-shadow 0.16s ease;
+  flex-shrink: 0;
 }
 
 .folder-expand-toggle:hover {
-  background: #e8f0fe;
-  color: #4a90e2;
-}
-
-/* 桌面端隐藏展开/折叠按钮（点击文件夹行即可展开/折叠） */
-@media (min-width: 769px) {
-  .folder-expand-toggle {
-    display: none;
-  }
+  background: radial-gradient(circle at 30% 20%, #e0f2fe, #bfdbfe);
+  color: #1d4ed8;
+  transform: translateY(-1px) rotate(2deg);
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.35);
 }
 
 .folder-menu {
@@ -585,7 +586,7 @@ body {
 
 .bookmark-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   margin-bottom: 12px;
 }
@@ -601,6 +602,12 @@ body {
 .bookmark-info {
   flex: 1;
   min-width: 0;
+}
+
+.bookmark-header-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .bookmark-title {
@@ -695,9 +702,6 @@ body {
 }
 
 .bookmark-actions {
-  position: absolute;
-  top: 12px;
-  right: 12px;
   display: none;
   gap: 4px;
 }
