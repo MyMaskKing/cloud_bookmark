@@ -160,31 +160,94 @@
     return expandQueue;
   }
 
+  function ensureFullListBeforeScroll() {
+    const list = document.getElementById('bookmarkList');
+    const searchInput = document.getElementById('searchInput');
+    const hasFolderRows = list && list.querySelector('.folder-row');
+    const searchQuery = searchInput && searchInput.value && searchInput.value.trim();
+
+    // 没有搜索、且当前列表已经包含文件夹行，则无需额外处理
+    if (!searchQuery && hasFolderRows) {
+      return Promise.resolve();
+    }
+
+    // 清空搜索框，恢复完整列表，再进行展开与滚动
+    return new Promise((resolve) => {
+      try {
+        if (searchInput) {
+          searchInput.value = '';
+        }
+        const clearBtn = document.getElementById('searchClearBtn');
+        if (clearBtn) {
+          clearBtn.style.display = 'none';
+        }
+        // 如果 popup.js 中暴露了 loadBookmarksForPopup，则调用它刷新列表
+        if (typeof window.loadBookmarksForPopup === 'function') {
+          Promise.resolve(window.loadBookmarksForPopup())
+            .then(() => resolve())
+            .catch(() => resolve());
+        } else {
+          resolve();
+        }
+      } catch (e) {
+        console.warn('[弹窗导航] 恢复完整列表失败（忽略）:', e);
+        resolve();
+      }
+    });
+  }
+
   function scrollToFolder(path) {
     const container = getScrollContainer();
     if (!container) return;
 
-    expandFolderIfNeeded(path).then((targetRow) => {
-      if (!targetRow) return;
+    const maxRetries = 3;
 
-      const containerRect = container.getBoundingClientRect();
-      const rowRect = targetRow.getBoundingClientRect();
+    function attempt(tryIndex) {
+      ensureFullListBeforeScroll().then(() =>
+        expandFolderIfNeeded(path).then((targetRow) => {
+          if (!targetRow) {
+            if (tryIndex < maxRetries) {
+              const delay = 150 * (tryIndex + 1);
+              console.warn(
+                '[弹窗导航] 未找到目标文件夹行，准备重试',
+                safeNormalizePath(path),
+                'try =',
+                tryIndex + 1,
+                'delay =',
+                delay
+              );
+              setTimeout(() => attempt(tryIndex + 1), delay);
+            } else {
+              console.warn(
+                '[弹窗导航] 多次重试后仍未能定位到文件夹:',
+                safeNormalizePath(path)
+              );
+            }
+            return;
+          }
 
-      // 粘性条已在滚动容器外部，这里不再扣除粘性条高度，只让目标文件夹靠近容器顶部
-      const offset = rowRect.top - containerRect.top;
-      const targetTop = container.scrollTop + offset - 8;
+          const containerRect = container.getBoundingClientRect();
+          const rowRect = targetRow.getBoundingClientRect();
 
-      console.log(
-        '[弹窗导航] 滚动到文件夹并展开:',
-        safeNormalizePath(path),
-        'targetTop=',
-        targetTop
+          // 粘性条已在滚动容器外部，这里不再扣除粘性条高度，只让目标文件夹靠近容器顶部
+          const offset = rowRect.top - containerRect.top;
+          const targetTop = container.scrollTop + offset - 8;
+
+          console.log(
+            '[弹窗导航] 滚动到文件夹并展开:',
+            safeNormalizePath(path),
+            'targetTop=',
+            targetTop
+          );
+          container.scrollTo({
+            top: Math.max(targetTop, 0),
+            behavior: 'smooth',
+          });
+        })
       );
-      container.scrollTo({
-        top: Math.max(targetTop, 0),
-        behavior: 'smooth',
-      });
-    });
+    }
+
+    attempt(0);
   }
 
   // 暴露给其他脚本使用（例如收藏抽屉中“所属目录”跳转）
