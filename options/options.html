@@ -101,68 +101,95 @@
 
       <section class="section">
         <h2>界面设置</h2>
-        <h3 class="section-subtitle">弹窗书签按钮</h3>
-        <p class="section-desc">控制弹窗中每条书签右侧使用「删除」还是「收藏」以及是否显示「更新」按钮，仅影响弹窗，不影响完整书签管理页面。</p>
-        <div class="form-group checkbox-row">
-          <label>
-            <input type="checkbox" id="expandFirstLevel">
-            弹窗默认展开第一层文件夹
-          </label>
-          <small>关闭后首次打开弹窗不自动展开；仍会记忆你手动的展开/折叠状态（本地保存，不同步云端）。</small>
+
+        <!-- 弹窗行为（滚动 / 展开） -->
+        <div class="ui-settings-block">
+          <h3 class="section-subtitle">弹窗(基础行为设置)</h3>
+          <p class="section-desc">控制弹窗初次展开哪一层文件夹，以及是否记住上次的滚动位置。</p>
+          <div class="section-grid-2">
+            <div class="form-group checkbox-row">
+              <label>
+                <input type="checkbox" id="expandFirstLevel">
+                弹窗默认展开第一层文件夹
+              </label>
+              <small>关闭后首次打开弹窗不自动展开；仍会记忆你手动的展开/折叠状态（本地保存，不同步云端）。</small>
+            </div>
+            <div class="form-group checkbox-row">
+              <label>
+                <input type="checkbox" id="rememberScrollPosition">
+                滚动条位置记忆
+              </label>
+              <small>开启后，弹窗和悬浮球打开的弹窗会记住上次的滚动位置，下次打开时自动恢复。</small>
+            </div>
+          </div>
         </div>
-        <div class="form-group checkbox-row">
-          <label>
-            <input type="checkbox" id="rememberScrollPosition">
-            滚动条位置记忆
-          </label>
-          <small>开启后，弹窗和悬浮球打开的弹窗会记住上次的滚动位置，下次打开时自动恢复。</small>
+
+        <!-- 弹窗按钮与收藏 -->
+        <div class="ui-settings-block">
+          <h3 class="section-subtitle">弹窗(按钮显示设置)</h3>
+          <p class="section-desc">控制弹窗每条书签右侧是否显示「更新」按钮，以及主按钮使用「删除」还是「收藏」。</p>
+          <div class="section-grid-2">
+            <div class="form-group checkbox-row">
+              <label>
+                <input type="checkbox" id="showUpdateButton">
+                显示更新按钮
+              </label>
+              <small>开启后，弹窗和悬浮球打开的弹窗中每个书签项旁边会显示更新按钮，默认只显示删除/收藏按钮。</small>
+            </div>
+            <div class="form-group checkbox-row">
+              <label>
+                <input type="checkbox" id="popupUseFavoriteInPopup">
+                将弹窗中的“删除”按钮替换为“收藏”按钮
+              </label>
+              <small>开启后，弹窗列表中的删除按钮会变为「★ 收藏」开关；删除请在完整书签管理页面中进行。</small>
+            </div>
+          </div>
         </div>
-        <div class="form-group checkbox-row">
-          <label>
-            <input type="checkbox" id="showUpdateButton">
-            显示更新按钮
-          </label>
-          <small>开启后，弹窗和悬浮球打开的弹窗中每个书签项旁边会显示更新按钮，默认只显示删除按钮。</small>
+
+        <!-- 弹窗目录与悬浮球 -->
+        <div class="ui-settings-block">
+          <h3 class="section-subtitle">弹窗(目录与悬浮球设置)</h3>
+          <p class="section-desc">配置弹窗右上角目录抽屉的展示方式，以及是否启用悬浮球、默认位置和点击行为。</p>
+          <div class="section-grid-2">
+            <div class="form-group">
+              <label for="popupFolderNavMode">弹窗目录展示方式</label>
+              <select id="popupFolderNavMode">
+                <option value="tree">树形目录（默认）</option>
+                <option value="tabs">横向标签</option>
+              </select>
+              <small>控制弹窗右上角目录导航的展示方式，仅影响弹窗目录抽屉，右侧书签列表结构保持不变。</small>
+            </div>
+            <div class="form-group checkbox-row">
+              <label>
+                <input type="checkbox" id="enableFloatingBall">
+                开启悬浮球
+              </label>
+              <small>开启后，在浏览器所有页面显示悬浮球，点击可快速打开书签弹窗。悬浮球位置本地保存，不同步云端。</small>
+            </div>
+            <div class="form-group" id="floatingBallPositionGroup" style="display: none;">
+              <label for="floatingBallDefaultPosition">悬浮球默认位置</label>
+              <select id="floatingBallDefaultPosition">
+                <option value="auto">自动</option>
+                <option value="left">靠左</option>
+                <option value="right">靠右</option>
+              </select>
+              <small>选择悬浮球的默认位置。选择"自动"时，悬浮球会根据位置自动靠到最近的边缘；选择"靠左"或"靠右"时，悬浮球会在2秒后自动靠到指定边缘。</small>
+            </div>
+            <div class="form-group" id="floatingBallActionGroup" style="display: none;">
+              <label for="floatingBallClickAction">悬浮球点击行为</label>
+              <select id="floatingBallClickAction">
+                <option value="popup">打开弹窗（默认）</option>
+                <option value="quickSave">一键保存当前页面</option>
+              </select>
+              <small>选择点击悬浮球时的行为。默认打开弹窗；一键保存会直接把当前页面加入当前场景书签。</small>
+            </div>
+          </div>
         </div>
-        <div class="form-group checkbox-row">
-          <label>
-            <input type="checkbox" id="popupUseFavoriteInPopup">
-            将弹窗中的“删除”按钮替换为“收藏”按钮
-          </label>
-          <small>开启后，弹窗列表中的删除按钮会变为「★ 收藏」开关；删除请在完整书签管理页面中进行。</small>
-        </div>
-        <div class="form-group">
-          <label for="popupFolderNavMode">弹窗目录展示方式</label>
-          <select id="popupFolderNavMode">
-            <option value="tree">树形目录（默认）</option>
-            <option value="tabs">横向标签</option>
-          </select>
-          <small>控制弹窗右上角目录导航的展示方式，仅影响弹窗目录抽屉，右侧书签列表结构保持不变。</small>
-        </div>
-        <div class="form-group checkbox-row">
-          <label>
-            <input type="checkbox" id="enableFloatingBall">
-            开启悬浮球
-          </label>
-          <small>开启后，在浏览器所有页面显示悬浮球，点击可快速打开书签弹窗。悬浮球位置本地保存，不同步云端。</small>
-        </div>
-        <div class="form-group" id="floatingBallPositionGroup" style="display: none;">
-          <label for="floatingBallDefaultPosition">悬浮球默认位置</label>
-          <select id="floatingBallDefaultPosition">
-            <option value="auto">自动</option>
-            <option value="left">靠左</option>
-            <option value="right">靠右</option>
-          </select>
-          <small>选择悬浮球的默认位置。选择"自动"时，悬浮球会根据位置自动靠到最近的边缘；选择"靠左"或"靠右"时，悬浮球会在2秒后自动靠到指定边缘。</small>
-        </div>
-        <div class="form-group" id="floatingBallActionGroup" style="display: none;">
-          <label for="floatingBallClickAction">悬浮球点击行为</label>
-          <select id="floatingBallClickAction">
-            <option value="popup">打开弹窗（默认）</option>
-            <option value="quickSave">一键保存当前页面</option>
-          </select>
-          <small>选择点击悬浮球时的行为。默认打开弹窗；一键保存会直接把当前页面加入当前场景书签。</small>
-        </div>
+
+        <!-- 弹窗尺寸与快捷键 -->
+        <div class="ui-settings-block">
+          <h3 class="section-subtitle">弹窗(尺寸与快捷键设置)</h3>
+          <p class="section-desc">自定义不同入口打开弹窗的高度，并查看当前「保存书签」快捷键的实际生效状态。</p>
         <div class="form-group">
           <label>弹窗高度自定义</label>
           <div class="height-custom-group">

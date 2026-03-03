@@ -378,7 +378,13 @@ exportConfigBtn.addEventListener('click', async () => {
       return;
     }
 
-    const configText = `${config.serverUrl}\n${config.username || ''}\n${config.password || ''}`;
+    const configText = [
+      config.serverUrl || '',
+      config.username || '',
+      config.password || '',
+      config.path || '',
+      (config.syncInterval != null ? String(config.syncInterval) : '')
+    ].join('\n');
 
     // 复制到剪贴板
     if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -412,12 +418,19 @@ importConfigBtn.addEventListener('click', async () => {
   const result = await showImportConfigDialog();
   if (!result) return;
 
-  const { serverUrl, username, password } = result;
+  const { serverUrl, username, password, path, syncInterval } = result;
 
   // 填充到表单
   serverUrlInput.value = serverUrl || '';
   usernameInput.value = username || '';
   passwordInput.value = password || '';
+  // path / syncInterval 为可选：只有提供且有效时才覆盖当前表单值
+  if (typeof path === 'string' && path.trim()) {
+    pathInput.value = path;
+  }
+  if (syncInterval != null && !Number.isNaN(syncInterval)) {
+    syncIntervalInput.value = syncInterval;
+  }
 
   showMessage('配置已导入，请检查后保存', 'success');
 });
@@ -450,8 +463,8 @@ function showImportConfigDialog() {
     dialog.innerHTML = `
       <h3 style="margin: 0 0 12px; font-size: 16px;">导入WebDAV配置</h3>
       <div style="margin-bottom: 12px;">
-        <label style="display:block; margin-bottom:6px;">请粘贴配置信息（格式：每行一个，依次为地址、用户名、密码）</label>
-        <textarea id="importConfigText" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;min-height:100px;font-family:monospace;" placeholder="https://example.com/webdav&#10;username&#10;password"></textarea>
+        <label style="display:block; margin-bottom:6px;">请粘贴配置信息（每行一个，依次为：<span style="color:rgb(255, 0, 0);">服务器地址</span>、<span style="color: rgb(255, 0, 0);">用户名</span>、<span style="color: rgb(255, 0, 0);">密码</span>、<span style="color: #6b7280;">同步路径(非必传)</span>、<span style="color: #6b7280;">同步间隔分钟(非必传)</span>）</label>
+        <textarea id="importConfigText" style="width:100%;padding:8px 10px;border:1px solid #ddd;border-radius:6px;font-size:14px;min-height:120px;font-family:monospace;" placeholder="https://example.com/webdav&#10;username&#10;password&#10;/bookmarks/&#10;5"></textarea>
       </div>
       <div style="display:flex; justify-content:flex-end; gap:10px;">
         <button id="importConfigCancelBtn" class="btn btn-secondary" style="min-width:70px;">取消</button>
@@ -499,9 +512,11 @@ function showImportConfigDialog() {
       const serverUrl = lines[0];
       const username = lines[1] || '';
       const password = lines[2] || '';
+      const path = lines[3] || '';
+      const syncInterval = lines[4] ? Number(lines[4]) : undefined;
 
       cleanup();
-      resolve({ serverUrl, username, password });
+      resolve({ serverUrl, username, password, path, syncInterval });
     };
 
     textInput.focus();
