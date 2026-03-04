@@ -784,10 +784,18 @@ async function handleToggleFavorite(bookmarkId) {
       return;
     }
     target.starred = !target.starred;
-
     await storage.saveBookmarks(allBookmarks, allFolders, currentSceneId);
+
     // 重新加载弹窗列表以反映最新收藏状态
     await loadBookmarksForPopup();
+
+    // 异步触发云端同步，确保收藏状态写入 WebDAV
+    sendMessageCompat({
+      action: 'syncToCloud',
+      bookmarks: allBookmarks,
+      folders: allFolders,
+      sceneId: currentSceneId
+    }).catch(err => console.error('[弹窗] 收藏状态后台同步失败:', err));
   } catch (e) {
     console.error('[弹窗] 切换收藏状态失败:', e);
   }
