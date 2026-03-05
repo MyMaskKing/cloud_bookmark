@@ -561,10 +561,9 @@ async function loadBookmarksForPopup() {
 
     pushOpLog(`loadBookmarks success, scene=${currentSceneId}, total=${bookmarks.length}, folders=${folders.length}`);
 
-    // 显示所有书签，与完整画面保持一致（不再限制数量）
-    const sorted = bookmarks
-      .map(b => ({ ...b }))
-      .sort((a, b) => (b.updatedAt || b.createdAt || 0) - (a.updatedAt || a.createdAt || 0));
+    // 弹窗列表按“云端文件/本地存储中的数组顺序”展示，避免与完整画面排序不一致
+    // 注意：这里不要再按 updatedAt/createdAt 排序，否则会改变用户在完整画面（尤其是自定义排序）下的顺序
+    const sorted = (bookmarks || []).map(b => ({ ...b }));
 
     // 默认展开第一层（仅在没有本地折叠状态时）
     if (shouldApplyDefaultExpand && popupSettings.expandFirstLevel) {
