@@ -216,6 +216,24 @@ document.addEventListener('click', (e) => {
   }
 }, true);
 
+function refreshBackToTopVisibility() {
+  try {
+    const backToTopBtn = document.getElementById('backToTopBtn');
+    if (!backToTopBtn) return;
+    const popupContentEl = document.querySelector('.popup-content');
+    const scrollContainer = popupContentEl || bookmarkList;
+    if (!scrollContainer) return;
+    const currentScrollTop = scrollContainer.scrollTop || 0;
+    if (window.__folderDrawerOpen) {
+      backToTopBtn.style.display = 'none';
+      return;
+    }
+    backToTopBtn.style.display = currentScrollTop > 300 ? 'flex' : 'none';
+  } catch (_) {
+    // ignore
+  }
+}
+
 function pushOpLog(message) {
   opLogs.push({ t: new Date().toISOString(), m: message });
   if (opLogs.length > 200) opLogs.shift();
@@ -387,6 +405,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           saveScrollPosition();
         }, 300);
       });
+
+      // 初次绑定后立即刷新一次，避免“未触发 scroll 事件导致按钮状态不对”
+      refreshBackToTopVisibility();
     }
   }, 100);
 
@@ -575,6 +596,8 @@ async function loadBookmarksForPopup() {
     // 提供给目录抽屉使用的完整文件夹列表
     window.__popupFoldersForDrawer = folders;
     renderBookmarks(sorted, { searchMode: false, folders: folders });
+    // 渲染后先刷新一次回到顶部按钮（此时 scrollTop 可能还没恢复，但至少不滞后）
+    refreshBackToTopVisibility();
 
     // 恢复滚动位置（延迟执行，确保DOM完全渲染）
     // 使用 requestAnimationFrame 等待渲染完成
@@ -590,6 +613,9 @@ async function loadBookmarksForPopup() {
           scrollRetries++;
           console.log(`[弹窗] 恢复滚动位置未成功，进行第 ${scrollRetries} 次重试`);
           setTimeout(attemptRestore, 100 * scrollRetries);
+        } else {
+          // 无论恢复成功与否，都刷新一次“回到顶部”按钮显示状态（restoreScrollPosition 不触发 scroll 事件）
+          refreshBackToTopVisibility();
         }
       });
     };
@@ -1632,6 +1658,7 @@ function saveScrollPosition() {
 async function restoreScrollPosition() {
   try {
     if (!popupSettings || popupSettings.rememberScrollPosition === false) {
+      refreshBackToTopVisibility();
       return true; // 视为完成
     }
 
@@ -1647,6 +1674,7 @@ async function restoreScrollPosition() {
     const savedTop = result && result.popupScrollPosition;
 
     if (savedTop === undefined || savedTop === null || savedTop <= 0) {
+      refreshBackToTopVisibility();
       return true; // 没有位置要恢复
     }
 
@@ -1654,6 +1682,7 @@ async function restoreScrollPosition() {
     const maxScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight;
     if (maxScroll <= 0) {
       console.log('[滚动位置] 内容高度不足，暂时无法恢复:', { scrollHeight: scrollContainer.scrollHeight, clientHeight: scrollContainer.clientHeight });
+      refreshBackToTopVisibility();
       return false;
     }
 
@@ -1663,13 +1692,16 @@ async function restoreScrollPosition() {
     // 验证是否真的设置成功了（允许 2px 误差）
     if (Math.abs(scrollContainer.scrollTop - finalScroll) < 2) {
       console.log('[滚动位置] 恢复成功:', scrollContainer.scrollTop);
+      refreshBackToTopVisibility();
       return true;
     } else {
       console.log('[滚动位置] 恢复尝试失败，可能内容仍在变动');
+      refreshBackToTopVisibility();
       return false;
     }
   } catch (e) {
     console.warn('恢复滚动位置失败:', e);
+    refreshBackToTopVisibility();
     return true;
   }
 }
