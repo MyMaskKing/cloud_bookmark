@@ -224,11 +224,14 @@ function refreshBackToTopVisibility() {
     const scrollContainer = popupContentEl || bookmarkList;
     if (!scrollContainer) return;
     const currentScrollTop = scrollContainer.scrollTop || 0;
-    if (window.__folderDrawerOpen) {
+    if (window.__folderDrawerOpen || window.__favoriteDrawerOpen) {
       backToTopBtn.style.display = 'none';
       return;
     }
-    backToTopBtn.style.display = currentScrollTop > 300 ? 'flex' : 'none';
+    const canScroll = (scrollContainer.scrollHeight - scrollContainer.clientHeight) > 40;
+    // 只要内容可滚动且离顶部有一定距离，就显示（避免阈值过大导致“有滚动条但不显示”）
+    const shouldShow = canScroll && currentScrollTop > 60;
+    backToTopBtn.style.display = shouldShow ? 'flex' : 'none';
   } catch (_) {
     // ignore
   }
@@ -351,7 +354,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('[弹窗] requestAnimationFrame 回调执行，开始加载书签');
     await loadBookmarksForPopup();
     await updateSyncStatus();
-    // 恢复搜索内容
+    // 恢复搜索内容（内部会在搜索结果渲染后再尝试恢复滚动位置）
     await restoreSearchContent();
     console.log('[弹窗] 书签加载完成');
   });
@@ -390,12 +393,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // 处理"回到顶部"按钮显示/隐藏（目录抽屉打开时始终隐藏）
         if (backToTopBtn) {
-          if (window.__folderDrawerOpen) {
+          if (window.__folderDrawerOpen || window.__favoriteDrawerOpen) {
             backToTopBtn.style.display = 'none';
-          } else if (currentScrollTop > 300) {
-            backToTopBtn.style.display = 'flex';
           } else {
-            backToTopBtn.style.display = 'none';
+            const canScroll = (scrollContainer.scrollHeight - scrollContainer.clientHeight) > 40;
+            backToTopBtn.style.display = (canScroll && currentScrollTop > 60) ? 'flex' : 'none';
           }
         }
 
@@ -1069,6 +1071,12 @@ async function restoreSearchContent() {
       console.log('[搜索内容] 恢复搜索内容:', savedQuery);
       // 触发搜索
       searchInput.dispatchEvent(new Event('input'));
+      // 等待搜索结果渲染完成后再尝试恢复滚动位置（针对“搜索模式下记住到底部”的场景）
+      setTimeout(() => {
+        restoreScrollPosition().catch((e) =>
+          console.warn('[搜索内容] 恢复搜索后的滚动位置失败:', e)
+        );
+      }, 400);
     } else {
       searchClearBtn.style.display = 'none'; // 隐藏清除按钮
     }

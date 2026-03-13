@@ -718,6 +718,7 @@
   function openFavoriteDrawer() {
     const drawer = document.getElementById('favoriteDrawer');
     if (!drawer) return;
+    window.__favoriteDrawerOpen = true;
     const backToTopBtn = document.getElementById('backToTopBtn');
     if (backToTopBtn) {
       backToTopBtn.style.display = 'none';
@@ -730,6 +731,7 @@
     const drawer = document.getElementById('favoriteDrawer');
     if (!drawer) return;
     drawer.style.display = 'none';
+    window.__favoriteDrawerOpen = false;
   }
 
   function enhanceTooltips() {
