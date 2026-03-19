@@ -92,6 +92,12 @@ class StorageManager {
     
     // 如果确定是某个场景的书签，需要合并而不是覆盖
     if (targetSceneId) {
+      const bookmarkKey = (b) => {
+        const s = b?.scene || targetSceneId;
+        // 使用 scene+id 作为去重键，避免不同场景同 id 覆盖彼此
+        return `${s}::${b?.id}`;
+      };
+
       // 读取所有场景的书签
       const allData = await this.getBookmarks();
       const allBookmarks = allData.bookmarks || [];
@@ -112,14 +118,14 @@ class StorageManager {
       const bookmarkMap = new Map();
       // 先添加其他场景的书签
       otherSceneBookmarks.forEach(b => {
-        bookmarkMap.set(b.id, b);
+        bookmarkMap.set(bookmarkKey(b), b);
       });
       // 再添加当前场景的新书签（会覆盖同 ID 的书签，避免重复）
       // 注意：bookmarks 参数中的书签应该已经通过第54行添加了 scene 字段
       (bookmarks || []).forEach(b => {
         // 确保书签有 scene 字段（防御性编程）
         const bookmarkWithScene = b.scene ? b : { ...b, scene: targetSceneId };
-        bookmarkMap.set(bookmarkWithScene.id, bookmarkWithScene);
+        bookmarkMap.set(bookmarkKey(bookmarkWithScene), bookmarkWithScene);
       });
       const mergedBookmarks = Array.from(bookmarkMap.values());
       
