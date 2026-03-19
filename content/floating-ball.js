@@ -143,20 +143,20 @@
   opacity: 0.92;
 }
 
-/* idle: 半透明图标 + 背景近透明 */
+/* idle: 背景几乎完全透明，只保留轮廓和图标，尽量不遮挡页面内容 */
 #cloud-bookmark-floating-ball[data-state='idle'] {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(99, 102, 241, 0.18);
+  background: transparent;
+  border: 1px solid rgba(129, 140, 248, 0.35);
   box-shadow: none;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transform: translateZ(0);
 }
 
-/* hover: 高亮（科技蓝紫）+ 轻微上浮 */
+/* hover: 轻微高亮，仍然保持半透明，不大块遮挡内容 */
 #cloud-bookmark-floating-ball[data-state='hover'] {
-  background: rgba(99, 102, 241, 0.18);
-  border: 1px solid rgba(129, 140, 248, 0.45);
+  background: rgba(99, 102, 241, 0.10);
+  border: 1px solid rgba(129, 140, 248, 0.55);
   box-shadow: 0 8px 22px rgba(15, 23, 42, 0.18),
     0 0 0 1px rgba(99, 102, 241, 0.18);
 }
@@ -165,9 +165,9 @@
   filter: saturate(1.25) brightness(1.05);
 }
 
-/* dragging: 更清晰 + 取消多余动效 */
+/* dragging: 更清晰 + 取消多余动效（略有填充，但用户正在操作时优先可见性） */
 #cloud-bookmark-floating-ball[data-state='dragging'] {
-  background: rgba(99, 102, 241, 0.22);
+  background: rgba(99, 102, 241, 0.20);
   border: 1px solid rgba(129, 140, 248, 0.55);
   box-shadow: 0 10px 26px rgba(15, 23, 42, 0.22);
 }
@@ -176,13 +176,13 @@
   filter: saturate(1.25) brightness(1.05);
 }
 
-/* docked: 贴边后更低存在感 */
+/* docked: 贴边后基本只有轮廓+图标，不填充背景，避免挡住内容 */
 #cloud-bookmark-floating-ball[data-state='docked'] {
-  background: rgba(255, 255, 255, 0.015);
-  border: 1px solid rgba(99, 102, 241, 0.14);
+  background: transparent;
+  border: 1px solid rgba(99, 102, 241, 0.30);
   box-shadow: none;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 #cloud-bookmark-floating-ball[data-state='docked'] .cb-fb-icon {
   opacity: 0.48; /* docked: 仍然看得清主体 */
