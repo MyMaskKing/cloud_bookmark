@@ -422,6 +422,17 @@ body {
   font-size: 14px;
   color: #666;
   transition: all 0.2s;
+  width: 100px;
+  justify-content: space-between;
+}
+
+.scene-switch-btn .scene-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
 }
 
 .scene-switch-btn:hover {

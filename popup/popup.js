@@ -505,6 +505,15 @@ async function loadScenes() {
         const sceneId = item.dataset.id;
         const currentId = await storage.getCurrentScene(); // 获取当前场景进行比较
         if (sceneId !== currentId) {
+          // 切换场景：清空搜索框（PC/移动端一致），并清除搜索记忆，避免跨场景残留
+          try {
+            if (searchInput) searchInput.value = '';
+            if (searchClearBtn) searchClearBtn.style.display = 'none';
+            saveSearchContent();
+          } catch (_) {
+            // ignore
+          }
+
           await storage.saveCurrentScene(sceneId);
           currentSceneId = sceneId; // 立即更新本地状态，避免后续逻辑读取旧值
 

@@ -36,12 +36,22 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 10px;
+}
+
+.popup-header h2 {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .header-right {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex: 0 0 auto;
 }
 
 .scene-switcher {
@@ -60,6 +70,17 @@ body {
   font-size: 12px;
   color: #666;
   transition: all 0.2s;
+  width: 78px;
+  justify-content: space-between;
+}
+
+#currentSceneName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
 }
 
 .scene-switch-btn:hover {
@@ -341,6 +362,14 @@ body {
 
   .popup-header {
     padding: 12px;
+  }
+
+  .header-right {
+    gap: 8px;
+  }
+
+  .scene-switch-btn {
+    width: 78px; /* 手机端再收紧，避免挤压标题 */
   }
 
   .popup-content {

@@ -986,6 +986,13 @@ async function loadScenes() {
         item.addEventListener('click', async () => {
           const sceneId = item.dataset.id;
           if (sceneId !== currentSceneId) {
+            // 切换场景：清空搜索框，避免跨场景残留（PC/移动端一致）
+            try {
+              if (searchInput) searchInput.value = '';
+            } catch (_) {
+              // ignore
+            }
+
             await storage.saveCurrentScene(sceneId);
             currentSceneId = sceneId; // 立即更新，避免后续读取旧值
 
