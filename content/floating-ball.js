@@ -78,9 +78,9 @@
 }
 
 #cloud-bookmark-floating-ball .cb-fb-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  position: relative;
+  display: grid;
+  place-items: center;
   width: 100%;
   height: 100%;
   line-height: 1;
@@ -88,6 +88,59 @@
   filter: saturate(0.9) brightness(0.98);
   transition: opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
     filter 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+/* 云端书签：纯 CSS 矢量（细线云 + 书签标签），更“产品化” */
+#cloud-bookmark-floating-ball .cb-fb-icon::before,
+#cloud-bookmark-floating-ball .cb-fb-icon::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* 云朵：描边 + 轻微内发光 */
+#cloud-bookmark-floating-ball .cb-fb-icon::before {
+  width: 22px;
+  height: 14px;
+  transform: translate(-50%, -50%) translateY(-1px);
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 30% 55%, rgba(255, 255, 255, 0.22) 0 55%, rgba(255, 255, 255, 0) 56%),
+    radial-gradient(circle at 52% 35%, rgba(255, 255, 255, 0.20) 0 58%, rgba(255, 255, 255, 0) 59%),
+    radial-gradient(circle at 72% 58%, rgba(255, 255, 255, 0.18) 0 55%, rgba(255, 255, 255, 0) 56%);
+  box-shadow:
+    0 0 0 1.4px rgba(167, 139, 250, 0.65),
+    0 0 10px rgba(99, 102, 241, 0.18);
+  opacity: 0.95;
+  filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.14));
+}
+
+/* 书签：细线标签 + 缺口 */
+#cloud-bookmark-floating-ball .cb-fb-icon::after {
+  width: 12px;
+  height: 16px;
+  transform: translate(-50%, -50%) translateX(7px) translateY(5px) rotate(8deg);
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, rgba(99, 102, 241, 0.95), rgba(168, 85, 247, 0.92));
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.25) inset,
+    0 6px 14px rgba(15, 23, 42, 0.18);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 82%, 0 100%);
+  opacity: 0.98;
+}
+
+/* 状态下的微调：hover 更亮，docked 更克制 */
+#cloud-bookmark-floating-ball[data-state='hover'] .cb-fb-icon::before {
+  box-shadow:
+    0 0 0 1.5px rgba(129, 140, 248, 0.85),
+    0 0 14px rgba(99, 102, 241, 0.26);
+}
+#cloud-bookmark-floating-ball[data-state='docked'] .cb-fb-icon::after {
+  opacity: 0.92;
 }
 
 /* idle: 半透明图标 + 背景近透明 */
@@ -182,6 +235,12 @@
   function setHovering(isHovering) {
     if (!floatingBall) return;
     if (isDragging) return;
+    // docked 状态：悬停时回弹完全可见；离开时恢复“贴边隐藏”
+    if (baseVisualState === 'docked') {
+      try {
+        applyDockOffset({ reveal: !!isHovering });
+      } catch (_) {}
+    }
     setFloatingBallState(isHovering ? 'hover' : baseVisualState);
   }
 
@@ -340,11 +399,18 @@
     let newTop = currentTop;
     
     // 检查并修正水平位置
-    if (currentLeft < 0) {
-      newLeft = 0;
+    // docked 状态允许“贴边隐藏一部分”（PC 默认隐藏 1/3；移动端默认不隐藏）
+    const hiddenPx = baseVisualState === 'docked' ? getDockHiddenPx(ballWidth) : 0;
+    const minLeft = baseVisualState === 'docked' ? -hiddenPx : 0;
+    const maxLeft = baseVisualState === 'docked'
+      ? Math.max(minLeft, viewportWidth - ballWidth + hiddenPx)
+      : Math.max(0, viewportWidth - ballWidth);
+
+    if (currentLeft < minLeft) {
+      newLeft = minLeft;
       needsAdjustment = true;
-    } else if (currentLeft + ballWidth > viewportWidth) {
-      newLeft = Math.max(0, viewportWidth - ballWidth);
+    } else if (currentLeft > maxLeft) {
+      newLeft = maxLeft;
       needsAdjustment = true;
     }
     
@@ -385,6 +451,34 @@
     }, 2000); // 2 秒无操作自动贴边
   }
 
+  function getDockHiddenPx(width) {
+    // 手机屏幕小：默认不隐藏（只做低存在感），避免误触/难点到
+    if (isMobileDevice) return 0;
+    // PC：默认隐藏 1/3
+    return Math.max(0, Math.round(width / 3));
+  }
+
+  function applyDockOffset({ reveal } = {}) {
+    if (!floatingBall) return;
+    if (baseVisualState !== 'docked') return;
+
+    const rect = floatingBall.getBoundingClientRect();
+    const hiddenPx = getDockHiddenPx(rect.width);
+    const side = floatingBall.dataset.dockSide || (rect.left <= window.innerWidth / 2 ? 'left' : 'right');
+
+    // reveal: 悬停时完全可见；否则按隐藏比例贴边
+    const offset = reveal ? 0 : -hiddenPx;
+
+    floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 0.2s, opacity 0.2s';
+    if (side === 'left') {
+      floatingBall.style.left = `${offset}px`;
+      floatingBall.style.right = 'auto';
+    } else {
+      floatingBall.style.right = `${offset}px`;
+      floatingBall.style.left = 'auto';
+    }
+  }
+
   // 贴近最近的左右边缘（根据设置决定靠左、靠右或自动）
   async function dockToNearestEdge() {
     if (!floatingBall) return;
@@ -400,14 +494,18 @@
     // 使用平滑动画
     floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 0.2s, opacity 0.2s';
 
-    // 根据设置决定靠左、靠右或自动
+    const hiddenPx = getDockHiddenPx(rect.width);
+
+    // 根据设置决定靠左、靠右或自动（贴边时隐藏一部分）
     if (defaultPosition === 'left') {
       // 强制靠左
-      floatingBall.style.left = '0px';
+      floatingBall.dataset.dockSide = 'left';
+      floatingBall.style.left = `-${hiddenPx}px`;
       floatingBall.style.right = 'auto';
     } else if (defaultPosition === 'right') {
       // 强制靠右
-      floatingBall.style.right = '0px';
+      floatingBall.dataset.dockSide = 'right';
+      floatingBall.style.right = `-${hiddenPx}px`;
       floatingBall.style.left = 'auto';
     } else {
       // 自动：根据距离最近的边缘贴边
@@ -416,11 +514,13 @@
       
       if (distanceToLeft <= distanceToRight) {
         // 贴左边
-        floatingBall.style.left = '0px';
+        floatingBall.dataset.dockSide = 'left';
+        floatingBall.style.left = `-${hiddenPx}px`;
         floatingBall.style.right = 'auto';
       } else {
         // 贴右边
-        floatingBall.style.right = '0px';
+        floatingBall.dataset.dockSide = 'right';
+        floatingBall.style.right = `-${hiddenPx}px`;
         floatingBall.style.left = 'auto';
       }
     }
@@ -471,7 +571,7 @@
     floatingBall.id = 'cloud-bookmark-floating-ball';
     ensureFloatingBallStyle();
     floatingBall.dataset.state = 'idle';
-    floatingBall.innerHTML = '<span class="cb-fb-icon">📚</span>';
+    floatingBall.innerHTML = '<span class="cb-fb-icon" aria-hidden="true"></span>';
     floatingBall.style.cssText = `
       position: fixed;
       width: 40px;
