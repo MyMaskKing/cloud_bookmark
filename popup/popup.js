@@ -99,6 +99,8 @@ const statusText = document.getElementById('statusText');
 const sceneSwitchBtn = document.getElementById('sceneSwitchBtn');
 const currentSceneNameEl = document.getElementById('currentSceneName');
 const sceneMenu = document.getElementById('sceneMenu');
+const popupLoadingOverlay = document.getElementById('popupLoadingOverlay');
+const headerRight = document.querySelector('.header-right');
 // 已移除 MAX_BOOKMARKS_DISPLAY 限制，弹窗现在显示所有书签以保持与完整画面一致
 let currentSceneId = null;
 let expandedFolders = new Set(['']); // 根默认展开
@@ -558,11 +560,32 @@ sceneSwitchBtn.addEventListener('click', (e) => {
   sceneMenu.style.display = sceneMenu.style.display === 'none' ? 'block' : 'none';
 });
 
+function showPopupLoading() {
+  if (popupLoadingOverlay) {
+    popupLoadingOverlay.style.display = 'flex';
+  }
+  if (headerRight) {
+    headerRight.classList.add('disabled-during-loading');
+  }
+}
+
+function hidePopupLoading() {
+  if (popupLoadingOverlay) {
+    popupLoadingOverlay.style.display = 'none';
+  }
+  if (headerRight) {
+    headerRight.classList.remove('disabled-during-loading');
+  }
+}
+
 /**
  * 加载弹窗展示的书签（显示所有书签，与完整画面保持一致）
  */
 async function loadBookmarksForPopup() {
   try {
+    // 列表区域 loading 遮罩 + 右上角目录/收藏按钮置灰
+    showPopupLoading();
+
     // 按当前场景过滤书签（与主页面使用相同的逻辑）
     const data = await storage.getBookmarks(currentSceneId);
     const rawBookmarks = data.bookmarks || [];
@@ -636,6 +659,8 @@ async function loadBookmarksForPopup() {
   } catch (error) {
     console.error('加载书签失败:', error);
     pushOpLog(`loadBookmarks failed: ${error.message}`);
+  } finally {
+    hidePopupLoading();
   }
 }
 

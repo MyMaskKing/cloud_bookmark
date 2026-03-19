@@ -72,6 +72,11 @@
 
       <div class="recent-bookmarks" id="recentBookmarks">
         <h3>书签列表</h3>
+        <!-- 列表区域加载遮罩 -->
+        <div id="popupLoadingOverlay" class="popup-loading-overlay" style="display: none;">
+          <div class="popup-loading-spinner"></div>
+          <div class="popup-loading-text">书签加载中…</div>
+        </div>
         <div id="bookmarkList" class="bookmark-list">
           <div class="empty-state">暂无书签</div>
         </div>

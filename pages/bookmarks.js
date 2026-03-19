@@ -984,6 +984,9 @@ async function loadScenes() {
       // 绑定点击事件
       sceneMenuEl.querySelectorAll('.scene-menu-item').forEach(item => {
         item.addEventListener('click', async () => {
+          // 与弹窗行为保持一致：点击场景后立即收起下拉列表
+          sceneMenuEl.style.display = 'none';
+
           const sceneId = item.dataset.id;
           if (sceneId !== currentSceneId) {
             // 切换场景：清空搜索框，避免跨场景残留（PC/移动端一致）
@@ -1017,7 +1020,6 @@ async function loadScenes() {
             await loadTags();
             await sendMessageCompat({ action: 'sceneChanged' });
           }
-          sceneMenuEl.style.display = 'none';
         });
       });
     }
@@ -1031,6 +1033,11 @@ async function loadScenes() {
  */
 async function loadBookmarks() {
   try {
+    const loadingEl = document.getElementById('mainLoadingOverlay');
+    if (loadingEl) {
+      loadingEl.style.display = 'flex';
+    }
+
     // 按当前场景过滤书签
     const data = await storage.getBookmarks(currentSceneId);
     const rawBookmarks = data.bookmarks || [];
@@ -1070,6 +1077,11 @@ async function loadBookmarks() {
     renderBookmarks();
   } catch (error) {
     console.error('加载书签失败:', error);
+  } finally {
+    const loadingEl = document.getElementById('mainLoadingOverlay');
+    if (loadingEl) {
+      loadingEl.style.display = 'none';
+    }
   }
 }
 

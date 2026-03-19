@@ -99,6 +99,12 @@
       <!-- 同步错误提示（不阻断操作） -->
       <div id="syncErrorBanner" class="sync-error-banner" style="display: none;"></div>
 
+      <!-- 主内容加载遮罩（覆盖整个主内容区，不含侧边栏） -->
+      <div id="mainLoadingOverlay" class="main-loading-overlay" style="display: none;">
+        <div class="main-loading-spinner"></div>
+        <div class="main-loading-text">数据加载中…</div>
+      </div>
+
       <!-- 书签列表 -->
       <div class="bookmarks-container">
         <div id="bookmarksGrid" class="bookmarks-grid view-list">
