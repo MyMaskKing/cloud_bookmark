@@ -56,9 +56,134 @@
   let autoDockTimer = null; // 悬浮球自动贴边计时器
   let floatingBallSettingsCache = null; // 缓存设置，包含 clickAction 等
   
+  const FLOATING_BALL_STYLE_ID = 'cloud-bookmark-floating-ball-style';
+  let baseVisualState = 'idle'; // idle | docked（hover/dragging 为临时态）
+
   // 检测是否为移动设备
   const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || 
                          (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
+
+  function ensureFloatingBallStyle() {
+    try {
+      if (document.getElementById(FLOATING_BALL_STYLE_ID)) return;
+      const style = document.createElement('style');
+      style.id = FLOATING_BALL_STYLE_ID;
+      style.textContent = `
+#cloud-bookmark-floating-ball {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  border-radius: 999px;
+  will-change: transform, opacity, box-shadow, background-color, border-color, filter;
+}
+
+#cloud-bookmark-floating-ball .cb-fb-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 1;
+  opacity: 0.42; /* strong idle */
+  filter: saturate(0.9) brightness(0.98);
+  transition: opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
+    filter 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+/* idle: 半透明图标 + 背景近透明 */
+#cloud-bookmark-floating-ball[data-state='idle'] {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  box-shadow: none;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  transform: translateZ(0);
+}
+
+/* hover: 高亮（科技蓝紫）+ 轻微上浮 */
+#cloud-bookmark-floating-ball[data-state='hover'] {
+  background: rgba(99, 102, 241, 0.18);
+  border: 1px solid rgba(129, 140, 248, 0.45);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.18),
+    0 0 0 1px rgba(99, 102, 241, 0.18);
+}
+#cloud-bookmark-floating-ball[data-state='hover'] .cb-fb-icon {
+  opacity: 1;
+  filter: saturate(1.25) brightness(1.05);
+}
+
+/* dragging: 更清晰 + 取消多余动效 */
+#cloud-bookmark-floating-ball[data-state='dragging'] {
+  background: rgba(99, 102, 241, 0.22);
+  border: 1px solid rgba(129, 140, 248, 0.55);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.22);
+}
+#cloud-bookmark-floating-ball[data-state='dragging'] .cb-fb-icon {
+  opacity: 1;
+  filter: saturate(1.25) brightness(1.05);
+}
+
+/* docked: 贴边后更低存在感 */
+#cloud-bookmark-floating-ball[data-state='docked'] {
+  background: rgba(255, 255, 255, 0.015);
+  border: 1px solid rgba(99, 102, 241, 0.14);
+  box-shadow: none;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+#cloud-bookmark-floating-ball[data-state='docked'] .cb-fb-icon {
+  opacity: 0.35;
+  filter: saturate(0.85) brightness(0.95);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #cloud-bookmark-floating-ball,
+  #cloud-bookmark-floating-ball .cb-fb-icon {
+    transition: none !important;
+  }
+}
+      `.trim();
+      (document.head || document.documentElement).appendChild(style);
+    } catch (e) {
+      console.warn('[悬浮球] 注入样式失败（忽略）:', e?.message || e);
+    }
+  }
+
+  function setFloatingBallState(state) {
+    if (!floatingBall) return;
+    floatingBall.dataset.state = state;
+
+    // hover/dragging 在 mouseleave/stopDrag 后回到 baseVisualState
+    if (state === 'idle' || state === 'docked') {
+      baseVisualState = state;
+    }
+
+    // 高级感：hover/dragging 轻微上浮（不破坏 translateY(-50%) 的居中定位）
+    try {
+      const hasTranslateY = typeof floatingBall.style.transform === 'string' &&
+        floatingBall.style.transform.includes('translateY(-50%)');
+      if (state === 'hover') {
+        floatingBall.style.transform = hasTranslateY
+          ? 'translateY(-50%) translateZ(0) scale(1.08)'
+          : 'translateZ(0) scale(1.08)';
+      } else if (state === 'dragging') {
+        floatingBall.style.transform = '';
+      } else {
+        // idle / docked：恢复到原定位 transform（如果有）
+        if (hasTranslateY) {
+          floatingBall.style.transform = 'translateY(-50%)';
+        }
+      }
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  function setHovering(isHovering) {
+    if (!floatingBall) return;
+    if (isDragging) return;
+    setFloatingBallState(isHovering ? 'hover' : baseVisualState);
+  }
 
   // 同步失败 Toast（不影响页面交互：pointer-events: none）
   let toastEl = null;
@@ -273,7 +398,7 @@
     const viewportWidth = window.innerWidth;
 
     // 使用平滑动画
-    floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 0.2s, box-shadow 0.2s, opacity 0.2s';
+    floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 0.2s, opacity 0.2s';
 
     // 根据设置决定靠左、靠右或自动
     if (defaultPosition === 'left') {
@@ -300,8 +425,8 @@
       }
     }
 
-    // 贴边后降低一点透明度，减少遮挡感
-    floatingBall.style.opacity = '0.5';
+    // 贴边后进入 docked 状态（更低存在感）
+    setFloatingBallState('docked');
 
     // 保存新位置（使用最新的实际位置）
     setTimeout(() => {
@@ -344,14 +469,13 @@
     // 创建悬浮球
     floatingBall = document.createElement('div');
     floatingBall.id = 'cloud-bookmark-floating-ball';
-    floatingBall.innerHTML = '📚';
+    ensureFloatingBallStyle();
+    floatingBall.dataset.state = 'idle';
+    floatingBall.innerHTML = '<span class="cb-fb-icon">📚</span>';
     floatingBall.style.cssText = `
       position: fixed;
       width: 40px;
       height: 40px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
       cursor: pointer;
       z-index: 999999;
       display: flex;
@@ -360,7 +484,7 @@
       font-size: 20px;
       user-select: none;
       opacity: 1;
-      transition: left 0.2s ease, right 0.2s ease, transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+      transition: left 0.2s ease, right 0.2s ease, transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1), opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
     `;
     
     // 加载保存的位置
@@ -384,20 +508,9 @@
     
     console.log('[悬浮球] 初始化完成，事件监听已绑定');
     
-    // 添加悬停效果
-    floatingBall.addEventListener('mouseenter', () => {
-      floatingBall.style.transform = floatingBall.style.transform.includes('translateY') 
-        ? 'translateY(-50%) scale(1.1)' 
-        : 'scale(1.1)';
-      floatingBall.style.boxShadow = '0 6px 16px rgba(0,0,0,0.2)';
-    });
-    
-    floatingBall.addEventListener('mouseleave', () => {
-      floatingBall.style.transform = floatingBall.style.transform.includes('scale') 
-        ? floatingBall.style.transform.replace(' scale(1.1)', '')
-        : floatingBall.style.transform;
-      floatingBall.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-    });
+    // 添加悬停效果（仅视觉状态切换）
+    floatingBall.addEventListener('mouseenter', () => setHovering(true));
+    floatingBall.addEventListener('mouseleave', () => setHovering(false));
     
     document.body.appendChild(floatingBall);
     
@@ -405,6 +518,7 @@
     setTimeout(() => {
       constrainToViewport();
       // 初始化后开始自动贴边计时
+      setFloatingBallState('idle');
       scheduleAutoDock();
     }, 0);
   }
@@ -416,6 +530,7 @@
     isDragging = true;
     clearAutoDockTimer();
     if (floatingBall) {
+      setFloatingBallState('dragging');
       floatingBall.style.opacity = '1';
     }
     
@@ -492,7 +607,7 @@
     document.removeEventListener('mouseup', stopDrag);
     document.removeEventListener('touchend', stopDrag);
     
-    floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 0.2s, box-shadow 0.2s';
+    floatingBall.style.transition = 'left 0.2s ease, right 0.2s ease, transform 220ms cubic-bezier(0.2, 0.9, 0.2, 1), opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1)';
     
     // 确保位置在可视区域内
     constrainToViewport();
@@ -530,6 +645,7 @@
     touchStartTime = 0;
 
     // 拖动结束后重新启动自动贴边计时
+    setFloatingBallState('idle');
     scheduleAutoDock();
   }
   
@@ -549,6 +665,7 @@
     // 点击也视为一次操作，恢复不透明并重新计时
     if (floatingBall) {
       floatingBall.style.opacity = '1';
+      setFloatingBallState('idle');
     }
     scheduleAutoDock();
     
@@ -617,6 +734,7 @@
     clearAutoDockTimer();
     if (floatingBall) {
       floatingBall.style.opacity = '1';
+      setFloatingBallState('idle');
     }
   }
   
@@ -638,6 +756,7 @@
       e.stopPropagation();
       
       // 开始拖动
+      setFloatingBallState('dragging');
       floatingBall.style.transition = 'none';
       floatingBall.style.transform = '';
       
@@ -685,6 +804,7 @@
       // 点击视为一次操作，恢复不透明并重新计时
       if (floatingBall) {
         floatingBall.style.opacity = '1';
+        setFloatingBallState('idle');
       }
       scheduleAutoDock();
       
