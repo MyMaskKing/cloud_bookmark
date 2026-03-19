@@ -2052,7 +2052,9 @@ async function loadFloatingBallSetting() {
   try {
     const settings = await storage.getSettings();
     const floatingBall = (settings && settings.floatingBall) || {};
-    enableFloatingBall.checked = !!floatingBall.enabled;
+    // 默认启用：如果从未设置过悬浮球开关（enabled 为 undefined），则默认开启并落盘一次
+    const hasExplicitEnabled = typeof floatingBall.enabled === 'boolean';
+    enableFloatingBall.checked = hasExplicitEnabled ? !!floatingBall.enabled : true;
 
     // 加载默认位置设置（默认值为 'auto'）
     floatingBallDefaultPosition.value = floatingBall.defaultPosition || 'auto';
@@ -2063,6 +2065,27 @@ async function loadFloatingBallSetting() {
     const visible = enableFloatingBall.checked;
     floatingBallPositionGroup.style.display = visible ? 'block' : 'none';
     floatingBallActionGroup.style.display = visible ? 'block' : 'none';
+
+    // 若之前没有显式保存过 enabled，则写入默认值，保证 content script 也能立刻生效
+    if (!hasExplicitEnabled) {
+      const nextFloatingBall = {
+        ...floatingBall,
+        enabled: true,
+        defaultPosition: floatingBallDefaultPosition.value || 'auto',
+        clickAction: floatingBallClickAction.value || 'popup'
+      };
+      const newSettings = { ...(settings || {}), floatingBall: nextFloatingBall };
+      await storage.saveSettings(newSettings);
+      // 通知所有标签页更新悬浮球状态（不阻塞）
+      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(() => {});
+      const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+      try {
+        const tabs = await tabsAPI.query({});
+        tabs.forEach(tab => {
+          tabsAPI.sendMessage(tab.id, { action: 'updateFloatingBall' }).catch(() => { });
+        });
+      } catch (_) {}
+    }
   } catch (e) {
     console.warn('加载悬浮球设置失败', e);
     enableFloatingBall.checked = false;

@@ -27,6 +27,29 @@ class StorageManager {
     this.syncedScenesKey = 'syncedScenes'; // 已完成云端同步的场景列表
     this.sceneFoldersKey = 'sceneFolders'; // 每个场景的文件夹列表（用于保存空文件夹）
   }
+
+  getDefaultSettings() {
+    return {
+      floatingBall: {
+        enabled: true, // 默认开启悬浮球
+        defaultPosition: 'auto',
+        clickAction: 'popup'
+      }
+    };
+  }
+
+  mergeSettingsWithDefaults(settings) {
+    const s = settings || {};
+    const d = this.getDefaultSettings();
+    return {
+      ...d,
+      ...s,
+      floatingBall: {
+        ...(d.floatingBall || {}),
+        ...(s.floatingBall || {})
+      }
+    };
+  }
   
   /**
    * 检查是否有错误
@@ -406,7 +429,7 @@ class StorageManager {
         if (this.hasError()) {
           reject(new Error(this.getError()));
         } else {
-          resolve(result[this.settingsKey] || {});
+          resolve(this.mergeSettingsWithDefaults(result[this.settingsKey] || {}));
         }
       });
     });

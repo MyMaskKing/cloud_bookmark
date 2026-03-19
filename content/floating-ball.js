@@ -84,7 +84,7 @@
   width: 100%;
   height: 100%;
   line-height: 1;
-  opacity: 0.42; /* strong idle */
+  opacity: 0.62; /* idle: 主体更明显，但仍克制 */
   filter: saturate(0.9) brightness(0.98);
   transition: opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
     filter 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
@@ -103,8 +103,8 @@
 
 /* 云朵：描边 + 轻微内发光 */
 #cloud-bookmark-floating-ball .cb-fb-icon::before {
-  width: 22px;
-  height: 14px;
+  width: 24px;
+  height: 15px;
   transform: translate(-50%, -50%) translateY(-1px);
   border-radius: 999px;
   background:
@@ -112,23 +112,23 @@
     radial-gradient(circle at 52% 35%, rgba(255, 255, 255, 0.20) 0 58%, rgba(255, 255, 255, 0) 59%),
     radial-gradient(circle at 72% 58%, rgba(255, 255, 255, 0.18) 0 55%, rgba(255, 255, 255, 0) 56%);
   box-shadow:
-    0 0 0 1.4px rgba(167, 139, 250, 0.65),
-    0 0 10px rgba(99, 102, 241, 0.18);
-  opacity: 0.95;
-  filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.14));
+    0 0 0 1.8px rgba(167, 139, 250, 0.78),
+    0 0 14px rgba(99, 102, 241, 0.22);
+  opacity: 1;
+  filter: drop-shadow(0 3px 6px rgba(15, 23, 42, 0.16));
 }
 
 /* 书签：细线标签 + 缺口 */
 #cloud-bookmark-floating-ball .cb-fb-icon::after {
-  width: 12px;
-  height: 16px;
-  transform: translate(-50%, -50%) translateX(7px) translateY(5px) rotate(8deg);
+  width: 13px;
+  height: 18px;
+  transform: translate(-50%, -50%) translateX(7px) translateY(5px) rotate(7deg);
   border-radius: 4px;
   background:
     linear-gradient(180deg, rgba(99, 102, 241, 0.95), rgba(168, 85, 247, 0.92));
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.25) inset,
-    0 6px 14px rgba(15, 23, 42, 0.18);
+    0 0 0 1px rgba(255, 255, 255, 0.30) inset,
+    0 8px 18px rgba(15, 23, 42, 0.20);
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 82%, 0 100%);
   opacity: 0.98;
 }
@@ -185,7 +185,7 @@
   -webkit-backdrop-filter: blur(6px);
 }
 #cloud-bookmark-floating-ball[data-state='docked'] .cb-fb-icon {
-  opacity: 0.35;
+  opacity: 0.48; /* docked: 仍然看得清主体 */
   filter: saturate(0.85) brightness(0.95);
 }
 
@@ -945,12 +945,31 @@
       if (typeof browser !== 'undefined' && browser.storage) {
         // Firefox: 使用 Promise
         browser.storage.local.get(['settings']).then(result => {
-          resolve(result.settings || {});
+          const settings = result.settings || {};
+          // 默认设置合并：确保“默认启用悬浮球”在 content script 里也生效
+          const floatingBall = (settings && settings.floatingBall) || {};
+          resolve({
+            ...settings,
+            floatingBall: {
+              enabled: floatingBall.enabled !== false, // 未设置时默认 true
+              defaultPosition: floatingBall.defaultPosition || 'auto',
+              clickAction: floatingBall.clickAction || 'popup'
+            }
+          });
         });
       } else {
         // Chrome/Edge: 使用回调
         chrome.storage.local.get(['settings'], (result) => {
-          resolve(result.settings || {});
+          const settings = result.settings || {};
+          const floatingBall = (settings && settings.floatingBall) || {};
+          resolve({
+            ...settings,
+            floatingBall: {
+              enabled: floatingBall.enabled !== false,
+              defaultPosition: floatingBall.defaultPosition || 'auto',
+              clickAction: floatingBall.clickAction || 'popup'
+            }
+          });
         });
       }
     });
