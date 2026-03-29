@@ -502,6 +502,151 @@ body {
   gap: 8px;
 }
 
+/* 场景切换轻提示条（与管理页顶栏风格一致） */
+.scene-switching-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 24px 10px 24px;
+  font-size: 13px;
+  line-height: 1.35;
+  color: #3730a3;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.09), rgba(129, 140, 248, 0.07));
+  border-radius: 8px;
+  overflow: hidden;
+  transition: max-height 0.32s cubic-bezier(0.33, 0.86, 0.2, 1),
+    opacity 0.32s ease, padding 0.32s ease, margin 0.32s ease, border-width 0.32s ease;
+}
+
+.scene-switching-bar--collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0 12px;
+  margin: 0 24px 0 24px;
+  border: 0 solid transparent;
+  pointer-events: none;
+}
+
+.scene-switching-bar--open {
+  max-height: 56px;
+  opacity: 1;
+  padding: 8px 12px;
+  margin: 0 24px 10px 24px;
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  pointer-events: auto;
+}
+
+.scene-switching-bar-spinner {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  border: 2px solid rgba(99, 102, 241, 0.25);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: bookmarks-scene-spin 0.65s linear infinite;
+}
+
+@keyframes bookmarks-scene-spin {
+  to { transform: rotate(360deg); }
+}
+
+.scene-switching-bar-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-switch-btn.is-scene-loading {
+  cursor: wait;
+  opacity: 0.92;
+  pointer-events: none;
+}
+
+.scene-switch-btn.is-scene-loading .scene-arrow {
+  display: inline-block;
+  font-size: 0;
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(99, 102, 241, 0.25);
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: bookmarks-scene-spin 0.65s linear infinite;
+}
+
+/* 慢网时弱化列表，提示仍在加载 */
+.bookmarks-grid.scene-switch-dim {
+  opacity: 0.55;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+/* 场景切换：整块列表区域（含空状态）淡出 → 换数据 → 淡入（PC / 窄屏分支与弹窗策略一致） */
+.bookmarks-container.scene-switch-fade-out {
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.52s cubic-bezier(0.36, 0.82, 0.22, 1),
+    transform 0.52s cubic-bezier(0.36, 0.82, 0.22, 1);
+  pointer-events: none;
+}
+
+.bookmarks-container.scene-switch-fade-in {
+  animation: bookmarksSceneGridIn 0.62s linear both;
+  contain: paint;
+}
+
+@keyframes bookmarksSceneGridIn {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  58% {
+    opacity: 0.94;
+    transform: translateY(2px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bookmarksSceneGridInCompact {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  58% {
+    opacity: 0.94;
+    transform: translateY(1px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 768px) {
+  .bookmarks-container.scene-switch-fade-out {
+    transform: translateY(6px);
+    transition-duration: 0.48s;
+  }
+
+  .bookmarks-container.scene-switch-fade-in {
+    animation-name: bookmarksSceneGridInCompact;
+    animation-duration: 0.58s;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bookmarks-container.scene-switch-fade-out {
+    transition-duration: 0.01ms;
+  }
+  .bookmarks-container.scene-switch-fade-in {
+    animation-duration: 0.01ms;
+  }
+}
+
 /* 同步错误提示条（完全画面显示同步错误信息） */
 .sync-error-banner {
   margin: 0 24px 12px 24px;

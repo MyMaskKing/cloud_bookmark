@@ -99,6 +99,12 @@
       <!-- 同步错误提示（不阻断操作） -->
       <div id="syncErrorBanner" class="sync-error-banner" style="display: none;"></div>
 
+      <!-- 场景切换轻提示（方案 B：不打断主流程） -->
+      <div id="sceneSwitchingBar" class="scene-switching-bar scene-switching-bar--collapsed" role="status" aria-live="polite">
+        <span class="scene-switching-bar-spinner" aria-hidden="true"></span>
+        <span id="sceneSwitchingBarText" class="scene-switching-bar-text"></span>
+      </div>
+
       <!-- 主内容加载遮罩（覆盖整个主内容区，不含侧边栏） -->
       <div id="mainLoadingOverlay" class="main-loading-overlay" style="display: none;">
         <div class="main-loading-spinner"></div>

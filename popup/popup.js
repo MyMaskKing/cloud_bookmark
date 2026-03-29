@@ -94,13 +94,19 @@ const openFullBtn = document.getElementById('openFullBtn');
 const settingsBtn = document.getElementById('settingsBtn');
 const exportLogBtn = document.getElementById('exportLogBtn');
 const bookmarkList = document.getElementById('bookmarkList');
+/** 场景切换动画作用在整块「书签列表」区域（含标题与列表），比只改 #bookmarkList 更明显 */
+const recentBookmarksEl = document.getElementById('recentBookmarks');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
 const sceneSwitchBtn = document.getElementById('sceneSwitchBtn');
 const currentSceneNameEl = document.getElementById('currentSceneName');
 const sceneMenu = document.getElementById('sceneMenu');
+const sceneSwitchingBar = document.getElementById('sceneSwitchingBar');
+const sceneSwitchingBarText = document.getElementById('sceneSwitchingBarText');
 const popupLoadingOverlay = document.getElementById('popupLoadingOverlay');
 const headerRight = document.querySelector('.header-right');
+/** 场景切换进行中：防连点、与轻提示条联动 */
+let sceneSwitchBusy = false;
 // 已移除 MAX_BOOKMARKS_DISPLAY 限制，弹窗现在显示所有书签以保持与完整画面一致
 let currentSceneId = null;
 let expandedFolders = new Set(['']); // 根默认展开
@@ -505,48 +511,64 @@ async function loadScenes() {
     sceneMenu.querySelectorAll('.scene-menu-item').forEach(item => {
       item.addEventListener('click', async () => {
         const sceneId = item.dataset.id;
+        const sceneName = (item.textContent || '').trim();
         const currentId = await storage.getCurrentScene(); // 获取当前场景进行比较
-        if (sceneId !== currentId) {
-          // 切换场景：清空搜索框（PC/移动端一致），并清除搜索记忆，避免跨场景残留
-          try {
-            if (searchInput) searchInput.value = '';
-            if (searchClearBtn) searchClearBtn.style.display = 'none';
-            saveSearchContent();
-          } catch (_) {
-            // ignore
-          }
-
-          await storage.saveCurrentScene(sceneId);
-          currentSceneId = sceneId; // 立即更新本地状态，避免后续逻辑读取旧值
-
-          // 检查 WebDAV 配置是否有效
-          const config = await storage.getConfig();
-          const hasValidConfig = config && config.serverUrl;
-          // 检查该场景是否已同步过
-          const isSceneSynced = await storage.isSceneSynced(sceneId);
-
-          // WebDAV配置有效且该场景从未同步过，需要执行云端同步
-          if (hasValidConfig && !isSceneSynced) {
-            try {
-              console.log('[弹窗] 切换场景：开始同步场景', sceneId);
-              const syncResult = await sendMessageCompat({ action: 'sync', sceneId });
-              console.log('[弹窗] 切换场景：同步完成', syncResult);
-            } catch (e) {
-              console.error('[弹窗] 切换场景：同步失败', e);
-              // 忽略单次同步失败，继续后续逻辑
-            }
-            // 场景切换不同步到云端，只保存在本地
-          }
-          await loadCurrentScene();
-          await loadScenes();
-          // 确保 DOM 更新完成后再加载书签
-          await new Promise(resolve => requestAnimationFrame(resolve));
-          await loadBookmarksForPopup();
-          // 再次确保 DOM 更新完成，给事件委托足够的时间绑定
-          await new Promise(resolve => requestAnimationFrame(resolve));
-          console.log('[弹窗] 切换场景：书签加载完成，当前书签项数量:', document.querySelectorAll('.bookmark-item').length);
-        }
         sceneMenu.style.display = 'none';
+
+        if (sceneId === currentId) {
+          return;
+        }
+        if (sceneSwitchBusy) {
+          return;
+        }
+
+        sceneSwitchBusy = true;
+        setPopupSceneSwitchUi(true, sceneName);
+
+        try {
+          await runPopupSceneSwitchTransition(async () => {
+            // 切换场景：清空搜索框（PC/移动端一致），并清除搜索记忆，避免跨场景残留
+            try {
+              if (searchInput) searchInput.value = '';
+              if (searchClearBtn) searchClearBtn.style.display = 'none';
+              saveSearchContent();
+            } catch (_) {
+              // ignore
+            }
+
+            await storage.saveCurrentScene(sceneId);
+            currentSceneId = sceneId; // 立即更新本地状态，避免后续逻辑读取旧值
+
+            // 检查 WebDAV 配置是否有效
+            const config = await storage.getConfig();
+            const hasValidConfig = config && config.serverUrl;
+            // 检查该场景是否已同步过
+            const isSceneSynced = await storage.isSceneSynced(sceneId);
+
+            // WebDAV配置有效且该场景从未同步过，需要执行云端同步
+            if (hasValidConfig && !isSceneSynced) {
+              try {
+                console.log('[弹窗] 切换场景：开始同步场景', sceneId);
+                const syncResult = await sendMessageCompat({ action: 'sync', sceneId });
+                console.log('[弹窗] 切换场景：同步完成', syncResult);
+              } catch (e) {
+                console.error('[弹窗] 切换场景：同步失败', e);
+                // 忽略单次同步失败，继续后续逻辑
+              }
+            }
+            await loadCurrentScene();
+            await loadScenes();
+            // 确保 DOM 更新完成后再加载书签
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            await loadBookmarksForPopup({ lightLoading: true });
+            // 再次确保 DOM 更新完成，给事件委托足够的时间绑定
+            await new Promise(resolve => requestAnimationFrame(resolve));
+            console.log('[弹窗] 切换场景：书签加载完成，当前书签项数量:', document.querySelectorAll('.bookmark-item').length);
+          });
+        } finally {
+          setPopupSceneSwitchUi(false);
+          sceneSwitchBusy = false;
+        }
       });
     });
   } catch (error) {
@@ -579,12 +601,121 @@ function hidePopupLoading() {
 }
 
 /**
- * 加载弹窗展示的书签（显示所有书签，与完整画面保持一致）
+ * 场景切换轻反馈：顶部条 + 场景按钮 loading（方案 B）
  */
-async function loadBookmarksForPopup() {
+function setPopupSceneSwitchUi(loading, sceneName) {
+  if (sceneSwitchBtn) {
+    if (loading) {
+      sceneSwitchBtn.classList.add('is-scene-loading');
+      sceneSwitchBtn.setAttribute('aria-busy', 'true');
+      sceneSwitchBtn.disabled = true;
+    } else {
+      sceneSwitchBtn.classList.remove('is-scene-loading');
+      sceneSwitchBtn.removeAttribute('aria-busy');
+      sceneSwitchBtn.disabled = false;
+    }
+  }
+  if (sceneSwitchingBar && sceneSwitchingBarText) {
+    if (loading) {
+      sceneSwitchingBar.classList.remove('scene-switching-bar--collapsed');
+      sceneSwitchingBar.classList.add('scene-switching-bar--open');
+      sceneSwitchingBarText.textContent = sceneName
+        ? `正在切换到「${sceneName}」，正在同步数据…`
+        : '正在切换场景…';
+    } else {
+      sceneSwitchingBar.classList.remove('scene-switching-bar--open');
+      sceneSwitchingBar.classList.add('scene-switching-bar--collapsed');
+      sceneSwitchingBarText.textContent = '';
+    }
+  }
+}
+
+function prefersReducedMotion() {
   try {
-    // 列表区域 loading 遮罩 + 右上角目录/收藏按钮置灰
-    showPopupLoading();
+    return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (_) {
+    return false;
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/** 等待指定动画结束（比固定 sleep 更不易与动画尾帧错位闪屏） */
+function waitForAnimationEndOnce(el, animationName, fallbackMs) {
+  if (!el) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => resolve();
+    const t = setTimeout(done, fallbackMs);
+    const handler = (e) => {
+      if (e.target !== el) return;
+      const raw = (e.animationName || '').split(',')[0].trim();
+      const token = animationName || '';
+      if (token && raw && !raw.includes(token)) return;
+      clearTimeout(t);
+      el.removeEventListener('animationend', handler);
+      done();
+    };
+    el.addEventListener('animationend', handler);
+  });
+}
+
+/** 连续两帧，确保浏览器已应用「淡出」类再开始拉数据 */
+async function nextPaint() {
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+
+/**
+ * 场景列表过渡：仅 DOM/CSS animation（无 MV2/MV3 专有 API）。classList.replace 无则回退 remove+add。
+ * 时长需与 popup.css 中淡出(0.52s/480px 以下 0.48s)、淡入(0.62s/0.58s)大致一致。
+ */
+const SCENE_POPUP_FADE_OUT_MS = 520;
+/** animationend 兜底应略大于最长一段淡入（窄屏 0.58s） */
+const SCENE_POPUP_FADE_IN_FALLBACK_MS = 720;
+
+/**
+ * 场景切换：先完整淡出旧内容 → 再拉数据/渲染 → 再淡入新内容。
+ * 注意：不能用「淡出计时与 workFn 并行」：若云端同步很慢，列表会长时间停在全透明空白，体感很生硬。
+ */
+async function runPopupSceneSwitchTransition(workFn) {
+  const listEl = recentBookmarksEl || bookmarkList;
+  if (!listEl || prefersReducedMotion()) {
+    await workFn();
+    return;
+  }
+  listEl.classList.remove('scene-switch-fade-in');
+  listEl.classList.add('scene-switch-fade-out');
+  await nextPaint();
+  try {
+    await sleep(SCENE_POPUP_FADE_OUT_MS);
+    await workFn();
+  } catch (e) {
+    listEl.classList.remove('scene-switch-fade-out', 'scene-switch-fade-in');
+    throw e;
+  }
+  // 原子替换类 + 动画 fill-mode:both，避免「去掉淡出 → 一帧全不透明 → 再淡入」的闪屏
+  if (typeof listEl.classList.replace === 'function') {
+    listEl.classList.replace('scene-switch-fade-out', 'scene-switch-fade-in');
+  } else {
+    listEl.classList.remove('scene-switch-fade-out');
+    listEl.classList.add('scene-switch-fade-in');
+  }
+  await waitForAnimationEndOnce(listEl, 'popupSceneListIn', SCENE_POPUP_FADE_IN_FALLBACK_MS);
+  listEl.classList.remove('scene-switch-fade-in');
+}
+
+/**
+ * 加载弹窗展示的书签（显示所有书签，与完整画面保持一致）
+ * @param {{ lightLoading?: boolean }} [options] lightLoading 为 true 时不使用全列表遮罩（用于场景切换时的轻反馈）
+ */
+async function loadBookmarksForPopup(options = {}) {
+  const lightLoading = !!(options && options.lightLoading);
+  try {
+    if (!lightLoading) {
+      // 列表区域 loading 遮罩 + 右上角目录/收藏按钮置灰
+      showPopupLoading();
+    }
 
     // 按当前场景过滤书签（与主页面使用相同的逻辑）
     const data = await storage.getBookmarks(currentSceneId);
@@ -660,7 +791,9 @@ async function loadBookmarksForPopup() {
     console.error('加载书签失败:', error);
     pushOpLog(`loadBookmarks failed: ${error.message}`);
   } finally {
-    hidePopupLoading();
+    if (!lightLoading) {
+      hidePopupLoading();
+    }
   }
 }
 

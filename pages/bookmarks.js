@@ -65,6 +65,9 @@ const defaultSettings = {
 };
 const defaultViewOptions = { ...defaultSettings.viewOptions };
 
+/** 场景切换中：防连点 */
+let sceneSwitchBusyPage = false;
+
 function normalizeFolderPath(path) {
   if (!path) return '';
   // 去除零宽字符，做 Unicode 归一化（避免“看起来一样但字符串不同”导致去重/排序异常）
@@ -984,41 +987,57 @@ async function loadScenes() {
       // 绑定点击事件
       sceneMenuEl.querySelectorAll('.scene-menu-item').forEach(item => {
         item.addEventListener('click', async () => {
+          const sceneId = item.dataset.id;
+          const sceneName = (item.textContent || '').trim();
           // 与弹窗行为保持一致：点击场景后立即收起下拉列表
           sceneMenuEl.style.display = 'none';
 
-          const sceneId = item.dataset.id;
-          if (sceneId !== currentSceneId) {
-            // 切换场景：清空搜索框，避免跨场景残留（PC/移动端一致）
-            try {
-              if (searchInput) searchInput.value = '';
-            } catch (_) {
-              // ignore
-            }
+          if (sceneId === currentSceneId) {
+            return;
+          }
+          if (sceneSwitchBusyPage) {
+            return;
+          }
 
-            await storage.saveCurrentScene(sceneId);
-            currentSceneId = sceneId; // 立即更新，避免后续读取旧值
+          sceneSwitchBusyPage = true;
+          setBookmarkPageSceneSwitchUi(true, sceneName);
 
-            // 检查 WebDAV 配置是否有效
-            const config = await storage.getConfig();
-            const hasValidConfig = config && config.serverUrl;
-            // 检查该场景是否已同步过
-            const isSceneSynced = await storage.isSceneSynced(sceneId);
-
-            // WebDAV配置有效且该场景从未同步过，需要执行云端同步
-            if (hasValidConfig && !isSceneSynced) {
+          try {
+            await runBookmarkPageSceneSwitchTransition(async () => {
+              // 切换场景：清空搜索框，避免跨场景残留（PC/移动端一致）
               try {
-                await sendMessageCompat({ action: 'sync', sceneId });
-              } catch (e) {
-                // 忽略单次同步失败，继续后续逻辑
+                if (searchInput) searchInput.value = '';
+              } catch (_) {
+                // ignore
               }
-            }
-            await loadCurrentScene();
-            await loadScenes();
-            await loadBookmarks();
-            await loadFolders();
-            await loadTags();
-            await sendMessageCompat({ action: 'sceneChanged' });
+
+              await storage.saveCurrentScene(sceneId);
+              currentSceneId = sceneId; // 立即更新，避免后续读取旧值
+
+              // 检查 WebDAV 配置是否有效
+              const config = await storage.getConfig();
+              const hasValidConfig = config && config.serverUrl;
+              // 检查该场景是否已同步过
+              const isSceneSynced = await storage.isSceneSynced(sceneId);
+
+              // WebDAV配置有效且该场景从未同步过，需要执行云端同步
+              if (hasValidConfig && !isSceneSynced) {
+                try {
+                  await sendMessageCompat({ action: 'sync', sceneId });
+                } catch (e) {
+                  // 忽略单次同步失败，继续后续逻辑
+                }
+              }
+              await loadCurrentScene();
+              await loadScenes();
+              await loadBookmarks({ lightLoading: true });
+              await loadFolders();
+              await loadTags();
+              await sendMessageCompat({ action: 'sceneChanged' });
+            });
+          } finally {
+            setBookmarkPageSceneSwitchUi(false);
+            sceneSwitchBusyPage = false;
           }
         });
       });
@@ -1031,11 +1050,17 @@ async function loadScenes() {
 /**
  * 加载书签
  */
-async function loadBookmarks() {
+/**
+ * @param {{ lightLoading?: boolean }} [options] lightLoading 为 true 时不显示全屏主内容遮罩（场景切换轻反馈）
+ */
+async function loadBookmarks(options = {}) {
+  const lightLoading = !!(options && options.lightLoading);
   try {
-    const loadingEl = document.getElementById('mainLoadingOverlay');
-    if (loadingEl) {
-      loadingEl.style.display = 'flex';
+    if (!lightLoading) {
+      const loadingEl = document.getElementById('mainLoadingOverlay');
+      if (loadingEl) {
+        loadingEl.style.display = 'flex';
+      }
     }
 
     // 按当前场景过滤书签
@@ -1078,11 +1103,115 @@ async function loadBookmarks() {
   } catch (error) {
     console.error('加载书签失败:', error);
   } finally {
-    const loadingEl = document.getElementById('mainLoadingOverlay');
-    if (loadingEl) {
-      loadingEl.style.display = 'none';
+    if (!lightLoading) {
+      const loadingEl = document.getElementById('mainLoadingOverlay');
+      if (loadingEl) {
+        loadingEl.style.display = 'none';
+      }
     }
   }
+}
+
+/**
+ * 管理页场景切换轻反馈（方案 B）
+ */
+function setBookmarkPageSceneSwitchUi(loading, sceneName) {
+  const btn = document.getElementById('sceneSwitchBtn');
+  const bar = document.getElementById('sceneSwitchingBar');
+  const textEl = document.getElementById('sceneSwitchingBarText');
+  if (btn) {
+    if (loading) {
+      btn.classList.add('is-scene-loading');
+      btn.setAttribute('aria-busy', 'true');
+      btn.disabled = true;
+    } else {
+      btn.classList.remove('is-scene-loading');
+      btn.removeAttribute('aria-busy');
+      btn.disabled = false;
+    }
+  }
+  if (bar && textEl) {
+    if (loading) {
+      bar.classList.remove('scene-switching-bar--collapsed');
+      bar.classList.add('scene-switching-bar--open');
+      textEl.textContent = sceneName
+        ? `正在切换到「${sceneName}」，正在同步数据…`
+        : '正在切换场景…';
+    } else {
+      bar.classList.remove('scene-switching-bar--open');
+      bar.classList.add('scene-switching-bar--collapsed');
+      textEl.textContent = '';
+    }
+  }
+}
+
+function prefersReducedMotionBookmarks() {
+  try {
+    return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch (_) {
+    return false;
+  }
+}
+
+function sleepBookmarks(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function waitForAnimationEndBookmarks(el, animationName, fallbackMs) {
+  if (!el) return Promise.resolve();
+  return new Promise(resolve => {
+    const done = () => resolve();
+    const t = setTimeout(done, fallbackMs);
+    const handler = (e) => {
+      if (e.target !== el) return;
+      const raw = (e.animationName || '').split(',')[0].trim();
+      const token = animationName || '';
+      if (token && raw && !raw.includes(token)) return;
+      clearTimeout(t);
+      el.removeEventListener('animationend', handler);
+      done();
+    };
+    el.addEventListener('animationend', handler);
+  });
+}
+
+async function nextPaintBookmarks() {
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+}
+
+/**
+ * 与 bookmarks.css 场景过渡一致；纯 DOM/CSS，与 manifest_version 2/3 无关。
+ */
+const SCENE_PAGE_FADE_OUT_MS = 520;
+const SCENE_PAGE_FADE_IN_FALLBACK_MS = 720;
+
+/**
+ * 管理页场景切换：先完整淡出 → 再加载数据 → 再淡入（避免慢同步时长时间卡在透明空白）
+ */
+async function runBookmarkPageSceneSwitchTransition(workFn) {
+  const container = document.querySelector('.bookmarks-container');
+  if (!container || prefersReducedMotionBookmarks()) {
+    await workFn();
+    return;
+  }
+  container.classList.remove('scene-switch-fade-in');
+  container.classList.add('scene-switch-fade-out');
+  await nextPaintBookmarks();
+  try {
+    await sleepBookmarks(SCENE_PAGE_FADE_OUT_MS);
+    await workFn();
+  } catch (e) {
+    container.classList.remove('scene-switch-fade-out', 'scene-switch-fade-in');
+    throw e;
+  }
+  if (typeof container.classList.replace === 'function') {
+    container.classList.replace('scene-switch-fade-out', 'scene-switch-fade-in');
+  } else {
+    container.classList.remove('scene-switch-fade-out');
+    container.classList.add('scene-switch-fade-in');
+  }
+  await waitForAnimationEndBookmarks(container, 'bookmarksSceneGridIn', SCENE_PAGE_FADE_IN_FALLBACK_MS);
+  container.classList.remove('scene-switch-fade-in');
 }
 
 /**
