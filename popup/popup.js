@@ -299,6 +299,11 @@ window.addEventListener('unhandledrejection', (event) => {
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('[弹窗] DOMContentLoaded 触发');
 
+  // 书签列表：文件夹行点击委托（单次绑定，与 innerHTML 刷新无关）
+  if (bookmarkList) {
+    bookmarkList.addEventListener('click', handlePopupFolderListClick);
+  }
+
   // 检测是否为悬浮球打开的弹窗，如果是则调整高度
   const urlParams = new URLSearchParams(window.location.search);
   const source = urlParams.get('source');
@@ -798,6 +803,29 @@ async function loadBookmarksForPopup(options = {}) {
 }
 
 /**
+ * 文件夹行点击：在 #bookmarkList 上委托绑定，避免「innerHTML 后再 requestAnimationFrame 才绑监听」与首次加载/场景动画竞态导致点不开。
+ * 仅使用 Element.closest / contains、DOM0 事件、queueMicrotask 等标准能力；与 manifest_version 2/3 无关：
+ * MV2 为 browser_action.default_popup，MV3 为 action.default_popup，二者加载的均为同源扩展页 popup，脚本环境一致。
+ */
+function handlePopupFolderListClick(e) {
+  const row = e.target.closest('.folder-row');
+  if (!row || !bookmarkList || !bookmarkList.contains(row)) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const path = row.dataset.folder || '';
+  if (expandedFolders.has(path)) {
+    expandedFolders.delete(path);
+  } else {
+    expandedFolders.add(path);
+  }
+  saveFolderState();
+  const folders = Array.isArray(window.__popupFoldersForDrawer) ? window.__popupFoldersForDrawer : [];
+  const tree = buildFolderTree(lastRenderedBookmarks || [], folders);
+  bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
+  queueMicrotask(() => applyPopupSettings());
+}
+
+/**
  * 渲染书签列表
  */
 function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {}) {
@@ -852,60 +880,8 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
   // 使用传入的 folders 参数（如果提供）来保持文件夹顺序
   const tree = buildFolderTree(bookmarks, folders);
   bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
-
-  // 使用 requestAnimationFrame 确保 DOM 更新完成后再绑定事件
-  requestAnimationFrame(() => {
-    // 绑定文件夹展开/折叠
-    bookmarkList.querySelectorAll('.folder-row').forEach(row => {
-      row.addEventListener('click', () => {
-        const path = row.dataset.folder || '';
-        if (expandedFolders.has(path)) {
-          expandedFolders.delete(path);
-        } else {
-          expandedFolders.add(path);
-        }
-        saveFolderState();
-        bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
-        // 重新绑定事件时，也要使用 requestAnimationFrame 确保 DOM 更新完成
-        requestAnimationFrame(() => {
-          bindFolderEvents();
-          bindBookmarkClick();
-        });
-      });
-    });
-
-    bindBookmarkClick();
-    // 应用设置到UI（更新按钮的显示/隐藏）
-    applyPopupSettings();
-  });
-
-  function bindFolderEvents() {
-    // 使用 requestAnimationFrame 确保 DOM 更新完成后再绑定事件
-    requestAnimationFrame(() => {
-      bookmarkList.querySelectorAll('.folder-row').forEach(row => {
-        row.addEventListener('click', () => {
-          const path = row.dataset.folder || '';
-          if (expandedFolders.has(path)) {
-            expandedFolders.delete(path);
-          } else {
-            expandedFolders.add(path);
-          }
-          saveFolderState();
-          bookmarkList.innerHTML = renderFolderTreeHtml(tree, '');
-          // 重新绑定事件时，也要使用 requestAnimationFrame 确保 DOM 更新完成
-          requestAnimationFrame(() => {
-            bindFolderEvents();
-            bindBookmarkClick();
-          });
-        });
-      });
-    });
-  }
-
-  // 保留空函数占位，实际点击逻辑通过事件委托统一处理
-  function bindBookmarkClick(retry = 0) {
-    console.log('[弹窗] bindBookmarkClick 调用（事件委托模式），retry =', retry);
-  }
+  // 文件夹展开/折叠由 handlePopupFolderListClick（bookmarkList 事件委托）处理，勿再按行延迟绑定
+  queueMicrotask(() => applyPopupSettings());
 }
 
 function normalizeFolderPath(path) {
