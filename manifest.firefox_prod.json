@@ -16,6 +16,7 @@
     "scripts": [
       "utils/storage.js",
       "utils/webdav.js",
+      "utils/bookmarkParser.js",
       "background/background.js"
     ]
   },

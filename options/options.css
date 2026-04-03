@@ -235,6 +235,164 @@ body {
   font-size: 12px;
 }
 
+/* 与「弹窗(目录与悬浮球设置)」区块 .form-group select / 次要按钮视觉一致 */
+.ui-settings-select {
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: border-color 0.2s;
+  background-color: #fff;
+  box-sizing: border-box;
+  color: #333;
+}
+
+.ui-settings-select:focus {
+  outline: none;
+  border-color: #4a90e2;
+}
+
+.ui-settings-btn {
+  padding: 10px 18px;
+  font-size: 14px;
+  font-weight: 500;
+  border-radius: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.ui-settings-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* 浏览器书签定时同步场景：让下拉框和标题同一行 */
+.browser-bookmark-sync-scene-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.browser-bookmark-sync-scene-row label {
+  margin-bottom: 0;
+  font-weight: 500;
+  color: #333;
+  white-space: nowrap;
+}
+
+.browser-bookmark-sync-scene-row .ui-settings-select {
+  width: auto !important;
+  flex: 1 1 auto;
+  min-width: 160px;
+  max-width: 320px;
+}
+
+/* 与弹窗 header 同步状态一致的圆点 + 文案（用于浏览器书签定时同步） */
+.browser-popup-sync-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #666;
+}
+
+.browser-sync-inline-status .status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ccc;
+  flex-shrink: 0;
+}
+
+.browser-sync-inline-status .status-dot.success {
+  background: #27ae60;
+}
+
+.browser-sync-inline-status .status-dot.syncing {
+  background: #f39c12;
+  animation: browser-sync-pulse 1.5s ease-in-out infinite;
+}
+
+.browser-sync-inline-status .status-dot.error {
+  background: #e74c3c;
+}
+
+.browser-sync-inline-status .browser-sync-status-text {
+  font-weight: 600;
+  color: #374151;
+}
+
+@keyframes browser-sync-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* 浏览器书签定时同步场景：就近展示同步状态 */
+.browser-sync-inline-status {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.browser-sync-inline-status .label {
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.browser-sync-inline-status .sep {
+  width: 1px;
+  height: 14px;
+  background: #e5e7eb;
+  display: inline-block;
+}
+
+.browser-sync-inline-status .value {
+  font-weight: 700;
+  color: #374151;
+}
+
+.browser-sync-inline-status .value.syncing {
+  color: #f39c12;
+}
+
+.browser-sync-inline-status .value.success {
+  color: #27ae60;
+}
+
+.browser-sync-inline-status .value.error {
+  color: #e74c3c;
+}
+
+@media (max-width: 700px) {
+  .browser-bookmark-sync-scene-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .browser-bookmark-sync-scene-row label {
+    white-space: normal;
+  }
+  .browser-bookmark-sync-scene-row .ui-settings-select {
+    width: 100% !important;
+    max-width: none;
+  }
+  .browser-bookmark-sync-scene-row .ui-settings-btn {
+    width: 100%;
+  }
+}
+
+/* 让设备列表与上方设置区保持间距 */
+#deviceList.device-list {
+  margin-top: 12px;
+}
+
 .form-actions {
   display: flex;
   gap: 12px;
@@ -267,6 +425,12 @@ body {
 
 .btn-secondary:hover {
   background: #e0e0e0;
+}
+
+/* 与「目录与悬浮球」等区块的控件一致：覆盖通用 .btn 的 padding，避免被上面规则盖掉 */
+.btn.ui-settings-btn {
+  padding: 10px 18px;
+  font-size: 14px;
 }
 
 .sync-status {
@@ -328,11 +492,21 @@ body {
 
 .device-item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
+  gap: 12px;
   padding: 10px 12px;
   border: 1px solid #eee;
   border-radius: 6px;
+}
+
+.device-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
 }
 
 .device-info {
@@ -695,8 +869,14 @@ body {
     gap: 12px;
   }
 
-  .device-item .btn {
+  .device-item .btn,
+  .device-item-actions .ui-settings-btn {
     width: 100%;
+  }
+
+  .device-item-actions {
+    width: 100%;
+    justify-content: stretch;
   }
 
   .scene-item {

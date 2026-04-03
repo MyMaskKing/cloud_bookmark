@@ -18,6 +18,7 @@ class StorageManager {
     this.bookmarksKey = 'bookmarks';
     this.configKey = 'webdavConfig';
     this.syncStatusKey = 'syncStatus';
+    this.browserSyncStatusKey = 'browserSyncStatus';
     this.pendingChangesKey = 'pendingChanges';
     this.devicesKey = 'devices';
     this.deviceInfoKey = 'deviceInfo';
@@ -26,6 +27,9 @@ class StorageManager {
     this.currentSceneKey = 'currentScene'; // 当前选中场景
     this.syncedScenesKey = 'syncedScenes'; // 已完成云端同步的场景列表
     this.sceneFoldersKey = 'sceneFolders'; // 每个场景的文件夹列表（用于保存空文件夹）
+
+    // 浏览器原生书签定时同步（browser -> cloud）的失败控制（本地-only，不同步到云端）
+    this.browserBookmarkSyncFailureKey = 'browserBookmarkSyncFailure';
   }
 
   getDefaultSettings() {
@@ -294,6 +298,40 @@ class StorageManager {
   }
 
   /**
+   * 保存浏览器原生书签定时同步状态（browser -> cloud）
+   */
+  async saveBrowserSyncStatus(status) {
+    return new Promise((resolve, reject) => {
+      this.storage.set({ [this.browserSyncStatusKey]: status }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(status);
+        }
+      });
+    });
+  }
+
+  /**
+   * 获取浏览器原生书签定时同步状态（browser -> cloud）
+   */
+  async getBrowserSyncStatus() {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.browserSyncStatusKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve(result[this.browserSyncStatusKey] || {
+            lastSync: null,
+            status: 'idle',
+            error: null
+          });
+        }
+      });
+    });
+  }
+
+  /**
    * 添加待同步的变更
    */
   async addPendingChange(change) {
@@ -470,8 +508,10 @@ class StorageManager {
       this.scenesKey,
       this.currentSceneKey,
       this.syncStatusKey,
+      this.browserSyncStatusKey,
       this.syncedScenesKey,
-      this.sceneFoldersKey
+      this.sceneFoldersKey,
+      this.browserBookmarkSyncFailureKey
     ];
     return new Promise((resolve, reject) => {
       this.storage.remove(keys, () => {
@@ -688,6 +728,84 @@ class StorageManager {
         }
       });
     });
+  }
+
+  /**
+   * 获取浏览器原生书签定时同步（browser -> cloud）的失败控制状态
+   * @returns {{ consecutiveFailures: number, disabled: boolean, disabledSignature: string|null, lastFailureAt: number|null, lastError: string|null }}
+   */
+  async getBrowserBookmarkSyncFailureState() {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.browserBookmarkSyncFailureKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          const s = result[this.browserBookmarkSyncFailureKey] || {};
+          resolve({
+            consecutiveFailures: typeof s.consecutiveFailures === 'number' ? s.consecutiveFailures : 0,
+            disabled: !!s.disabled,
+            disabledSignature: s.disabledSignature || null,
+            lastFailureAt: s.lastFailureAt || null,
+            lastError: s.lastError || null
+          });
+        }
+      });
+    });
+  }
+
+  /**
+   * 重置浏览器原生书签定时同步失败控制状态
+   * @param {string} signature - 当前 WebDAV 配置签名（用于区分配置变更）
+   */
+  async resetBrowserBookmarkSyncFailureState(signature) {
+    return new Promise((resolve, reject) => {
+      this.storage.set({
+        [this.browserBookmarkSyncFailureKey]: {
+          consecutiveFailures: 0,
+          disabled: false,
+          disabledSignature: signature || null,
+          lastFailureAt: null,
+          lastError: null
+        }
+      }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  /**
+   * 记录一次浏览器原生书签定时同步失败，并在失败累计到阈值后禁用
+   * @param {string} errorMsg
+   * @param {string} signature - 当前 WebDAV 配置签名
+   * @param {number} maxFailures - 失败阈值
+   * @returns {{ disabled: boolean, consecutiveFailures: number }}
+   */
+  async recordBrowserBookmarkSyncFailure(errorMsg, signature, maxFailures) {
+    const current = await this.getBrowserBookmarkSyncFailureState();
+    const nextCount = (current.consecutiveFailures || 0) + 1;
+    const disabled = nextCount >= maxFailures;
+    const next = {
+      consecutiveFailures: nextCount,
+      disabled,
+      disabledSignature: disabled ? (signature || null) : current.disabledSignature || null,
+      lastFailureAt: Date.now(),
+      lastError: errorMsg || null
+    };
+
+    await new Promise((resolve, reject) => {
+      this.storage.set({ [this.browserBookmarkSyncFailureKey]: next }, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve();
+        }
+      });
+    });
+    return { disabled, consecutiveFailures: nextCount };
   }
 
   /**

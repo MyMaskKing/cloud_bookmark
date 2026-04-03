@@ -96,13 +96,46 @@ async function ensureDeviceInCloud() {
  *              在这类环境中没有 importScripts，因此需要做保护性判断。
  */
 if (typeof importScripts === 'function') {
-  importScripts('../utils/storage.js', '../utils/webdav.js');
+  importScripts('../utils/storage.js', '../utils/webdav.js', '../utils/bookmarkParser.js');
 }
 
 const storage = new StorageManager();
 let syncInterval = 5 * 60 * 1000; // 默认5分钟
 let syncAlarmName = 'syncBookmarks';
+let browserToCloudSyncAlarmName = 'syncBrowserBookmarksToCloud';
 let currentDevice = null;
+
+const MAX_BROWSER_BOOKMARK_SYNC_FAILURES = 3;
+
+function getWebdavConfigSignature(config) {
+  // 用于区分“配置变更”导致的失败控制状态
+  const serverUrl = config?.serverUrl || '';
+  const username = config?.username || '';
+  const path = config?.path || '/bookmarks/';
+  return `${serverUrl}||${username}||${path}`;
+}
+
+async function setBrowserSyncStatusCompat(status) {
+  // 优先走 StorageManager 新方法；否则直接写入 storage.local（避免旧 worker/旧缓存导致不落盘）
+  try {
+    if (storage && typeof storage.saveBrowserSyncStatus === 'function') {
+      await storage.saveBrowserSyncStatus(status);
+      return;
+    }
+  } catch (_) { }
+
+  const local = (typeof browser !== 'undefined' && browser.storage && browser.storage.local)
+    ? browser.storage.local
+    : (typeof chrome !== 'undefined' && chrome.storage ? chrome.storage.local : null);
+  if (!local) return;
+  if (typeof browser !== 'undefined' && browser.storage && browser.storage.local) {
+    await local.set({ browserSyncStatus: status });
+    return;
+  }
+  await new Promise((resolve) => {
+    chrome.storage.local.set({ browserSyncStatus: status }, () => resolve());
+  });
+}
 
 /**
  * 同步队列类：确保后台任务按顺序执行，避免并发上传导致的数据竞争
@@ -796,7 +829,12 @@ if (commandsAPI && commandsAPI.onCommand && typeof commandsAPI.onCommand.addList
 // 监听定时任务
 alarmsAPI.onAlarm.addListener((alarm) => {
   if (alarm.name === syncAlarmName) {
-    syncQueue.enqueue(() => syncFromCloud()).catch(err => console.error('[定时同步] 失败:', err));
+    syncQueue.enqueue(() => syncFromCloud()).catch(err => console.error('[定时同步][cloud->local] 失败:', err));
+    return;
+  }
+
+  if (alarm.name === browserToCloudSyncAlarmName) {
+    syncQueue.enqueue(() => syncBrowserBookmarksToCloud()).catch(err => console.error('[定时同步][browser->cloud] 失败:', err));
   }
 });
 
@@ -1227,6 +1265,42 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // 设置页将本机 deviceInfo 置换为列表中另一台设备后，需从 storage 刷新内存中的 currentDevice
+  if (request.action === 'refreshCurrentDeviceCache') {
+    (async () => {
+      currentDevice = await storage.getDeviceInfo();
+      sendResponse({ success: true });
+    })().catch(error => {
+      sendResponse({ success: false, error: error?.message || String(error) });
+    });
+    return true;
+  }
+
+  if (request.action === 'resetBrowserBookmarkSyncFailure') {
+    // 用户手动调整同步场景后：重置 browser->cloud 的失败计数，允许再次尝试
+    (async () => {
+      const config = await storage.getConfig();
+      if (config && config.serverUrl) {
+        await storage.resetBrowserBookmarkSyncFailureState(getWebdavConfigSignature(config));
+      }
+      await setupSyncAlarm();
+      sendResponse({ success: true });
+    })().catch(error => {
+      sendResponse({ success: false, error: error?.message || String(error) });
+    });
+    return true;
+  }
+
+  if (request.action === 'refreshSyncAlarms') {
+    (async () => {
+      await setupSyncAlarm();
+      sendResponse({ success: true });
+    })().catch(error => {
+      sendResponse({ success: false, error: error?.message || String(error) });
+    });
+    return true;
+  }
+
   if (request.action === 'syncSettingsFromCloud') {
     // 支持传递 skipDevices 和 forceClear 参数
     const skipDevices = request.skipDevices || false;
@@ -1248,9 +1322,26 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'syncBrowserBookmarksToCloud') {
+    syncQueue.enqueue(() => syncBrowserBookmarksToCloud()).then((result) => {
+      sendResponse({ success: true, result });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message });
+    });
+    return true;
+  }
+
   if (request.action === 'configUpdated') {
-    setupSyncAlarm().then(() => {
+    // WebDAV 配置保存成功后，重置 browser->cloud 的失败计数，允许再次尝试
+    (async () => {
+      const config = await storage.getConfig();
+      if (config && config.serverUrl) {
+        await storage.resetBrowserBookmarkSyncFailureState(getWebdavConfigSignature(config));
+      }
+      await setupSyncAlarm();
       sendResponse({ success: true });
+    })().catch(error => {
+      sendResponse({ success: false, error: error.message || String(error) });
     });
     return true;
   }
@@ -1440,9 +1531,57 @@ async function setupSyncAlarm() {
     syncInterval = config.syncInterval * 60 * 1000;
   }
 
-  alarmsAPI.create(syncAlarmName, {
-    periodInMinutes: syncInterval / (60 * 1000)
-  });
+  const periodInMinutes = syncInterval / (60 * 1000);
+  const offsetMs = 5000; // 快 5s
+  const syncBaseWhen = Date.now() + syncInterval;
+  const browserWhen = Math.max(syncBaseWhen - offsetMs, Date.now() + 1000);
+
+  // 始终保证云端 -> 本地同步
+  if (config && config.serverUrl) {
+    alarmsAPI.create(syncAlarmName, { when: syncBaseWhen, periodInMinutes });
+  } else {
+    // 没有配置时不创建周期任务（避免无意义触发）
+    if (alarmsAPI && alarmsAPI.clear) {
+      alarmsAPI.clear(syncAlarmName);
+    }
+  }
+
+  // 仅在满足以下条件时开启 browser -> cloud 定时：
+  // 1) 用户选择了有效的 browserBookmarkSyncSceneId
+  // 2) 当前设备在设置页已点击「开始定时同步」(browserBookmarkTimedSyncStarted)
+  // 3) 连续失败未达到阈值（或配置签名变化后已重置）
+  if (config && config.serverUrl) {
+    const scenes = await storage.getScenes();
+    await ensureDeviceRegistered();
+    const deviceInfo = await storage.getDeviceInfo();
+    const devices = await storage.getDevices();
+    const deviceRow = deviceInfo ? (devices || []).find(d => d.id === deviceInfo.id) : null;
+    const targetSceneId = deviceRow?.browserBookmarkSyncSceneId || '';
+    const timedStarted = deviceRow?.browserBookmarkTimedSyncStarted === true;
+    const isValidTarget = !!targetSceneId && scenes.some(s => s.id === targetSceneId);
+
+    if (!isValidTarget || !timedStarted) {
+      if (alarmsAPI && alarmsAPI.clear) alarmsAPI.clear(browserToCloudSyncAlarmName);
+      return;
+    }
+
+    const signature = getWebdavConfigSignature(config);
+    const failureState = await storage.getBrowserBookmarkSyncFailureState();
+
+    // 配置签名变化：重置失败计数并重新开启
+    if (failureState.disabled && failureState.disabledSignature !== signature) {
+      await storage.resetBrowserBookmarkSyncFailureState(signature);
+    }
+
+    const shouldEnable = !(failureState.disabled && failureState.disabledSignature === signature);
+    if (shouldEnable) {
+      alarmsAPI.create(browserToCloudSyncAlarmName, { when: browserWhen, periodInMinutes });
+    } else {
+      if (alarmsAPI && alarmsAPI.clear) alarmsAPI.clear(browserToCloudSyncAlarmName);
+    }
+  } else {
+    if (alarmsAPI && alarmsAPI.clear) alarmsAPI.clear(browserToCloudSyncAlarmName);
+  }
 }
 
 /**
@@ -1929,6 +2068,209 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
     });
 
     throw error;
+  }
+}
+
+/**
+ * 定时同步：从浏览器原生书签 -> 写入指定云端 scene
+ * 说明：不写入本地插件书签数据（不调用 storage.saveBookmarks）。
+ */
+async function syncBrowserBookmarksToCloud() {
+  const config = await storage.getConfig();
+  if (!config || !config.serverUrl) {
+    return { success: false, skipped: true, error: 'WebDAV配置未设置' };
+  }
+
+  const signature = getWebdavConfigSignature(config);
+  const failureState = await storage.getBrowserBookmarkSyncFailureState();
+  if (failureState.disabled && failureState.disabledSignature === signature) {
+    return {
+      success: false,
+      skipped: true,
+      error: '浏览器书签定时同步已终止（连续失败达到阈值）'
+    };
+  }
+
+  // 与“从浏览器导入”保持一致：使用同一个 importFromBrowserBookmarks，然后复用 syncToCloud 写入目标 scene
+  const expandFolderPathsPreserveOrder = (paths) => {
+    const out = [];
+    const seen = new Set();
+    (paths || []).forEach((p) => {
+      const n = normalizeFolderPath(p || '');
+      if (!n) return;
+      const parts = n.split('/').filter(Boolean);
+      let cur = '';
+      for (const part of parts) {
+        cur = cur ? `${cur}/${part}` : part;
+        if (!seen.has(cur)) {
+          seen.add(cur);
+          out.push(cur);
+        }
+      }
+    });
+    return out;
+  };
+
+  try {
+    await ensureDeviceRegistered();
+
+    const scenes = await storage.getScenes();
+    const deviceInfo = await storage.getDeviceInfo();
+    const devices = await storage.getDevices();
+    const deviceRow = deviceInfo ? (devices || []).find(d => d.id === deviceInfo.id) : null;
+
+    const targetSceneId = deviceRow?.browserBookmarkSyncSceneId || '';
+
+    if (!targetSceneId || !scenes.some(s => s.id === targetSceneId)) {
+      return { success: true, skipped: true, error: '未选择同步场景' };
+    }
+
+    if (deviceRow?.browserBookmarkTimedSyncStarted !== true) {
+      return { success: true, skipped: true, error: '浏览器书签定时同步未开启' };
+    }
+
+    const importResult = await importFromBrowserBookmarks();
+    if (importResult?.unsupported) {
+      const msg = importResult.reason || '当前环境不支持浏览器书签 API';
+      // syncToCloud 不会走到这里，所以需要在外层明确 toast/状态（并计入失败）
+      await setBrowserSyncStatusCompat({ status: 'error', lastSync: Date.now(), error: msg });
+      await showSyncErrorNotification(msg);
+      throw new Error(msg);
+    }
+
+    const rawBookmarks = importResult?.bookmarks || [];
+    const importedFoldersRaw = (importResult?.folders || []).map(normalizeFolderPath).filter(Boolean);
+    const bookmarkFoldersRaw = rawBookmarks.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
+    const foldersForScene = expandFolderPathsPreserveOrder([...importedFoldersRaw, ...bookmarkFoldersRaw]);
+
+    // 为写入云端 scene 做准备：在每条书签上标记 sceneId（后续会按 scene 过滤）
+    const bookmarks = rawBookmarks.map(b => ({ ...b, scene: targetSceneId }));
+
+    // 仅写入云端指定 scene 的浏览器书签文件（不触发 syncToCloud 的其他副作用）
+    await writeBrowserBookmarksToCloud(bookmarks, foldersForScene, targetSceneId);
+
+    await storage.resetBrowserBookmarkSyncFailureState(signature);
+    return { success: true, targetSceneId, bookmarkCount: bookmarks.length };
+  } catch (error) {
+    const msg = error?.message || String(error);
+
+    // browser->cloud 独立状态：失败
+    await setBrowserSyncStatusCompat({
+      status: 'error',
+      lastSync: Date.now(),
+      error: msg
+    });
+
+    const record = await storage.recordBrowserBookmarkSyncFailure(
+      msg,
+      signature,
+      MAX_BROWSER_BOOKMARK_SYNC_FAILURES
+    );
+
+    if (record?.disabled && alarmsAPI && alarmsAPI.clear) {
+      alarmsAPI.clear(browserToCloudSyncAlarmName);
+    }
+
+    return { success: false, error: msg, disabled: !!record?.disabled };
+  }
+}
+
+/**
+ * 只把书签写入云端指定 scene（不更新本地插件书签、不清 pendingChanges）
+ * 同步设备列表中的“浏览器书签定时最后同步时间”字段到云端（用于设备管理展示）
+ * 用于“存储设备管理->浏览器书签定时同步场景”（browser -> cloud）
+ * @param {Array} bookmarks
+ * @param {Array} folders
+ * @param {String} sceneId
+ */
+async function writeBrowserBookmarksToCloud(bookmarks, folders, sceneId) {
+  const config = await storage.getConfig();
+  if (!config || !config.serverUrl) {
+    throw new Error('WebDAV配置未设置');
+  }
+
+  await ensureDeviceRegistered();
+
+  // 设备检测开关下：确保当前设备在授权列表中
+  const settings = await storage.getSettings();
+  const deviceDetectionEnabled = settings?.deviceDetection?.enabled === true;
+  if (deviceDetectionEnabled) {
+    let devices = await storage.getDevices();
+    if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
+      await syncSettingsFromCloud();
+      devices = await storage.getDevices();
+      if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
+        throw new Error('当前设备未被授权，请在设置页重新测试连接以注册设备');
+      }
+    }
+  }
+
+  await storage.saveBrowserSyncStatus({
+    status: 'syncing',
+    lastSync: Date.now(),
+    error: null
+  });
+
+  const webdav = new WebDAVClient(config);
+  const cleaned = normalizeData(bookmarks, folders);
+
+  // 只写入指定 scene 的书签
+  const sceneBookmarks = cleaned.bookmarks.filter(b => b.scene === sceneId);
+
+  const deviceInfo = await storage.getDeviceInfo();
+  const meta = {
+    updatedByDeviceId: (deviceInfo && deviceInfo.id) || (currentDevice && currentDevice.id) || null,
+    updatedByDeviceName: (deviceInfo && deviceInfo.name) || (currentDevice && currentDevice.name) || '',
+    updatedAt: Date.now()
+  };
+
+  // 合并文件夹：传入 folders（含空文件夹）+ 补上书签里出现但 folders 未覆盖的文件夹
+  const bookmarkFolders = [...new Set(sceneBookmarks.map(b => b.folder).filter(Boolean))];
+  const passedFolders = cleaned.folders || [];
+  const sceneFolderSet = new Set(passedFolders);
+  bookmarkFolders.forEach(f => {
+    if (f && !sceneFolderSet.has(f)) sceneFolderSet.add(f);
+  });
+  const sceneFolders = [...sceneFolderSet];
+
+  await webdav.writeBookmarks(
+    { bookmarks: sceneBookmarks, folders: sceneFolders, _meta: meta },
+    sceneId
+  );
+
+  const now = Date.now();
+
+  await storage.saveBrowserSyncStatus({
+    status: 'success',
+    lastSync: now,
+    error: null
+  });
+
+  // 更新“浏览器书签定时同步最后同步时间”（单独字段），并同步到云端 devices 列表
+  // 注意：不再更新 lastSeen，避免混用“在线时间”和“最后同步时间”
+  try {
+    const browserTimedSyncLastSyncKey = 'browserBookmarkTimedSyncLastSync';
+    const devices = await storage.getDevices();
+    if (Array.isArray(devices) && devices.length > 0) {
+      const idx = devices.findIndex(d => d.id === currentDevice.id);
+      if (idx !== -1) {
+        devices[idx] = {
+          ...devices[idx],
+          [browserTimedSyncLastSyncKey]: now
+        };
+        await storage.saveDevices(devices);
+        await syncSettingsToCloud(devices);
+      }
+    }
+
+    runtimeAPI.sendMessage({
+      action: 'browserTimedSyncDevicesUpdated',
+      deviceId: currentDevice && currentDevice.id,
+      lastSync: now
+    }).catch(() => {});
+  } catch (e) {
+    // best-effort：这不影响本次写云结果
+    console.warn('[browser->cloud] 同步 browserBookmarkTimedSyncLastSync 到云端失败：', e?.message || e);
   }
 }
 

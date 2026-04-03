@@ -90,6 +90,8 @@ const currentDeviceName = document.getElementById('currentDeviceName');
 const currentDeviceId = document.getElementById('currentDeviceId');
 const refreshDevicesBtn = document.getElementById('refreshDevicesBtn');
 const enableDeviceDetection = document.getElementById('enableDeviceDetection');
+const browserBookmarkSyncSceneSection = document.getElementById('browserBookmarkSyncSceneSection');
+const browserBookmarkSyncSceneSelect = document.getElementById('browserBookmarkSyncSceneSelect');
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const showUpdateButtonCheckbox = document.getElementById('showUpdateButton');
 const popupUseFavoriteInPopup = document.getElementById('popupUseFavoriteInPopup');
@@ -131,6 +133,11 @@ const lastSync = document.getElementById('lastSync');
 const errorItem = document.getElementById('errorItem');
 const errorText = document.getElementById('errorText');
 
+const browserSyncStatusDot = document.getElementById('browserSyncStatusDot');
+const browserSyncStatusText = document.getElementById('browserSyncStatusText');
+const browserSyncLastSync = document.getElementById('browserSyncLastSync');
+const browserBookmarkTimedSyncStartBtn = document.getElementById('browserBookmarkTimedSyncStartBtn');
+
 // 页面加载时初始化
 document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
@@ -141,9 +148,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadFloatingBallSetting();
   await loadShortcutDisplay();
   await loadScenes();
+  await loadBrowserBookmarkSyncSceneSetting();
+  await updateBrowserSyncInlineStatus();
 
   // 定时更新同步状态
-  setInterval(updateSyncStatus, 5000);
+  setInterval(() => {
+    updateSyncStatus().catch(() => {});
+    updateBrowserSyncInlineStatus().catch(() => {});
+  }, 5000);
 });
 
 /**
@@ -157,6 +169,190 @@ async function loadConfig() {
     passwordInput.value = config.password || '';
     pathInput.value = config.path || '/bookmarks/';
     syncIntervalInput.value = config.syncInterval || 5;
+  }
+
+  // 如果没有 WebDAV 配置，则隐藏“浏览器书签定时同步场景”
+  const hasWebdav = !!(config && config.serverUrl);
+  if (browserBookmarkSyncSceneSection) {
+    browserBookmarkSyncSceneSection.style.display = hasWebdav ? 'block' : 'none';
+  }
+}
+
+/**
+ * 根据当前设备行刷新「开始定时同步」按钮
+ */
+async function refreshBrowserTimedSyncStartButton() {
+  if (!browserBookmarkTimedSyncStartBtn || !browserBookmarkSyncSceneSelect) return;
+  const sceneId = browserBookmarkSyncSceneSelect.value;
+  const deviceInfo = await storage.getDeviceInfo();
+  const deviceId = deviceInfo?.id;
+  const devices = await storage.getDevices();
+  const row = deviceId ? (devices || []).find(d => d.id === deviceId) : null;
+  const started = row?.browserBookmarkTimedSyncStarted === true;
+  // 需求：已开启时禁用按钮（文字：已开启）
+  browserBookmarkTimedSyncStartBtn.disabled = !sceneId || started;
+  browserBookmarkTimedSyncStartBtn.textContent = started ? '已开启' : '开始定时同步';
+}
+
+/**
+ * 加载“浏览器书签定时同步场景”设置
+ */
+async function loadBrowserBookmarkSyncSceneSetting() {
+  try {
+    if (!browserBookmarkSyncSceneSection || !browserBookmarkSyncSceneSelect) return;
+
+    // 没有 WebDAV 配置直接不处理
+    const config = await storage.getConfig();
+    if (!config || !config.serverUrl) {
+      browserBookmarkSyncSceneSection.style.display = 'none';
+      return;
+    }
+
+    browserBookmarkSyncSceneSection.style.display = 'block';
+
+    const scenes = await storage.getScenes();
+    // 绑定关系存储在“设备列表”中（按设备绑定），而不是存储在 settings 里
+    const deviceInfo = await storage.getDeviceInfo();
+    const deviceId = deviceInfo?.id;
+    const devices = await storage.getDevices();
+    const deviceRow = deviceId ? (devices || []).find(d => d.id === deviceId) : null;
+    const targetSceneIdRaw = deviceRow?.browserBookmarkSyncSceneId || '';
+    const targetSceneId = scenes.some(s => s.id === targetSceneIdRaw) ? targetSceneIdRaw : '';
+
+    browserBookmarkSyncSceneSelect.innerHTML = [
+      `<option value="">不选择（关闭定时同步）</option>`,
+      ...scenes.map(scene => {
+        const name = scene.name || scene.id;
+        const selected = scene.id === targetSceneId ? 'selected' : '';
+        return `<option value="${scene.id}" ${selected}>${name}</option>`;
+      })
+    ].join('');
+
+    browserBookmarkSyncSceneSelect.value = targetSceneId;
+
+    // 绑定 change 事件（只绑定一次）
+    if (!browserBookmarkSyncSceneSelect.dataset.bound) {
+      browserBookmarkSyncSceneSelect.dataset.bound = '1';
+      browserBookmarkSyncSceneSelect.addEventListener('change', async () => {
+        try {
+          const nextSceneId = browserBookmarkSyncSceneSelect.value;
+          let deviceInfo = await storage.getDeviceInfo();
+          let deviceId = deviceInfo?.id;
+          // 确保当前设备已生成 deviceInfo（防止首次进入设置页时 deviceInfo 为空）
+          if (!deviceId) {
+            try {
+              await sendMessageCompat({ action: 'registerDevice' });
+            } catch (_) {}
+            deviceInfo = await storage.getDeviceInfo();
+            deviceId = deviceInfo?.id;
+          }
+          if (!deviceId) throw new Error('当前设备ID为空');
+
+          let devices = await storage.getDevices();
+          if (!Array.isArray(devices)) devices = [];
+
+          const idx = devices.findIndex(d => d.id === deviceId);
+          const sceneBinding = nextSceneId || '';
+
+          if (idx === -1) {
+            devices.push({
+              id: deviceId,
+              name: deviceInfo?.name || '未命名设备',
+              createdAt: Date.now(),
+              lastSeen: Date.now(),
+              browserBookmarkSyncSceneId: sceneBinding || undefined,
+              browserBookmarkTimedSyncStarted: false
+            });
+          } else {
+            devices[idx] = {
+              ...devices[idx],
+              browserBookmarkSyncSceneId: sceneBinding || undefined,
+              // 切换场景视为重新确认：停止定时同步，需用户再次点击「开始」
+              browserBookmarkTimedSyncStarted: false
+            };
+          }
+
+          await storage.saveDevices(devices);
+
+          // 同步 devices 到云端（包含当前设备绑定的 scene）
+          await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+
+          // 更新设备列表展示的绑定信息（不阻塞同步逻辑）
+          loadDevices().catch(() => {});
+
+          // 用户显式调整同步场景：重置失败计数并重新计算 alarms
+          await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
+          await refreshBrowserTimedSyncStartButton();
+          updateBrowserSyncInlineStatus().catch(() => {});
+          showMessage('浏览器书签定时同步场景已保存；需点击「开始定时同步」后才会按间隔同步', 'success');
+        } catch (e) {
+          showMessage('保存失败: ' + (e?.message || e), 'error');
+        }
+      });
+    }
+
+    if (browserBookmarkTimedSyncStartBtn && !browserBookmarkTimedSyncStartBtn.dataset.bound) {
+      browserBookmarkTimedSyncStartBtn.dataset.bound = '1';
+      browserBookmarkTimedSyncStartBtn.addEventListener('click', async () => {
+        try {
+          const nextSceneId = browserBookmarkSyncSceneSelect.value;
+          if (!nextSceneId) {
+            showMessage('请先选择同步场景', 'error');
+            return;
+          }
+
+          let deviceInfo = await storage.getDeviceInfo();
+          let deviceId = deviceInfo?.id;
+          if (!deviceId) {
+            try {
+              await sendMessageCompat({ action: 'registerDevice' });
+            } catch (_) {}
+            deviceInfo = await storage.getDeviceInfo();
+            deviceId = deviceInfo?.id;
+          }
+          if (!deviceId) throw new Error('当前设备ID为空');
+
+          let devices = await storage.getDevices();
+          if (!Array.isArray(devices)) devices = [];
+          const idx = devices.findIndex(d => d.id === deviceId);
+          if (idx === -1) throw new Error('当前设备不在设备列表中，请刷新页面后重试');
+
+          const row = devices[idx];
+          if (row?.browserBookmarkTimedSyncStarted === true) {
+            // 按钮本应禁用，这里做保护避免重复点击触发异常状态
+            showMessage('已开启', 'success');
+            return;
+          }
+
+          // 只负责开始：开启后按钮会变为禁用（已开启）
+          devices[idx] = {
+            ...devices[idx],
+            browserBookmarkTimedSyncStarted: true
+          };
+
+          await storage.saveDevices(devices);
+          await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+          loadDevices().catch(() => {});
+
+          // 切换场景后需要再点开始：这里确保立即执行一次
+          await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
+          await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
+          // 为了让“浏览器最后同步时间/错误信息”等在设备列表里立即生效
+          await loadDevices();
+          showMessage('已开始浏览器书签定时同步', 'success');
+
+          await refreshBrowserTimedSyncStartButton();
+          updateBrowserSyncInlineStatus().catch(() => {});
+          setTimeout(() => updateBrowserSyncInlineStatus().catch(() => {}), 150);
+        } catch (e) {
+          showMessage('操作失败: ' + (e?.message || e), 'error');
+        }
+      });
+    }
+
+    await refreshBrowserTimedSyncStartButton();
+  } catch (e) {
+    console.warn('加载浏览器书签定时同步场景失败:', e);
   }
 }
 
@@ -322,6 +518,21 @@ configForm.addEventListener('submit', async (e) => {
       loadDeviceDetectionSetting();
       loadFloatingBallSetting();
       updateSyncStatus();
+
+      // WebDAV 配置刚接续成功后，立即展示“浏览器书签定时同步场景”
+      await loadBrowserBookmarkSyncSceneSetting();
+
+      // 仅当本设备已「开始定时同步」且已选场景时，保存 WebDAV 后才立即执行一次 browser->cloud
+      const devicesAfter = await storage.getDevices();
+      const di = await storage.getDeviceInfo();
+      const rowAfter = di?.id ? devicesAfter.find(d => d.id === di.id) : null;
+      if (
+        rowAfter?.browserBookmarkSyncSceneId &&
+        rowAfter.browserBookmarkTimedSyncStarted === true
+      ) {
+        await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
+      }
+      await updateBrowserSyncInlineStatus().catch(() => {});
     } catch (error) {
       console.error('同步过程出错:', error);
       showMessage('配置已保存，但同步过程出现错误: ' + error.message, 'error');
@@ -594,6 +805,84 @@ async function updateSyncStatus() {
     errorText.textContent = status.error;
   } else {
     errorItem.style.display = 'none';
+  }
+}
+
+/**
+ * 更新行内展示给“浏览器书签定时同步场景”（文案与圆点样式对齐弹窗头部 sync-status，数据源独立）
+ */
+async function updateBrowserSyncInlineStatus() {
+  const setDot = (cls) => {
+    if (browserSyncStatusDot) {
+      browserSyncStatusDot.className = 'status-dot' + (cls ? ' ' + cls : '');
+    }
+  };
+  try {
+    if (!browserSyncStatusText || !browserSyncLastSync) return;
+    const selected = browserBookmarkSyncSceneSelect && browserBookmarkSyncSceneSelect.value;
+
+    if (!selected) {
+      setDot('');
+      browserSyncStatusText.textContent = '关闭';
+      browserSyncLastSync.textContent = '-';
+      browserSyncLastSync.className = 'value';
+      return;
+    }
+
+    const deviceInfo = await storage.getDeviceInfo();
+    const devices = await storage.getDevices();
+    const row = deviceInfo?.id ? (devices || []).find(d => d.id === deviceInfo.id) : null;
+    const started = row?.browserBookmarkTimedSyncStarted === true;
+
+    // 兼容：若 StorageManager 尚未包含 getBrowserSyncStatus（旧缓存/旧脚本），则回退直接读 storage.local
+    let status = null;
+    if (storage && typeof storage.getBrowserSyncStatus === 'function') {
+      status = await storage.getBrowserSyncStatus();
+    } else {
+      const local = (typeof browser !== 'undefined' && browser.storage && browser.storage.local)
+        ? browser.storage.local
+        : (typeof chrome !== 'undefined' && chrome.storage ? chrome.storage.local : null);
+      if (local) {
+        if (typeof browser !== 'undefined' && browser.storage && browser.storage.local) {
+          const r = await local.get(['browserSyncStatus']);
+          status = r ? r.browserSyncStatus : null;
+        } else {
+          status = await new Promise((resolve) => {
+            chrome.storage.local.get(['browserSyncStatus'], (r) => resolve(r ? r.browserSyncStatus : null));
+          });
+        }
+      }
+    }
+
+    status = status || { lastSync: null, status: 'idle', error: null };
+
+    if (!started) {
+      setDot('');
+      browserSyncStatusText.textContent = '未开启';
+      browserSyncLastSync.textContent = status.lastSync ? formatTime(status.lastSync) : '—';
+      browserSyncLastSync.className = 'value';
+      return;
+    }
+
+    // 与 popup/popup.js updateSyncStatus 一致（idle 也视为“已同步”）
+    const popupMap = {
+      idle: { text: '已同步', dot: 'success' },
+      syncing: { text: '同步中', dot: 'syncing' },
+      success: { text: '已同步', dot: 'success' },
+      error: { text: '同步失败', dot: 'error' }
+    };
+    const st = popupMap[status.status] || popupMap.idle;
+    setDot(st.dot);
+    browserSyncStatusText.textContent = st.text;
+    browserSyncLastSync.textContent = status.lastSync ? formatTime(status.lastSync) : '从未同步';
+    browserSyncLastSync.className = 'value';
+  } catch (_) {
+    if (browserSyncStatusDot) browserSyncStatusDot.className = 'status-dot';
+    if (browserSyncStatusText) browserSyncStatusText.textContent = '-';
+    if (browserSyncLastSync) {
+      browserSyncLastSync.textContent = '-';
+      browserSyncLastSync.className = 'value';
+    }
   }
 }
 
@@ -1944,6 +2233,181 @@ importFile.addEventListener('change', async (e) => {
 });
 
 /**
+ * 将本机身份置换为设备列表中的某一条：移除置换前的当前设备条目，写入新的 deviceInfo，并同步云端
+ */
+async function adoptDeviceAsCurrent(targetId) {
+  if (!targetId) return;
+  try {
+    const current = await storage.getDeviceInfo();
+    const currentId = current?.id;
+    if (!currentId || targetId === currentId) return;
+
+    const devices = (await storage.getDevices()) || [];
+    const target = devices.find(d => d.id === targetId);
+    if (!target) {
+      showMessage('未找到目标设备', 'error');
+      return;
+    }
+
+    const scenes = await storage.getScenes();
+    const sceneNameMap = new Map((scenes || []).map(s => [s.id, s.name || s.id]));
+
+    const ok = await showAdoptDeviceDialog({
+      current,
+      currentId,
+      target,
+      sceneNameMap
+    });
+    if (!ok) return;
+
+    const newDevices = devices.filter(d => d.id !== currentId);
+    const ti = newDevices.findIndex(d => d.id === targetId);
+    if (ti !== -1) {
+      newDevices[ti] = { ...newDevices[ti], lastSeen: Date.now() };
+    }
+
+    const newInfo = {
+      id: target.id,
+      name: target.name || '未命名设备',
+      createdAt: target.createdAt || Date.now(),
+      lastSeen: Date.now()
+    };
+
+    await storage.saveDeviceInfo(newInfo);
+    await storage.saveDevices(newDevices);
+
+    await sendWithRetry({ action: 'refreshCurrentDeviceCache' }, { retries: 2, delay: 300 });
+    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+    await sendWithRetry({ action: 'refreshSyncAlarms' }, { retries: 2, delay: 300 });
+
+    showMessage('已切换为本机设备并同步到云端', 'success');
+    await loadDevices();
+    await loadBrowserBookmarkSyncSceneSetting();
+    updateBrowserSyncInlineStatus().catch(() => {});
+  } catch (e) {
+    showMessage('切换失败: ' + (e?.message || e), 'error');
+  }
+}
+
+/**
+ * 显示“选为当前设备”置换确认弹窗（参考“一键检测失效网站”的对话框风格）
+ * @returns {Promise<boolean>}
+ */
+function showAdoptDeviceDialog({ current, currentId, target, sceneNameMap }) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      animation: fadeIn 0.2s ease-out;
+    `;
+
+    const dialog = document.createElement('div');
+    const isMobile = window.innerWidth <= 768;
+    dialog.className = 'dialog-container';
+    dialog.style.cssText = `
+      background: #ffffff;
+      border-radius: 12px;
+      padding: ${isMobile ? '20px' : '24px'};
+      width: ${isMobile ? '90%' : '620px'};
+      max-width: 90%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      font-size: ${isMobile ? '16px' : '14px'};
+      display: flex;
+      flex-direction: column;
+      animation: slideUp 0.3s ease-out;
+    `;
+
+    const rowFont = isMobile ? '14px' : '13px';
+
+    const deviceSummaryHtml = (device, isCurrent) => {
+      const d = device || {};
+      const last = d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '-';
+      const created = d.createdAt ? new Date(d.createdAt).toLocaleString() : '-';
+      const bindingSceneId = d.browserBookmarkSyncSceneId;
+      const bindingSceneName = bindingSceneId
+        ? (sceneNameMap?.get(bindingSceneId) || bindingSceneId)
+        : '';
+      const timedOn = d.browserBookmarkTimedSyncStarted === true;
+      const browserTimedLastSync = d.browserBookmarkTimedSyncLastSync;
+
+      return `
+        <div style="color:#444; font-size:${rowFont}; margin-bottom: 6px;">设备ID：${escapeHtml(d.id || '-')}</div>
+        ${bindingSceneId ? `<div style="color:#666; font-size:${rowFont}; margin-bottom: 6px;">绑定场景：${escapeHtml(String(bindingSceneName))}</div>` : ''}
+        ${bindingSceneId ? `<div style="color:#666; font-size:${rowFont}; margin-bottom: 6px;">定时同步：${timedOn ? '已开启' : '未开启'}</div>` : ''}
+        ${bindingSceneId ? `<div style="color:#666; font-size:${rowFont}; margin-bottom: 6px;">浏览器最后同步：${browserTimedLastSync ? new Date(browserTimedLastSync).toLocaleString() : '-'}</div>` : ''}
+        <div style="color:#666; font-size:${rowFont}; margin-bottom: 6px;">创建：${created}</div>
+        <div style="color:#666; font-size:${rowFont};">上次在线：${last}</div>
+      `;
+    };
+
+    const currentDeviceTitle = current?.name || currentId || '-';
+    const targetDeviceTitle = target?.name || target?.id || '-';
+
+    dialog.innerHTML = `
+      <div style="margin-bottom: 14px;">
+        <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a;">
+          确认置换为当前设备
+        </h3>
+      </div>
+
+      <div style="display: flex; flex-direction: ${isMobile ? 'column' : 'row'}; gap: 14px; margin-bottom: 16px;">
+        <div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 12px; background: #fafafa; flex: 1;">
+          <div style="font-weight: 600; color: #333; margin-bottom: 8px;">当前设备（${escapeHtml(String(currentDeviceTitle))}）</div>
+          ${deviceSummaryHtml(current, true)}
+        </div>
+
+        <div style="border: 1px solid #e0e0e0; border-radius: 10px; padding: 12px; background: #f7fbff; flex: 1;">
+          <div style="font-weight: 600; color: #333; margin-bottom: 8px;">置换为（${escapeHtml(String(targetDeviceTitle))}）</div>
+          ${deviceSummaryHtml(target, false)}
+        </div>
+      </div>
+
+      <div style="color:#666; margin-bottom: 18px; line-height: 1.5;">
+        置换前的当前设备将从设备列表中移除，并立即同步到云端。
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 10px;">
+        <button id="adoptCancelBtn" class="btn btn-secondary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500;">取消</button>
+        <button id="adoptConfirmBtn" class="btn btn-primary" style="min-width: ${isMobile ? '90px' : '80px'}; min-height: ${isMobile ? '44px' : '38px'}; font-size: ${isMobile ? '16px' : '14px'}; border-radius: 8px; font-weight: 500; background: #dc3545;">确认置换</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const cleanup = () => {
+      try {
+        overlay.remove();
+      } catch (_) {}
+    };
+
+    const cancelBtn = dialog.querySelector('#adoptCancelBtn');
+    const confirmBtn = dialog.querySelector('#adoptConfirmBtn');
+
+    const close = (result) => {
+      cleanup();
+      resolve(!!result);
+    };
+
+    cancelBtn.addEventListener('click', () => close(false));
+    confirmBtn.addEventListener('click', () => close(true));
+
+    // 点击背景关闭
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) close(false);
+    });
+  });
+}
+
+/**
  * 加载设备列表
  */
 async function loadDevices() {
@@ -1952,6 +2416,9 @@ async function loadDevices() {
     if (res?.error) throw new Error(res.error);
     let devices = res?.devices || [];
     const deviceInfo = res?.deviceInfo;
+    const scenes = await storage.getScenes();
+    const sceneNameMap = new Map((scenes || []).map(s => [s.id, s.name || s.id]));
+
     currentDeviceName.textContent = deviceInfo?.name || '未知设备';
     currentDeviceId.textContent = deviceInfo?.id || '-';
 
@@ -1971,20 +2438,46 @@ async function loadDevices() {
       const last = dev.lastSeen ? new Date(dev.lastSeen).toLocaleString() : '-';
       const created = dev.createdAt ? new Date(dev.createdAt).toLocaleString() : '-';
       const isCurrent = deviceInfo && dev.id === deviceInfo.id;
+      const bindingSceneId = dev.browserBookmarkSyncSceneId;
+      const bindingSceneName = bindingSceneId ? (sceneNameMap.get(bindingSceneId) || bindingSceneId) : '';
+      const timedOn = dev.browserBookmarkTimedSyncStarted === true;
+      const browserTimedLastSync = dev.browserBookmarkTimedSyncLastSync;
+      const timedLine = bindingSceneId
+        ? `<div class="device-meta">定时同步：${timedOn ? '已开启' : '未开启'}</div>`
+        : '';
+      const browserTimedLastSyncLine = bindingSceneId
+        ? `<div class="device-meta">浏览器最后同步：${browserTimedLastSync ? new Date(browserTimedLastSync).toLocaleString() : '-'}</div>`
+        : '';
+      const displayName = escapeHtml(dev.name || '未命名设备');
+      const safeSceneName = escapeHtml(String(bindingSceneName));
+      const adoptBtn = !isCurrent
+        ? `<button type="button" class="btn btn-secondary ui-settings-btn device-adopt" data-id="${dev.id}">选为当前设备</button>`
+        : '';
       return `
         <div class="device-item" data-id="${dev.id}">
           <div class="device-info">
-            <div class="device-name">${dev.name || '未命名设备'} ${isCurrent ? '(当前设备)' : ''}</div>
+            <div class="device-name">${displayName} ${isCurrent ? '(当前设备)' : ''}</div>
             <div class="device-meta">设备ID：${dev.id || '-'}</div>
+            ${bindingSceneId ? `<div class="device-meta">绑定场景：${safeSceneName}</div>` : ''}
+            ${timedLine}
+            ${browserTimedLastSyncLine}
             <div class="device-meta">创建：${created}</div>
             <div class="device-meta">上次在线：${last}</div>
           </div>
-          <div>
-            <button class="btn btn-secondary btn-small device-remove" data-id="${dev.id}" data-current="${isCurrent ? '1' : '0'}">移除</button>
+          <div class="device-item-actions">
+            ${adoptBtn}
+            <button type="button" class="btn btn-secondary ui-settings-btn device-remove" data-id="${dev.id}" data-current="${isCurrent ? '1' : '0'}">移除</button>
           </div>
         </div>
       `;
     }).join('');
+
+    deviceList.querySelectorAll('.device-adopt').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        await adoptDeviceAsCurrent(id);
+      });
+    });
 
     deviceList.querySelectorAll('.device-remove').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -2008,6 +2501,95 @@ async function loadDevices() {
     });
   } catch (error) {
     showMessage('加载设备失败: ' + error.message, 'error');
+  }
+}
+
+/**
+ * 只更新当前设备那一行（用于浏览器定时同步的“浏览器最后同步时间”实时展示）
+ */
+async function updateCurrentDeviceRow() {
+  try {
+    const res = await sendWithRetry({ action: 'getDevices' }, { retries: 2, delay: 300 });
+    const devices = res?.devices || [];
+    const deviceInfo = res?.deviceInfo;
+    if (!deviceInfo?.id) return;
+
+    const dev = devices.find(d => d.id === deviceInfo.id);
+    if (!dev) {
+      await loadDevices();
+      return;
+    }
+
+    const scenes = await storage.getScenes();
+    const sceneNameMap = new Map((scenes || []).map(s => [s.id, s.name || s.id]));
+
+    const last = dev.lastSeen ? new Date(dev.lastSeen).toLocaleString() : '-';
+    const created = dev.createdAt ? new Date(dev.createdAt).toLocaleString() : '-';
+
+    const bindingSceneId = dev.browserBookmarkSyncSceneId;
+    const bindingSceneName = bindingSceneId ? (sceneNameMap.get(bindingSceneId) || bindingSceneId) : '';
+    const safeSceneName = escapeHtml(String(bindingSceneName));
+
+    const timedOn = dev.browserBookmarkTimedSyncStarted === true;
+    const timedLine = bindingSceneId
+      ? `<div class="device-meta">定时同步：${timedOn ? '已开启' : '未开启'}</div>`
+      : '';
+
+    const browserTimedLastSync = dev.browserBookmarkTimedSyncLastSync;
+    const browserTimedLastSyncLine = bindingSceneId
+      ? `<div class="device-meta">浏览器最后同步：${browserTimedLastSync ? new Date(browserTimedLastSync).toLocaleString() : '-'}</div>`
+      : '';
+
+    const displayName = escapeHtml(dev.name || '未命名设备');
+    const rowHtml = `
+      <div class="device-item" data-id="${dev.id}">
+        <div class="device-info">
+          <div class="device-name">${displayName} (当前设备)</div>
+          <div class="device-meta">设备ID：${dev.id || '-'}</div>
+          ${bindingSceneId ? `<div class="device-meta">绑定场景：${safeSceneName}</div>` : ''}
+          ${timedLine}
+          ${browserTimedLastSyncLine}
+          <div class="device-meta">创建：${created}</div>
+          <div class="device-meta">上次在线：${last}</div>
+        </div>
+        <div class="device-item-actions">
+          <button type="button" class="btn btn-secondary ui-settings-btn device-remove" data-id="${dev.id}" data-current="1">移除</button>
+        </div>
+      </div>
+    `;
+
+    const currentEl = deviceList.querySelector(`.device-item[data-id="${deviceInfo.id}"]`);
+    if (!currentEl) {
+      await loadDevices();
+      return;
+    }
+
+    currentEl.outerHTML = rowHtml;
+
+    // 只绑定“移除”按钮事件（当前设备行不会出现“选为当前设备”按钮）
+    const newRemoveBtn = deviceList.querySelector(`.device-item[data-id="${deviceInfo.id}"] .device-remove`);
+    if (newRemoveBtn) {
+      newRemoveBtn.addEventListener('click', async () => {
+        const id = newRemoveBtn.dataset.id;
+        const isCurrent = newRemoveBtn.dataset.current === '1';
+        if (!confirm('确定移除该设备？移除后该设备将无法同步。')) return;
+        if (isCurrent) {
+          const doubleCheck = confirm('这是当前设备，移除后本机会在下一次同步清空本地数据并停止同步，确定继续？');
+          if (!doubleCheck) return;
+        }
+        const newDevices = devices.filter(d => d.id !== id);
+        const saveRes = await sendWithRetry({ action: 'saveDevices', devices: newDevices }, { retries: 2, delay: 300 });
+        if (saveRes?.success) {
+          showMessage('已移除设备', 'success');
+          await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
+          await loadDevices();
+        } else {
+          showMessage('移除失败: ' + (saveRes?.error || '未知错误'), 'error');
+        }
+      });
+    }
+  } catch (e) {
+    console.warn('局部刷新设备行失败:', e?.message || e);
   }
 }
 
@@ -2576,6 +3158,15 @@ try {
       showMessage(request.message || '同步失败', 'error');
       // 同时刷新同步状态栏里的错误信息
       updateSyncStatus();
+      sendResponse({ success: true });
+      return true;
+    }
+
+    if (request && request.action === 'browserTimedSyncDevicesUpdated') {
+      // 后台完成 browser->cloud 后，主动刷新“当前设备那一行”
+      updateCurrentDeviceRow().catch(() => {});
+      // 行内状态也同步刷新（可选）
+      updateBrowserSyncInlineStatus().catch(() => {});
       sendResponse({ success: true });
       return true;
     }
