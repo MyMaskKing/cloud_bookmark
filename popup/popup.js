@@ -547,11 +547,8 @@ async function loadScenes() {
             // 检查 WebDAV 配置是否有效
             const config = await storage.getConfig();
             const hasValidConfig = config && config.serverUrl;
-            // 检查该场景是否已同步过
-            const isSceneSynced = await storage.isSceneSynced(sceneId);
-
-            // WebDAV配置有效且该场景从未同步过，需要执行云端同步
-            if (hasValidConfig && !isSceneSynced) {
+            // WebDAV配置有效：每次切换场景都从云端拉取最新，避免本地缓存覆盖浏览器定时同步写云结果
+            if (hasValidConfig) {
               try {
                 console.log('[弹窗] 切换场景：开始同步场景', sceneId);
                 const syncResult = await sendMessageCompat({ action: 'sync', sceneId });
