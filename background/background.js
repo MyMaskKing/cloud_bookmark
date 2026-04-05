@@ -2072,8 +2072,14 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
 }
 
 /**
- * 定时同步：从浏览器原生书签 -> 写入指定云端 scene
- * 说明：不写入本地插件书签数据（不调用 storage.saveBookmarks）。
+ * 定时同步：浏览器书签 -> 云端（严格：云端为底 + 浏览器差分补充）
+ * 1) WebDAV 读取该场景云端书签作为基底（文件不存在则视为空列表）
+ * 2) 获取浏览器书签
+ * 3) 差分：仅把「浏览器相对云端」多出来的 URL 追加；已存在的 URL 用浏览器更新标题/文件夹/链接，其余字段保留云端记录
+ * 4) 不写回任何「从基底移除」的操作——云端原有 URL 不会因浏览器里没有而消失
+ * 5) 本机该场景 saveBookmarks + writeBrowserBookmarksToCloud（便于浏览器 B 本地与刚上传结果一致）
+ *
+ * 说明：若书签仅在浏览器 A 的插件里、尚未同步到云端，浏览器 B 定时同步不会凭空造出该条；需先由 A 把场景同步到 WebDAV。
  */
 async function syncBrowserBookmarksToCloud() {
   const config = await storage.getConfig();
@@ -2091,7 +2097,6 @@ async function syncBrowserBookmarksToCloud() {
     };
   }
 
-  // 与“从浏览器导入”保持一致：使用同一个 importFromBrowserBookmarks，然后复用 syncToCloud 写入目标 scene
   const expandFolderPathsPreserveOrder = (paths) => {
     const out = [];
     const seen = new Set();
@@ -2138,19 +2143,62 @@ async function syncBrowserBookmarksToCloud() {
       throw new Error(msg);
     }
 
+    const webdav = new WebDAVClient(config);
+    const cloudData = await webdav.readBookmarks(targetSceneId);
+    const cloudBookmarks = (cloudData.bookmarks || []).map(b => ({
+      ...b,
+      scene: targetSceneId
+    }));
+
     const rawBookmarks = importResult?.bookmarks || [];
+    const importedBookmarks = rawBookmarks.map(b => ({
+      ...b,
+      folder: b.folder ? normalizeFolderPath(b.folder) : undefined,
+      scene: targetSceneId
+    }));
+
+    const merged = cloudBookmarks.map(b => ({ ...b, scene: targetSceneId }));
+    const urlToIndex = new Map();
+    merged.forEach((bk, i) => {
+      const u = String(bk.url || '').trim();
+      if (!u || urlToIndex.has(u)) return;
+      urlToIndex.set(u, i);
+    });
+
+    importedBookmarks.forEach(b => {
+      const u = String(b.url || '').trim();
+      if (!u) return;
+      const idx = urlToIndex.get(u);
+      if (idx === undefined) {
+        merged.push({ ...b, scene: targetSceneId });
+        urlToIndex.set(u, merged.length - 1);
+        return;
+      }
+      const existing = merged[idx];
+      merged[idx] = {
+        ...existing,
+        title: b.title != null ? b.title : existing.title,
+        url: b.url || existing.url,
+        folder: b.folder !== undefined ? b.folder : existing.folder,
+        scene: targetSceneId,
+        updatedAt: Date.now()
+      };
+    });
+
+    const cloudFoldersRaw = (cloudData.folders || []).map(normalizeFolderPath).filter(Boolean);
     const importedFoldersRaw = (importResult?.folders || []).map(normalizeFolderPath).filter(Boolean);
-    const bookmarkFoldersRaw = rawBookmarks.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
-    const foldersForScene = expandFolderPathsPreserveOrder([...importedFoldersRaw, ...bookmarkFoldersRaw]);
+    const bookmarkFoldersRaw = merged.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
+    const foldersForScene = expandFolderPathsPreserveOrder([
+      ...cloudFoldersRaw,
+      ...importedFoldersRaw,
+      ...bookmarkFoldersRaw
+    ]);
 
-    // 为写入云端 scene 做准备：在每条书签上标记 sceneId（后续会按 scene 过滤）
-    const bookmarks = rawBookmarks.map(b => ({ ...b, scene: targetSceneId }));
-
-    // 仅写入云端指定 scene 的浏览器书签文件（不触发 syncToCloud 的其他副作用）
-    await writeBrowserBookmarksToCloud(bookmarks, foldersForScene, targetSceneId);
+    await storage.saveBookmarks(merged, foldersForScene, targetSceneId);
+    await writeBrowserBookmarksToCloud(merged, foldersForScene, targetSceneId);
 
     await storage.resetBrowserBookmarkSyncFailureState(signature);
-    return { success: true, targetSceneId, bookmarkCount: bookmarks.length };
+    return { success: true, targetSceneId, bookmarkCount: merged.length };
   } catch (error) {
     const msg = error?.message || String(error);
 
@@ -2176,7 +2224,7 @@ async function syncBrowserBookmarksToCloud() {
 }
 
 /**
- * 只把书签写入云端指定 scene（不更新本地插件书签、不清 pendingChanges）
+ * 只把书签写入云端指定 scene（不清 pendingChanges；本地是否已 saveBookmarks 由调用方决定）
  * 同步设备列表中的“浏览器书签定时最后同步时间”字段到云端（用于设备管理展示）
  * 用于“存储设备管理->浏览器书签定时同步场景”（browser -> cloud）
  * @param {Array} bookmarks
