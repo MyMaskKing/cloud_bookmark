@@ -1605,12 +1605,13 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       // 先同步已移除列表到云端（如果有待同步的更改）
       await syncToCloud();
 
-      // 同步书签到云端
+      // 同步书签到云端（须传 deletedIds，否则先拉云端合并会把已删失效书签再次并回）
       await sendMessageCompat({
         action: 'syncToCloud',
         bookmarks: remainingBookmarks,
         folders: remainingFolders,
-        sceneId
+        sceneId,
+        deletedIds: Array.from(invalidIds)
       });
 
       cleanup();

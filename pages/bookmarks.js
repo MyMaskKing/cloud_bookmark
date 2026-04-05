@@ -1659,21 +1659,28 @@ async function handleAddFolder() {
  * 删除文件夹（删除其下书签）
  */
 async function deleteFolderPath(folderPath) {
+  const normalizedRoot = normalizeFolderPath(folderPath);
   // 删除该文件夹及子文件夹下的书签
   currentBookmarks = currentBookmarks.filter(b => {
     if (!b.folder) return true;
-    if (b.folder === folderPath || b.folder.startsWith(folderPath + '/')) {
-      return false; // 删除书签
+    const bf = normalizeFolderPath(b.folder);
+    if (bf === normalizedRoot || bf.startsWith(normalizedRoot + '/')) {
+      return false;
     }
     return true;
   });
   // 删除文件夹记录
-  currentFolders = currentFolders.filter(f => f !== folderPath && !f.startsWith(folderPath + '/'));
+  currentFolders = currentFolders.filter(f => {
+    const nf = normalizeFolderPath(f);
+    return nf !== normalizedRoot && !nf.startsWith(normalizedRoot + '/');
+  });
   // 1. 保存到本地
   await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
-  // 2. 异步同步到云端
-  syncToCloud().catch(err => console.error('删除文件夹后台同步失败:', err));
+  // 2. 异步同步到云端（先拉云端再合并时，用 deletedFolderPaths 去掉该目录树在云端的书签与空文件夹）
+  syncToCloud({ deletedFolderPaths: [normalizedRoot] }).catch(err =>
+    console.error('删除文件夹后台同步失败:', err)
+  );
 }
 
 /**
@@ -2864,8 +2871,8 @@ async function deleteBookmark(bookmarkId) {
     await loadFolders();
     await loadTags();
 
-    // 2. 异步触发云端同步
-    syncToCloud().catch(err => console.error('删除书签后台同步失败:', err));
+    // 2. 异步触发云端同步（传入 deletedIds 以从云端移除该条）
+    syncToCloud({ deletedIds: [bookmarkId] }).catch(err => console.error('删除书签后台同步失败:', err));
   } catch (error) {
     console.error('删除失败:', error);
     alert('删除失败: ' + error.message);
@@ -3174,17 +3181,25 @@ async function handleSync() {
 
 /**
  * 同步到云端
+ * @param {{ deletedIds?: string[], deletedFolderPaths?: string[] }} [opts]
+ *   删除书签传 deletedIds；删除文件夹（含其下书签）传 deletedFolderPaths（规范化路径）
  */
-async function syncToCloud() {
+async function syncToCloud(opts = {}) {
   try {
-    // currentBookmarks已经是当前场景的书签，直接同步
-    // 确保传递当前场景ID，让后台同步到正确的场景文件
-    await sendMessageCompat({
+    const { deletedIds, deletedFolderPaths } = opts;
+    const payload = {
       action: 'syncToCloud',
       bookmarks: currentBookmarks,
       folders: currentFolders,
-      sceneId: currentSceneId // 明确指定当前场景ID
-    });
+      sceneId: currentSceneId
+    };
+    if (Array.isArray(deletedIds) && deletedIds.length) {
+      payload.deletedIds = deletedIds;
+    }
+    if (Array.isArray(deletedFolderPaths) && deletedFolderPaths.length) {
+      payload.deletedFolderPaths = deletedFolderPaths;
+    }
+    await sendMessageCompat(payload);
   } catch (error) {
     console.error('同步到云端失败:', error);
   }
@@ -3332,6 +3347,8 @@ async function batchDeleteBookmarks() {
   }
 
   try {
+    const deletedIdsForCloud = Array.from(selectedBookmarkIds);
+
     // 删除选中的书签
     currentBookmarks = currentBookmarks.filter(b => !selectedBookmarkIds.has(b.id));
 
@@ -3356,8 +3373,10 @@ async function batchDeleteBookmarks() {
     await loadTags();
     renderBookmarks();
 
-    // 3. 异步触发云端同步
-    syncToCloud().catch(err => console.error('批量删除后台同步失败:', err));
+    // 3. 异步触发云端同步（须在 toggleBatchMode 之前拷贝 id，否则 Set 会被清空）
+    syncToCloud({ deletedIds: deletedIdsForCloud }).catch(err =>
+      console.error('批量删除后台同步失败:', err)
+    );
 
     alert(`已成功删除 ${count} 个书签`);
   } catch (error) {

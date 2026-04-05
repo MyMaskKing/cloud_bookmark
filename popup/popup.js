@@ -1741,12 +1741,13 @@ async function handleDeleteBookmark(bookmarkId) {
     // 立即重新加载弹出页书签列表，展示删除后的结果
     await loadBookmarksForPopup();
 
-    // 2. 异步触发云端同步，不 await
+    // 2. 异步触发云端同步，不 await（deletedIds 用于从云端移除该书签）
     sendMessageCompat({
       action: 'syncToCloud',
       bookmarks: remainingBookmarks,
       folders: remainingFolders,
-      sceneId: currentSceneId
+      sceneId: currentSceneId,
+      deletedIds: [bookmarkId]
     }).catch(err => console.error('删除后的后台同步失败:', err));
 
   } catch (error) {

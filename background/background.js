@@ -197,6 +197,104 @@ function normalizeData(bookmarks = [], folders = []) {
   return { bookmarks: normalizedBookmarks, folders: normalizedFolders };
 }
 
+function expandFolderPathsPreserveOrder(paths) {
+  const out = [];
+  const seen = new Set();
+  (paths || []).forEach((p) => {
+    const n = normalizeFolderPath(p || '');
+    if (!n) return;
+    const parts = n.split('/').filter(Boolean);
+    let cur = '';
+    for (const part of parts) {
+      cur = cur ? `${cur}/${part}` : part;
+      if (!seen.has(cur)) {
+        seen.add(cur);
+        out.push(cur);
+      }
+    }
+  });
+  return out;
+}
+
+function normalizeDeletedFolderRoots(paths) {
+  return (paths || []).map(p => normalizeFolderPath(p || '')).filter(Boolean);
+}
+
+function pathIsUnderDeletedRoots(folderPath, roots) {
+  if (!roots || !roots.length) return false;
+  const n = normalizeFolderPath(folderPath || '');
+  if (!n) return false;
+  for (let i = 0; i < roots.length; i++) {
+    const r = roots[i];
+    if (n === r || n.startsWith(r + '/')) return true;
+  }
+  return false;
+}
+
+/**
+ * 先读云端后的合并：以云端为底，按 id 叠加本地传入列表；deletedIds 表示本机已删除、需从结果中移除的 id；
+ * deletedFolderPaths 表示本机已删除的文件夹路径（及子路径），云端同路径下书签与文件夹记录不再保留。
+ * 顺序：先按传入书签顺序，再追加「仅在云端存在且未删除」的书签。
+ */
+function mergeSceneBookmarksForCloudUpload(
+  cloudBookmarks,
+  passedBookmarks,
+  deletedIds,
+  targetSceneId,
+  deletedFolderPaths
+) {
+  const passed = Array.isArray(passedBookmarks) ? passedBookmarks : [];
+  const cloud = Array.isArray(cloudBookmarks) ? cloudBookmarks : [];
+  const deletedSet = new Set((deletedIds || []).filter(Boolean));
+  const passedIds = new Set(passed.map(b => b && b.id).filter(Boolean));
+  const delFolders = normalizeDeletedFolderRoots(deletedFolderPaths);
+
+  const mergedMap = new Map();
+  for (const c of cloud) {
+    if (!c) continue;
+    if (!c.id) {
+      continue;
+    }
+    if (deletedSet.has(c.id)) continue;
+    if (pathIsUnderDeletedRoots(c.folder, delFolders)) continue;
+    mergedMap.set(c.id, { ...c, scene: targetSceneId });
+  }
+
+  for (const p of passed) {
+    if (!p || !p.id) continue;
+    const ex = mergedMap.get(p.id);
+    mergedMap.set(p.id, ex ? { ...ex, ...p, scene: targetSceneId } : { ...p, scene: targetSceneId });
+  }
+
+  const ordered = [];
+  const seen = new Set();
+  for (const p of passed) {
+    if (!p) continue;
+    if (!p.id) {
+      if (!pathIsUnderDeletedRoots(p.folder, delFolders)) {
+        ordered.push({ ...p, scene: targetSceneId });
+      }
+      continue;
+    }
+    const row = mergedMap.get(p.id);
+    if (!row) continue;
+    if (pathIsUnderDeletedRoots(row.folder, delFolders)) continue;
+    ordered.push(row);
+    seen.add(p.id);
+  }
+  for (const c of cloud) {
+    if (!c || !c.id) continue;
+    if (passedIds.has(c.id) || deletedSet.has(c.id) || seen.has(c.id)) continue;
+    if (pathIsUnderDeletedRoots(c.folder, delFolders)) continue;
+    const row = mergedMap.get(c.id);
+    if (row) {
+      ordered.push(row);
+      seen.add(c.id);
+    }
+  }
+  return ordered;
+}
+
 /**
  * 将新书签插入到"同文件夹分组"的末尾，避免新增书签总是跑到所有书签最后
  * @param {Array} bookmarks - 现有书签数组
@@ -856,7 +954,15 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'syncToCloud') {
-    syncQueue.enqueue(() => syncToCloud(request.bookmarks, request.folders, request.sceneId)).then(() => {
+    syncQueue.enqueue(() =>
+      syncToCloud(
+        request.bookmarks,
+        request.folders,
+        request.sceneId,
+        request.deletedIds,
+        request.deletedFolderPaths
+      )
+    ).then(() => {
       sendResponse({ success: true });
     }).catch(error => {
       sendResponse({ success: false, error: error.message });
@@ -1953,12 +2059,14 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
 }
 
 /**
- * 同步本地变更到云端
- * @param {Array} bookmarks - 书签数组
+ * 同步本地变更到云端：先拉取该场景云端最新书签，再按书签 id 合并后上传。
+ * @param {Array} bookmarks - 该场景当前完整列表（增/改/收藏后的本地状态）
  * @param {Array} folders - 文件夹数组
- * @param {String} sceneId - 场景ID（可选，如果不提供则从书签中推断或使用当前场景）
+ * @param {String} sceneId - 场景ID（可选）
+ * @param {Array|null} deletedIds - 本机已删除的书签 id；删除书签时需传入
+ * @param {Array|null} deletedFolderPaths - 本机已删除的文件夹路径（规范化后）；删除文件夹（含其下书签）时传入，用于从云端合并结果中去掉该树
  */
-async function syncToCloud(bookmarks, folders, sceneId = null) {
+async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null, deletedFolderPaths = null) {
   try {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
@@ -1995,18 +2103,47 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
     // 确定要同步的场景ID
     let targetSceneId = sceneId;
     if (!targetSceneId && bookmarks && bookmarks.length > 0) {
-      // 从书签中推断场景（取第一个书签的场景）
       targetSceneId = bookmarks[0].scene;
     }
     if (!targetSceneId) {
-      // 如果还是没有，使用当前场景
       targetSceneId = await storage.getCurrentScene();
     }
 
     const webdav = new WebDAVClient(config);
-    const cleaned = normalizeData(bookmarks, folders);
+    let cloudData;
+    try {
+      cloudData = await webdav.readBookmarks(targetSceneId);
+    } catch (readErr) {
+      console.error('[syncToCloud] 读取云端书签失败:', readErr);
+      throw readErr;
+    }
 
-    // 只同步指定场景的书签到对应的文件
+    const delIds = Array.isArray(deletedIds) ? deletedIds : [];
+    const delFolderRoots = normalizeDeletedFolderRoots(deletedFolderPaths);
+    const mergedBookmarks = mergeSceneBookmarksForCloudUpload(
+      cloudData.bookmarks || [],
+      bookmarks || [],
+      delIds,
+      targetSceneId,
+      deletedFolderPaths
+    );
+
+    const cloudFoldersRaw = (cloudData.folders || [])
+      .map(normalizeFolderPath)
+      .filter(Boolean)
+      .filter(f => !pathIsUnderDeletedRoots(f, delFolderRoots));
+    const passedFoldersRaw = (folders || [])
+      .map(normalizeFolderPath)
+      .filter(Boolean)
+      .filter(f => !pathIsUnderDeletedRoots(f, delFolderRoots));
+    const bookmarkFoldersRaw = mergedBookmarks.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
+    const foldersMerged = expandFolderPathsPreserveOrder([
+      ...cloudFoldersRaw,
+      ...passedFoldersRaw,
+      ...bookmarkFoldersRaw
+    ]);
+
+    const cleaned = normalizeData(mergedBookmarks, foldersMerged);
     const sceneBookmarks = cleaned.bookmarks.filter(b => b.scene === targetSceneId);
     const deviceInfo = await storage.getDeviceInfo();
     const meta = {
@@ -2015,11 +2152,8 @@ async function syncToCloud(bookmarks, folders, sceneId = null) {
       updatedAt: Date.now()
     };
 
-    // 合并文件夹：从书签中提取的文件夹 + 传入的文件夹列表（确保空文件夹也能同步）
     const bookmarkFolders = [...new Set(sceneBookmarks.map(b => b.folder).filter(Boolean))];
     const passedFolders = cleaned.folders || [];
-    // 关键点：优先保留前端传入的文件夹顺序（即 currentFolders 的顺序），
-    // 然后再补上只在书签中出现但不在传入列表中的文件夹，避免顺序被 bookmark 遍历顺序覆盖。
     const sceneFolderSet = new Set(passedFolders);
     bookmarkFolders.forEach(f => {
       if (f && !sceneFolderSet.has(f)) {
@@ -2096,25 +2230,6 @@ async function syncBrowserBookmarksToCloud() {
       error: '浏览器书签定时同步已终止（连续失败达到阈值）'
     };
   }
-
-  const expandFolderPathsPreserveOrder = (paths) => {
-    const out = [];
-    const seen = new Set();
-    (paths || []).forEach((p) => {
-      const n = normalizeFolderPath(p || '');
-      if (!n) return;
-      const parts = n.split('/').filter(Boolean);
-      let cur = '';
-      for (const part of parts) {
-        cur = cur ? `${cur}/${part}` : part;
-        if (!seen.has(cur)) {
-          seen.add(cur);
-          out.push(cur);
-        }
-      }
-    });
-    return out;
-  };
 
   try {
     await ensureDeviceRegistered();
