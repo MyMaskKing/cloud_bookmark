@@ -938,10 +938,26 @@ function applyPopupSettings() {
 }
 
 /**
+ * 弹窗内写操作前拉取云端最新再刷新列表数据（与管理页书签增删改/收藏一致）
+ */
+async function ensureSceneFreshFromCloudBeforeWritePopup() {
+  try {
+    const res = await sendMessageCompat({ action: 'sync', sceneId: currentSceneId });
+    if (res && res.success === false) {
+      console.warn('[弹窗][写前同步] 拉取云端失败，继续基于本地数据:', res.error);
+    }
+  } catch (e) {
+    console.warn('[弹窗][写前同步] 拉取云端异常:', e?.message || e);
+  }
+  await loadBookmarksForPopup();
+}
+
+/**
  * 切换当前场景下某个书签的收藏状态（弹窗内使用）
  */
 async function handleToggleFavorite(bookmarkId) {
   try {
+    await ensureSceneFreshFromCloudBeforeWritePopup();
     const data = await storage.getBookmarks(currentSceneId);
     const allBookmarks = data.bookmarks || [];
     const allFolders = data.folders || [];
@@ -961,7 +977,8 @@ async function handleToggleFavorite(bookmarkId) {
       action: 'syncToCloud',
       bookmarks: allBookmarks,
       folders: allFolders,
-      sceneId: currentSceneId
+      sceneId: currentSceneId,
+      patch: { bookmarkUpserts: [bookmarkId] }
     }).catch(err => console.error('[弹窗] 收藏状态后台同步失败:', err));
   } catch (e) {
     console.error('[弹窗] 切换收藏状态失败:', e);
@@ -1699,7 +1716,8 @@ async function handleDeleteBookmark(bookmarkId) {
   }
 
   try {
-    // 获取当前场景的所有书签
+    await ensureSceneFreshFromCloudBeforeWritePopup();
+    // 获取当前场景的所有书签（已与云端对齐）
     const data = await storage.getBookmarks(currentSceneId);
     const allBookmarks = data.bookmarks || [];
     const allFolders = data.folders || [];
@@ -1747,7 +1765,8 @@ async function handleDeleteBookmark(bookmarkId) {
       bookmarks: remainingBookmarks,
       folders: remainingFolders,
       sceneId: currentSceneId,
-      deletedIds: [bookmarkId]
+      deletedIds: [bookmarkId],
+      patch: { bookmarkDeletes: [bookmarkId] }
     }).catch(err => console.error('删除后的后台同步失败:', err));
 
   } catch (error) {

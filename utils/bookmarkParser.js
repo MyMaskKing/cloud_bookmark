@@ -108,19 +108,44 @@ async function importFromBrowserBookmarks() {
     const isMobile = /android|iphone|ipad|mobile/i.test(navigator.userAgent || '');
     const isFirefoxMobile = isMobile && /firefox/i.test(navigator.userAgent || '');
     
-    function processBookmarkTree(nodes, currentFolder = '') {
+    const toMs = (ts) => {
+      const n = Number(ts);
+      if (!n || Number.isNaN(n)) return 0;
+      // 兼容：seconds / milliseconds / microseconds
+      // - seconds: 1e9 ~ 1e10（小于 1e12）
+      // - ms: 1e12 ~ 1e13
+      // - microseconds: 1e14 ~（大于 1e13）
+      if (n < 1e12) return Math.floor(n * 1000);
+      if (n > 1e13) return Math.floor(n / 1000);
+      return Math.floor(n);
+    };
+
+    function processBookmarkTree(nodes, currentFolder = '', inheritedFolderRevMs = 0) {
       if (!nodes) return;
       
       nodes.forEach(node => {
         if (node.url) {
-          // 这是一个书签
+          // 这是一个书签：用浏览器原生时间作修订序，避免 BS 合并时误用 Date.now() 盖掉云端较新的标题/文件夹
+          const dateAddedMs = toMs(node.dateAdded);
+          const dgmMs = toMs(node.dateGroupModified);
+          const lastModMs = toMs(node.lastModified);
+          const nativeRevMs = Math.max(
+            dateAddedMs || 0,
+            dgmMs || 0,
+            lastModMs || 0,
+            inheritedFolderRevMs || 0
+          );
           const bookmark = {
             id: node.id || (Date.now().toString(36) + Math.random().toString(36).substr(2)),
             title: node.title || '无标题',
             url: node.url,
             folder: currentFolder || undefined,
-            createdAt: node.dateAdded ? node.dateAdded : Date.now(),
-            updatedAt: Date.now(),
+            createdAt: dateAddedMs || Date.now(),
+            // 关键：把“父文件夹重命名/移动”的修订时间向下继承，确保 BS 能识别 folder 变化
+            updatedAt: nativeRevMs || Date.now(),
+            dateAdded: dateAddedMs || undefined,
+            dateGroupModified: dgmMs || undefined,
+            lastModified: lastModMs || undefined,
             starred: false
           };
           
@@ -130,12 +155,17 @@ async function importFromBrowserBookmarks() {
           const folderName = node.title || '未命名文件夹';
           const newFolder = currentFolder ? `${currentFolder}/${folderName}` : folderName;
 
+          const folderRevMs = Math.max(
+            toMs(node.dateGroupModified) || 0,
+            toMs(node.lastModified) || 0
+          );
+
           // 收集完整路径，避免在顶层再生成一个同名空文件夹
           if (newFolder && !folders.includes(newFolder)) {
             folders.push(newFolder);
           }
           
-          processBookmarkTree(node.children, newFolder);
+          processBookmarkTree(node.children, newFolder, Math.max(inheritedFolderRevMs || 0, folderRevMs || 0));
         }
       });
     }

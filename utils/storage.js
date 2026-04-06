@@ -27,6 +27,8 @@ class StorageManager {
     this.currentSceneKey = 'currentScene'; // 当前选中场景
     this.syncedScenesKey = 'syncedScenes'; // 已完成云端同步的场景列表
     this.sceneFoldersKey = 'sceneFolders'; // 每个场景的文件夹列表（用于保存空文件夹）
+    this.sceneFolderMetaKey = 'sceneFolderMeta'; // 每个场景的文件夹主键映射与顺序（folderId -> path）
+    this.sceneBookmarkMetaKey = 'sceneBookmarkMeta'; // 每个场景的书签排序元数据（bookmarkId 顺序）
 
     // 浏览器原生书签定时同步（browser -> cloud）的失败控制（本地-only，不同步到云端）
     this.browserBookmarkSyncFailureKey = 'browserBookmarkSyncFailure';
@@ -387,6 +389,91 @@ class StorageManager {
    */
   generateId() {
     return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  }
+
+  /**
+   * 保存场景的文件夹主键元数据（folderId 作为主键）
+   * @param {String} sceneId
+   * @param {{ order?: string[], byId?: Record<string, { path: string }> }} meta
+   */
+  async saveSceneFolderMeta(sceneId, meta) {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.sceneFolderMetaKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+          return;
+        }
+        const all = result[this.sceneFolderMetaKey] || {};
+        all[sceneId] = meta || { order: [], byId: {} };
+        this.storage.set({ [this.sceneFolderMetaKey]: all }, () => {
+          if (this.hasError()) reject(new Error(this.getError()));
+          else resolve(all[sceneId]);
+        });
+      });
+    });
+  }
+
+  /**
+   * 获取场景的文件夹主键元数据（folderId 作为主键）
+   * @param {String} sceneId
+   * @returns {{ order: string[], byId: Record<string, { path: string }> }}
+   */
+  async getSceneFolderMeta(sceneId) {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.sceneFolderMetaKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          const all = result[this.sceneFolderMetaKey] || {};
+          const m = all[sceneId] || { order: [], byId: {} };
+          resolve({
+            order: Array.isArray(m.order) ? m.order : [],
+            byId: m.byId && typeof m.byId === 'object' ? m.byId : {}
+          });
+        }
+      });
+    });
+  }
+
+  /**
+   * 保存场景的书签排序元数据（bookmarkId 作为主键）
+   * @param {String} sceneId
+   * @param {{ order?: string[] }} meta
+   */
+  async saveSceneBookmarkMeta(sceneId, meta) {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.sceneBookmarkMetaKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+          return;
+        }
+        const all = result[this.sceneBookmarkMetaKey] || {};
+        all[sceneId] = meta || { order: [] };
+        this.storage.set({ [this.sceneBookmarkMetaKey]: all }, () => {
+          if (this.hasError()) reject(new Error(this.getError()));
+          else resolve(all[sceneId]);
+        });
+      });
+    });
+  }
+
+  /**
+   * 获取场景的书签排序元数据（bookmarkId 作为主键）
+   * @param {String} sceneId
+   * @returns {{ order: string[] }}
+   */
+  async getSceneBookmarkMeta(sceneId) {
+    return new Promise((resolve, reject) => {
+      this.storage.get([this.sceneBookmarkMetaKey], (result) => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          const all = result[this.sceneBookmarkMetaKey] || {};
+          const m = all[sceneId] || { order: [] };
+          resolve({ order: Array.isArray(m.order) ? m.order : [] });
+        }
+      });
+    });
   }
 
   /**

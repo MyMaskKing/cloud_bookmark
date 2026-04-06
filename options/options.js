@@ -989,18 +989,21 @@ importBrowserBtn.addEventListener('click', async () => {
         scene: targetSceneId // 设置场景
       }));
 
-      // 获取当前场景书签
+      await sendMessageCompat({ action: 'sync', sceneId: targetSceneId });
+      // 获取当前场景书签（与云端对齐后再合并导入）
       const sceneData = await storage.getBookmarks(targetSceneId);
       const sceneBookmarks = sceneData.bookmarks || [];
       const urlMap = new Map();
       sceneBookmarks.forEach(b => urlMap.set(b.url, b));
 
       let added = 0;
+      const addedIds = [];
       importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
           sceneBookmarks.push(b);
           urlMap.set(b.url, b);
           added += 1;
+          if (b && b.id) addedIds.push(b.id);
         }
       });
 
@@ -1017,7 +1020,8 @@ importBrowserBtn.addEventListener('click', async () => {
         action: 'syncToCloud',
         bookmarks: sceneBookmarks,
         folders: foldersForScene,
-        sceneId: targetSceneId
+        sceneId: targetSceneId,
+        patch: { bookmarkUpserts: addedIds }
       }).catch(err => console.error('导入后后台同步失败:', err));
 
       const scenes = await storage.getScenes();
@@ -1584,7 +1588,8 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
 
   confirmBtn.onclick = async () => {
     try {
-      // 获取当前场景的所有书签
+      await sendMessageCompat({ action: 'sync', sceneId });
+      // 获取当前场景的所有书签（与云端对齐后再批量删除失效项）
       const data = await storage.getBookmarks(sceneId);
       const allBookmarks = data.bookmarks || [];
       const allFolders = data.folders || [];
@@ -1611,7 +1616,8 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         bookmarks: remainingBookmarks,
         folders: remainingFolders,
         sceneId,
-        deletedIds: Array.from(invalidIds)
+        deletedIds: Array.from(invalidIds),
+        patch: { bookmarkDeletes: Array.from(invalidIds) }
       });
 
       cleanup();
@@ -2189,18 +2195,21 @@ importFile.addEventListener('change', async (e) => {
         scene: targetSceneId // 设置场景
       }));
 
-      // 获取当前场景书签
+      await sendMessageCompat({ action: 'sync', sceneId: targetSceneId });
+      // 获取当前场景书签（与云端对齐后再合并导入）
       const sceneData = await storage.getBookmarks(targetSceneId);
       const sceneBookmarks = sceneData.bookmarks || [];
       const urlMap = new Map();
       sceneBookmarks.forEach(b => urlMap.set(b.url, b));
 
       let added = 0;
+      const addedIds = [];
       importedBookmarks.forEach(b => {
         if (!urlMap.has(b.url)) {
           sceneBookmarks.push(b);
           urlMap.set(b.url, b);
           added += 1;
+          if (b && b.id) addedIds.push(b.id);
         }
       });
 
@@ -2217,7 +2226,8 @@ importFile.addEventListener('change', async (e) => {
         action: 'syncToCloud',
         bookmarks: sceneBookmarks,
         folders: foldersForScene,
-        sceneId: targetSceneId
+        sceneId: targetSceneId,
+        patch: { bookmarkUpserts: addedIds }
       }).catch(err => console.error('导入后后台同步失败:', err));
 
       const scenes = await storage.getScenes();

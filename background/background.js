@@ -177,6 +177,8 @@ function normalizeFolderPath(path) {
   try {
     if (typeof s.normalize === 'function') s = s.normalize('NFKC');
   } catch (_) { }
+  // 统一分隔符：允许用户/系统出现反斜杠时，也能稳定匹配 deletedFolderPaths / folders。
+  s = s.replace(/\\+/g, '/');
   return s.replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
 }
 
@@ -189,12 +191,44 @@ function normalizeData(bookmarks = [], folders = []) {
   const seen = new Set();
   const normalizedFolders = [];
   (folders || []).forEach(f => {
-    const n = normalizeFolderPath(f);
+    const raw = (f && typeof f === 'object') ? (f.path || '') : f;
+    const n = normalizeFolderPath(raw);
     if (!n || seen.has(n)) return;
     seen.add(n);
     normalizedFolders.push(n);
   });
   return { bookmarks: normalizedBookmarks, folders: normalizedFolders };
+}
+
+function normalizeBookmarksForCloudMigration(bookmarks = [], sceneId) {
+  const counters = new Map(); // folderPath -> nextOrder
+  let changed = false;
+  const out = (bookmarks || []).map((b) => {
+    if (!b || !b.id) return b;
+    const rawFolder = b.folder || '';
+    const folderPath = normalizeFolderPath(rawFolder);
+    const folderKey = folderPath || '';
+    const next = counters.get(folderKey) || 0;
+    counters.set(folderKey, next + 1);
+
+    let folderId = b.folderId;
+    if (!folderId && folderPath) {
+      folderId = `${sceneId || 'scene'}_${folderPath}`;
+      changed = true;
+    }
+    const hasOrder = typeof b.order === 'number' && Number.isFinite(b.order);
+    const order = hasOrder ? b.order : next;
+    if (!hasOrder) changed = true;
+    if ((rawFolder || '') !== (folderPath || '')) changed = true;
+
+    return {
+      ...b,
+      folder: folderPath || undefined,
+      folderId: folderId || undefined,
+      order
+    };
+  });
+  return { bookmarks: out, changed };
 }
 
 function expandFolderPathsPreserveOrder(paths) {
@@ -214,6 +248,180 @@ function expandFolderPathsPreserveOrder(paths) {
     }
   });
   return out;
+}
+
+function parseCloudFoldersAndMeta(cloudData, targetSceneId) {
+  const foldersRaw = cloudData && cloudData.folders;
+  const byId = {};
+  const order = [];
+  const pathsOrdered = [];
+
+  if (Array.isArray(foldersRaw) && foldersRaw.length > 0 && typeof foldersRaw[0] === 'object' && foldersRaw[0] !== null) {
+    const rows = foldersRaw
+      .map((r) => ({
+        id: r && r.id ? String(r.id) : '',
+        name: r && r.name != null ? String(r.name) : '',
+        order: typeof (r && r.order) === 'number' ? r.order : Number.MAX_SAFE_INTEGER,
+        path: normalizeFolderPath(r && r.path)
+      }))
+      .filter(r => r.id && r.path);
+
+    rows.sort((a, b) => (a.order - b.order) || a.path.localeCompare(b.path));
+    rows.forEach((r) => {
+      const name = r.name && r.name.trim()
+        ? r.name.trim()
+        : (r.path.indexOf('/') >= 0 ? r.path.slice(r.path.lastIndexOf('/') + 1) : r.path);
+      byId[r.id] = { path: r.path, name };
+      order.push(r.id);
+      pathsOrdered.push(r.path);
+    });
+    return { foldersPaths: expandFolderPathsPreserveOrder(pathsOrdered), folderMeta: { order, byId }, isLegacyFolders: false };
+  }
+
+  // 旧格式：["a/b", ...]：按旧顺序生成 id + order（写回云端后固定）
+  const arr = Array.isArray(foldersRaw) ? foldersRaw : [];
+  const seenPath = new Set();
+  arr.forEach((p) => {
+    const np = normalizeFolderPath(p);
+    if (!np || seenPath.has(np)) return;
+    seenPath.add(np);
+    const id = `${targetSceneId || 'scene'}_${np}`;
+    const name = np.indexOf('/') >= 0 ? np.slice(np.lastIndexOf('/') + 1) : np;
+    if (!byId[id]) byId[id] = { path: np, name };
+    order.push(id);
+    pathsOrdered.push(np);
+  });
+  return { foldersPaths: expandFolderPathsPreserveOrder(pathsOrdered), folderMeta: { order, byId }, isLegacyFolders: true };
+}
+
+function buildCloudFoldersObjects(folderMeta, extraPaths = []) {
+  const byId = folderMeta && folderMeta.byId && typeof folderMeta.byId === 'object' ? folderMeta.byId : {};
+  const ord = folderMeta && Array.isArray(folderMeta.order) ? folderMeta.order : [];
+  const out = [];
+  const seen = new Set();
+
+  ord.forEach((id, idx) => {
+    const row = byId[id] || {};
+    const path = normalizeFolderPath(row.path || '');
+    if (!id || !path || seen.has(path)) return;
+    seen.add(path);
+    const name = (row.name != null && String(row.name).trim())
+      ? String(row.name).trim()
+      : (path.indexOf('/') >= 0 ? path.slice(path.lastIndexOf('/') + 1) : path);
+    out.push({ id, name, order: idx, path });
+  });
+
+  // 兼容补齐：把 extraPaths 中 folderMeta 没覆盖到的路径追加（不影响已有 order）
+  (extraPaths || []).map(p => normalizeFolderPath(p)).filter(Boolean).forEach((p) => {
+    if (seen.has(p)) return;
+    seen.add(p);
+    const id = `auto_${p}`;
+    const name = p.indexOf('/') >= 0 ? p.slice(p.lastIndexOf('/') + 1) : p;
+    out.push({ id, name, order: out.length, path: p });
+  });
+
+  return out;
+}
+
+function applyScenePatchToCloudData(cloudData, patch, localBookmarks, localFolderItems, sceneId, deletedFolderPaths) {
+  const p = patch && typeof patch === 'object' ? patch : {};
+  const cloudBookmarks = Array.isArray(cloudData.bookmarks) ? [...cloudData.bookmarks] : [];
+  const cloudFolderObjs = Array.isArray(cloudData.folders) ? [...cloudData.folders] : [];
+
+  const bookmarkDeleteSet = new Set((p.bookmarkDeletes || []).filter(Boolean));
+  const bookmarkUpsertSet = new Set((p.bookmarkUpserts || []).filter(Boolean));
+  const folderDeleteSet = new Set((p.folderDeletes || []).filter(Boolean));
+  const folderUpsertSet = new Set((p.folderUpserts || []).filter(Boolean));
+  const folderOrderIds = Array.isArray(p.folderOrderIds) ? p.folderOrderIds.filter(Boolean) : null;
+
+  const delFolderRoots = normalizeDeletedFolderRoots(deletedFolderPaths);
+
+  const localBookmarkMap = new Map();
+  (localBookmarks || []).forEach((b) => {
+    if (!b || !b.id) return;
+    localBookmarkMap.set(b.id, { ...b, scene: sceneId });
+  });
+  const localFolderMap = new Map();
+  (localFolderItems || []).forEach((f) => {
+    if (!f || !f.id) return;
+    const path = normalizeFolderPath(f.path || '');
+    if (!path) return;
+    localFolderMap.set(f.id, {
+      id: String(f.id),
+      name: (f.name != null && String(f.name).trim()) ? String(f.name).trim() : (path.indexOf('/') >= 0 ? path.slice(path.lastIndexOf('/') + 1) : path),
+      path,
+      order: typeof f.order === 'number' ? f.order : 0
+    });
+  });
+
+  // 1) 书签：仅修改 patch 指向的 id（其余保持云端原样）
+  const nextBookmarks = [];
+  const seen = new Set();
+  for (const cb of cloudBookmarks) {
+    if (!cb || !cb.id) continue;
+    if (bookmarkDeleteSet.has(cb.id)) continue;
+    if (pathIsUnderDeletedRoots(cb.folder, delFolderRoots)) continue;
+    if (bookmarkUpsertSet.has(cb.id) && localBookmarkMap.has(cb.id)) {
+      nextBookmarks.push(localBookmarkMap.get(cb.id));
+      seen.add(cb.id);
+    } else {
+      nextBookmarks.push({ ...cb, scene: sceneId });
+      seen.add(cb.id);
+    }
+  }
+  // 新增：在云端不存在但 patch 里声明 upsert 的
+  bookmarkUpsertSet.forEach((id) => {
+    if (seen.has(id)) return;
+    const nb = localBookmarkMap.get(id);
+    if (!nb) return;
+    if (pathIsUnderDeletedRoots(nb.folder, delFolderRoots)) return;
+    nextBookmarks.push(nb);
+  });
+
+  // 2) 文件夹：仅修改 patch 指向的 id（其余保持云端原样）
+  const nextFolders = [];
+  const seenFolder = new Set();
+  for (const cf of cloudFolderObjs) {
+    const fid = cf && cf.id ? String(cf.id) : '';
+    if (!fid) continue;
+    if (folderDeleteSet.has(fid)) continue;
+    if (pathIsUnderDeletedRoots(cf.path, delFolderRoots)) continue;
+    if (folderUpsertSet.has(fid) && localFolderMap.has(fid)) {
+      nextFolders.push(localFolderMap.get(fid));
+      seenFolder.add(fid);
+    } else {
+      const path = normalizeFolderPath(cf.path || '');
+      if (!path) continue;
+      const name = (cf.name != null && String(cf.name).trim()) ? String(cf.name).trim() : (path.indexOf('/') >= 0 ? path.slice(path.lastIndexOf('/') + 1) : path);
+      nextFolders.push({ id: fid, name, path, order: typeof cf.order === 'number' ? cf.order : 0 });
+      seenFolder.add(fid);
+    }
+  }
+  folderUpsertSet.forEach((id) => {
+    const sid = String(id);
+    if (seenFolder.has(sid)) return;
+    const nf = localFolderMap.get(sid);
+    if (!nf) return;
+    nextFolders.push(nf);
+  });
+
+  // 3) 顺序：仅按 patch 提供的 folderOrderIds 重排 folders.order（其余相对顺序保持）
+  let orderedFolders = nextFolders;
+  if (folderOrderIds && folderOrderIds.length > 0) {
+    const rank = new Map();
+    folderOrderIds.forEach((id, idx) => rank.set(String(id), idx));
+    orderedFolders = [...nextFolders].sort((a, b) => {
+      const ar = rank.has(String(a.id)) ? rank.get(String(a.id)) : Number.MAX_SAFE_INTEGER;
+      const br = rank.has(String(b.id)) ? rank.get(String(b.id)) : Number.MAX_SAFE_INTEGER;
+      if (ar !== br) return ar - br;
+      return (a.order || 0) - (b.order || 0);
+    }).map((f, idx) => ({ ...f, order: idx }));
+  }
+
+  return {
+    bookmarks: nextBookmarks,
+    folders: orderedFolders
+  };
 }
 
 function normalizeDeletedFolderRoots(paths) {
@@ -293,6 +501,79 @@ function mergeSceneBookmarksForCloudUpload(
     }
   }
   return ordered;
+}
+
+/**
+ * 浏览器书签定时同步（BS）：在云端书签列表上叠加本机浏览器书签。
+ * 同 URL：仅当本机该书签的「原生修订时间」严格晚于云端 updatedAt/createdAt 时，才用浏览器覆盖 title/url/folder；
+ * 避免 B 机书签栏未跟进 A 已上云的文件夹/标题变更时把云端盖回旧数据（需求.md 案例1）。
+ */
+function mergeBrowserImportIntoCloudBookmarks(importedBookmarks, importFolders, cloudData, targetSceneId) {
+  const imported = Array.isArray(importedBookmarks) ? importedBookmarks : [];
+  const cloudBookmarks = (cloudData && Array.isArray(cloudData.bookmarks) ? cloudData.bookmarks : []).map(b => ({
+    ...b,
+    scene: targetSceneId
+  }));
+  const merged = cloudBookmarks.map(b => ({ ...b, scene: targetSceneId }));
+  const urlToIndex = new Map();
+  merged.forEach((bk, i) => {
+    const u = String(bk.url || '').trim();
+    if (!u || urlToIndex.has(u)) return;
+    urlToIndex.set(u, i);
+  });
+
+  const nativeRev = (b) => Math.max(
+    Number(b.dateGroupModified) || 0,
+    Number(b.lastModified) || 0,
+    Number(b.updatedAt) || 0,
+    Number(b.dateAdded) || 0
+  );
+  const cloudRev = (ex) => Math.max(
+    Number(ex.updatedAt) || 0,
+    Number(ex.createdAt) || 0
+  );
+
+  imported.forEach(b => {
+    const u = String(b.url || '').trim();
+    if (!u) return;
+    const idx = urlToIndex.get(u);
+    if (idx === undefined) {
+      const nr = nativeRev(b);
+      merged.push({
+        ...b,
+        scene: targetSceneId,
+        updatedAt: nr > 0 ? nr : (Number(b.createdAt) || Date.now())
+      });
+      urlToIndex.set(u, merged.length - 1);
+      return;
+    }
+    const existing = merged[idx];
+    const nRev = nativeRev(b);
+    const cRev = cloudRev(existing);
+    if (nRev > cRev) {
+      merged[idx] = {
+        ...existing,
+        title: b.title != null ? b.title : existing.title,
+        url: b.url || existing.url,
+        folder: b.folder !== undefined ? b.folder : existing.folder,
+        scene: targetSceneId,
+        // 使用浏览器原生时间戳，避免用 Date.now() 导致下次 BS 时 cloudRev 永远更大、无法再同步浏览器后续改动
+        updatedAt: nRev
+      };
+    } else {
+      merged[idx] = { ...existing, scene: targetSceneId };
+    }
+  });
+
+  const cloudFoldersRaw = (cloudData.folders || []).map(normalizeFolderPath).filter(Boolean);
+  const importedFoldersRaw = (importFolders || []).map(normalizeFolderPath).filter(Boolean);
+  const bookmarkFoldersRaw = merged.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
+  const foldersForScene = expandFolderPathsPreserveOrder([
+    ...cloudFoldersRaw,
+    ...importedFoldersRaw,
+    ...bookmarkFoldersRaw
+  ]);
+  return { merged, foldersForScene };
 }
 
 /**
@@ -960,7 +1241,9 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         request.folders,
         request.sceneId,
         request.deletedIds,
-        request.deletedFolderPaths
+        request.deletedFolderPaths,
+        request.folderItems,
+        request.patch
       )
     ).then(() => {
       sendResponse({ success: true });
@@ -1869,13 +2152,36 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
       }
     }
 
-    const cleaned = normalizeData(cloudData.bookmarks || [], cloudData.folders || []);
+    const parsedFolders = parseCloudFoldersAndMeta(cloudData, currentSceneId);
+    const cleaned = normalizeData(cloudData.bookmarks || [], parsedFolders.foldersPaths || []);
     console.log('[SYNC] cloud data loaded', {
       sceneId: currentSceneId,
       cloudBookmarks: cleaned.bookmarks.length,
       cloudFolders: cleaned.folders.length,
       cloudFoldersList: cleaned.folders
     });
+
+    // 同步云端的文件夹/书签主键元数据到本地（供页面按 Id 维护顺序/重命名/移动）
+    try {
+      await storage.saveSceneFolderMeta(currentSceneId, parsedFolders.folderMeta);
+    } catch (e) {
+      // best-effort，不阻断主流程
+    }
+
+    // 旧数据自动补齐：folders 旧格式 / 书签缺少 folderId 或 order / folder 路径未规范化
+    const migratedBookmarks = normalizeBookmarksForCloudMigration(cloudData.bookmarks || [], currentSceneId);
+    if (parsedFolders.isLegacyFolders || migratedBookmarks.changed) {
+      try {
+        const foldersForWrite = buildCloudFoldersObjects(parsedFolders.folderMeta, parsedFolders.foldersPaths || []);
+        await webdav.writeBookmarks(
+          { bookmarks: migratedBookmarks.bookmarks, folders: foldersForWrite, _meta: cloudData._meta || {} },
+          currentSceneId,
+          cloudData._etag ? { ifMatch: cloudData._etag } : {}
+        );
+      } catch (e) {
+        // 迁移失败不阻断主流程，后续任意上行会再次尝试统一格式
+      }
+    }
 
     // 检查本地书签是否已经包含在云端书签中（避免重复合并）
     // 通过比较书签ID来判断是否已经合并过
@@ -1995,7 +2301,17 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
             return bFolder === f || (bFolder.startsWith(f + '/'));
           });
         });
-        await syncToCloud(mergedSceneBookmarks, sceneFolders, currentSceneId);
+        await syncToCloud(
+          mergedSceneBookmarks,
+          sceneFolders,
+          currentSceneId,
+          null,
+          null,
+          null,
+          {
+            bookmarkUpserts: mergedSceneBookmarks.map((b) => b && b.id).filter(Boolean)
+          }
+        );
       }
     } else {
       // 定时同步或首次同步无冲突：云端数据直接覆盖本地当前场景
@@ -2066,7 +2382,7 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
  * @param {Array|null} deletedIds - 本机已删除的书签 id；删除书签时需传入
  * @param {Array|null} deletedFolderPaths - 本机已删除的文件夹路径（规范化后）；删除文件夹（含其下书签）时传入，用于从云端合并结果中去掉该树
  */
-async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null, deletedFolderPaths = null) {
+async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null, deletedFolderPaths = null, folderItems = null, patch = null) {
   try {
     const config = await storage.getConfig();
     if (!config || !config.serverUrl) {
@@ -2110,62 +2426,71 @@ async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null
     }
 
     const webdav = new WebDAVClient(config);
-    let cloudData;
-    try {
-      cloudData = await webdav.readBookmarks(targetSceneId);
-    } catch (readErr) {
-      console.error('[syncToCloud] 读取云端书签失败:', readErr);
-      throw readErr;
+    const maxWriteAttempts = 8;
+    let writeOk = false;
+
+    for (let writeAttempt = 1; writeAttempt <= maxWriteAttempts && !writeOk; writeAttempt++) {
+      let cloudData;
+      try {
+        cloudData = await webdav.readBookmarks(targetSceneId);
+      } catch (readErr) {
+        console.error('[syncToCloud] 读取云端书签失败:', readErr);
+        throw readErr;
+      }
+
+      const parsedFolders = parseCloudFoldersAndMeta(cloudData, targetSceneId);
+      const cloudFoldersForPatch = buildCloudFoldersObjects(parsedFolders.folderMeta, parsedFolders.foldersPaths || []);
+      const cloudDataForPatch = {
+        bookmarks: cloudData.bookmarks || [],
+        folders: cloudFoldersForPatch
+      };
+      const effectivePatch = patch && typeof patch === 'object' ? patch : null;
+      if (!effectivePatch) {
+        throw new Error('syncToCloud 缺少 patch：非 BS 写操作必须携带本次目标ID集合');
+      }
+
+      let sceneBookmarks = [];
+      let foldersForWrite = [];
+      const patched = applyScenePatchToCloudData(
+        cloudDataForPatch,
+        effectivePatch,
+        bookmarks || [],
+        folderItems || [],
+        targetSceneId,
+        deletedFolderPaths
+      );
+      const cleanedPatched = normalizeData(patched.bookmarks || [], (patched.folders || []).map(f => f.path));
+      sceneBookmarks = cleanedPatched.bookmarks.filter(b => b.scene === targetSceneId);
+      const patchedFolderMeta = parseCloudFoldersAndMeta({ folders: patched.folders || [] }, targetSceneId).folderMeta;
+      const folderPaths = (patched.folders || []).map(f => normalizeFolderPath(f.path || '')).filter(Boolean);
+      foldersForWrite = buildCloudFoldersObjects(patchedFolderMeta, folderPaths);
+      const deviceInfo = await storage.getDeviceInfo();
+      const meta = {
+        updatedByDeviceId: (deviceInfo && deviceInfo.id) || (currentDevice && currentDevice.id) || null,
+        updatedByDeviceName: (deviceInfo && deviceInfo.name) || (currentDevice && currentDevice.name) || '',
+        updatedAt: Date.now()
+      };
+
+      const etag = cloudData._etag || null;
+      try {
+        await webdav.writeBookmarks(
+          { bookmarks: sceneBookmarks, folders: foldersForWrite, _meta: meta },
+          targetSceneId,
+          etag ? { ifMatch: etag } : {}
+        );
+        writeOk = true;
+      } catch (wErr) {
+        if (wErr.status === 412 && writeAttempt < maxWriteAttempts) {
+          console.warn('[syncToCloud] 412 冲突，重新拉取并合并后重试', { attempt: writeAttempt, sceneId: targetSceneId });
+          continue;
+        }
+        throw wErr;
+      }
     }
 
-    const delIds = Array.isArray(deletedIds) ? deletedIds : [];
-    const delFolderRoots = normalizeDeletedFolderRoots(deletedFolderPaths);
-    const mergedBookmarks = mergeSceneBookmarksForCloudUpload(
-      cloudData.bookmarks || [],
-      bookmarks || [],
-      delIds,
-      targetSceneId,
-      deletedFolderPaths
-    );
-
-    const cloudFoldersRaw = (cloudData.folders || [])
-      .map(normalizeFolderPath)
-      .filter(Boolean)
-      .filter(f => !pathIsUnderDeletedRoots(f, delFolderRoots));
-    const passedFoldersRaw = (folders || [])
-      .map(normalizeFolderPath)
-      .filter(Boolean)
-      .filter(f => !pathIsUnderDeletedRoots(f, delFolderRoots));
-    const bookmarkFoldersRaw = mergedBookmarks.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
-    const foldersMerged = expandFolderPathsPreserveOrder([
-      ...cloudFoldersRaw,
-      ...passedFoldersRaw,
-      ...bookmarkFoldersRaw
-    ]);
-
-    const cleaned = normalizeData(mergedBookmarks, foldersMerged);
-    const sceneBookmarks = cleaned.bookmarks.filter(b => b.scene === targetSceneId);
-    const deviceInfo = await storage.getDeviceInfo();
-    const meta = {
-      updatedByDeviceId: (deviceInfo && deviceInfo.id) || (currentDevice && currentDevice.id) || null,
-      updatedByDeviceName: (deviceInfo && deviceInfo.name) || (currentDevice && currentDevice.name) || '',
-      updatedAt: Date.now()
-    };
-
-    const bookmarkFolders = [...new Set(sceneBookmarks.map(b => b.folder).filter(Boolean))];
-    const passedFolders = cleaned.folders || [];
-    const sceneFolderSet = new Set(passedFolders);
-    bookmarkFolders.forEach(f => {
-      if (f && !sceneFolderSet.has(f)) {
-        sceneFolderSet.add(f);
-      }
-    });
-    const sceneFolders = [...sceneFolderSet];
-
-    await webdav.writeBookmarks(
-      { bookmarks: sceneBookmarks, folders: sceneFolders, _meta: meta },
-      targetSceneId
-    );
+    if (!writeOk) {
+      throw new Error('同步到云端失败：多次重试后仍无法写入');
+    }
 
     // 写入设置（包含场景列表和当前场景）
     await syncSettingsToCloud();
@@ -2209,9 +2534,9 @@ async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null
  * 定时同步：浏览器书签 -> 云端（严格：云端为底 + 浏览器差分补充）
  * 1) WebDAV 读取该场景云端书签作为基底（文件不存在则视为空列表）
  * 2) 获取浏览器书签
- * 3) 差分：仅把「浏览器相对云端」多出来的 URL 追加；已存在的 URL 用浏览器更新标题/文件夹/链接，其余字段保留云端记录
+ * 3) 差分：多出的 URL 追加；已存在 URL 仅在本机该书签原生修订时间晚于云端记录时才用浏览器覆盖 title/url/folder（见 mergeBrowserImportIntoCloudBookmarks）
  * 4) 不写回任何「从基底移除」的操作——云端原有 URL 不会因浏览器里没有而消失
- * 5) 本机该场景 saveBookmarks + writeBrowserBookmarksToCloud（便于浏览器 B 本地与刚上传结果一致）
+ * 5) 写云成功后本机 saveBookmarks（与本次合并结果一致）。BS 不依赖 ETag/412（需求.md 案例1 靠「先读云再合并 + 时间比较」避免 B 盖回 A）。
  *
  * 说明：若书签仅在浏览器 A 的插件里、尚未同步到云端，浏览器 B 定时同步不会凭空造出该条；需先由 A 把场景同步到 WebDAV。
  */
@@ -2259,12 +2584,6 @@ async function syncBrowserBookmarksToCloud() {
     }
 
     const webdav = new WebDAVClient(config);
-    const cloudData = await webdav.readBookmarks(targetSceneId);
-    const cloudBookmarks = (cloudData.bookmarks || []).map(b => ({
-      ...b,
-      scene: targetSceneId
-    }));
-
     const rawBookmarks = importResult?.bookmarks || [];
     const importedBookmarks = rawBookmarks.map(b => ({
       ...b,
@@ -2272,45 +2591,16 @@ async function syncBrowserBookmarksToCloud() {
       scene: targetSceneId
     }));
 
-    const merged = cloudBookmarks.map(b => ({ ...b, scene: targetSceneId }));
-    const urlToIndex = new Map();
-    merged.forEach((bk, i) => {
-      const u = String(bk.url || '').trim();
-      if (!u || urlToIndex.has(u)) return;
-      urlToIndex.set(u, i);
-    });
+    const cloudData = await webdav.readBookmarks(targetSceneId);
+    const { merged, foldersForScene } = mergeBrowserImportIntoCloudBookmarks(
+      importedBookmarks,
+      importResult?.folders || [],
+      cloudData,
+      targetSceneId
+    );
 
-    importedBookmarks.forEach(b => {
-      const u = String(b.url || '').trim();
-      if (!u) return;
-      const idx = urlToIndex.get(u);
-      if (idx === undefined) {
-        merged.push({ ...b, scene: targetSceneId });
-        urlToIndex.set(u, merged.length - 1);
-        return;
-      }
-      const existing = merged[idx];
-      merged[idx] = {
-        ...existing,
-        title: b.title != null ? b.title : existing.title,
-        url: b.url || existing.url,
-        folder: b.folder !== undefined ? b.folder : existing.folder,
-        scene: targetSceneId,
-        updatedAt: Date.now()
-      };
-    });
-
-    const cloudFoldersRaw = (cloudData.folders || []).map(normalizeFolderPath).filter(Boolean);
-    const importedFoldersRaw = (importResult?.folders || []).map(normalizeFolderPath).filter(Boolean);
-    const bookmarkFoldersRaw = merged.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
-    const foldersForScene = expandFolderPathsPreserveOrder([
-      ...cloudFoldersRaw,
-      ...importedFoldersRaw,
-      ...bookmarkFoldersRaw
-    ]);
-
-    await storage.saveBookmarks(merged, foldersForScene, targetSceneId);
     await writeBrowserBookmarksToCloud(merged, foldersForScene, targetSceneId);
+    await storage.saveBookmarks(merged, foldersForScene, targetSceneId);
 
     await storage.resetBrowserBookmarkSyncFailureState(signature);
     return { success: true, targetSceneId, bookmarkCount: merged.length };
@@ -2398,7 +2688,8 @@ async function writeBrowserBookmarksToCloud(bookmarks, folders, sceneId) {
 
   await webdav.writeBookmarks(
     { bookmarks: sceneBookmarks, folders: sceneFolders, _meta: meta },
-    sceneId
+    sceneId,
+    {}
   );
 
   const now = Date.now();
@@ -2446,7 +2737,15 @@ async function syncUpload() {
   const data = await storage.getBookmarks(currentSceneId);
   const bookmarks = data.bookmarks || [];
   const folders = data.folders || [];
-  await syncToCloud(bookmarks, folders, currentSceneId);
+  await syncToCloud(
+    bookmarks,
+    folders,
+    currentSceneId,
+    null,
+    null,
+    null,
+    { bookmarkUpserts: bookmarks.map((b) => b && b.id).filter(Boolean) }
+  );
 }
 
 // 导出函数供其他脚本调用
