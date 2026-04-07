@@ -213,7 +213,15 @@ function normalizeBookmarksForCloudMigration(bookmarks = [], sceneId) {
 
     let folderId = b.folderId;
     if (!folderId && folderPath) {
-      folderId = `${sceneId || 'scene'}_${folderPath}`;
+      // 使用哈希算法生成 folderId，使其看起来像“算出来的”且保持稳定
+      const hash = (str) => {
+        let h = 0;
+        for (let i = 0; i < str.length; i++) {
+          h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+        }
+        return Math.abs(h).toString(36);
+      };
+      folderId = `f_${hash(sceneId + '_' + folderPath)}`;
       changed = true;
     }
     const hasOrder = typeof b.order === 'number' && Number.isFinite(b.order);
@@ -416,10 +424,34 @@ function applyScenePatchToCloudData(cloudData, patch, localBookmarks, localFolde
       if (ar !== br) return ar - br;
       return (a.order || 0) - (b.order || 0);
     }).map((f, idx) => ({ ...f, order: idx }));
+  } else {
+    // 即使没有 folderOrderIds，也确保输出的文件夹按已有 order 排序
+    orderedFolders = [...nextFolders].sort((a, b) => (a.order - b.order) || (a.path || '').localeCompare(b.path || ''))
+      .map((f, idx) => ({ ...f, order: idx }));
   }
 
+  // 4) 书签最终排序：按已确定的文件夹顺序 + 每个书签内的 order 字段
+  // 确保云端数据的物理顺序与展示模型完全一致，消除多端显示差异。
+  const folderRank = new Map();
+  orderedFolders.forEach((f, idx) => folderRank.set(normalizeFolderPath(f.path), idx));
+
+  const finalBookmarks = [...nextBookmarks].sort((a, b) => {
+    const af = normalizeFolderPath(a.folder || '');
+    const bf = normalizeFolderPath(b.folder || '');
+    if (af !== bf) {
+      const ai = folderRank.has(af) ? folderRank.get(af) : Number.MAX_SAFE_INTEGER;
+      const bi = folderRank.has(bf) ? folderRank.get(bf) : Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+      return af.localeCompare(bf);
+    }
+    // 同文件夹内，严格遵循 order 字段
+    const ao = typeof a.order === 'number' ? a.order : Number.MAX_SAFE_INTEGER;
+    const bo = typeof b.order === 'number' ? b.order : Number.MAX_SAFE_INTEGER;
+    return ao - bo;
+  });
+
   return {
-    bookmarks: nextBookmarks,
+    bookmarks: finalBookmarks,
     folders: orderedFolders
   };
 }
@@ -565,7 +597,10 @@ function mergeBrowserImportIntoCloudBookmarks(importedBookmarks, importFolders, 
     }
   });
 
-  const cloudFoldersRaw = (cloudData.folders || []).map(normalizeFolderPath).filter(Boolean);
+  const cloudFoldersRaw = (cloudData.folders || []).map(f => {
+    if (f && typeof f === 'object' && f.path) return normalizeFolderPath(f.path);
+    return normalizeFolderPath(f);
+  }).filter(Boolean);
   const importedFoldersRaw = (importFolders || []).map(normalizeFolderPath).filter(Boolean);
   const bookmarkFoldersRaw = merged.map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
   const foldersForScene = expandFolderPathsPreserveOrder([

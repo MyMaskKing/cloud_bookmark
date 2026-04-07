@@ -1101,6 +1101,16 @@ function buildFolderTree(bookmarks, folders = null) {
       node.items.push(b);
     }
   });
+
+  // 递归对书签项进行排序（按 order 字段），确保与管理页自定义排序逻辑一致
+  const sortNode = (node) => {
+    if (node.items && node.items.length > 0) {
+      node.items.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
+    }
+    Object.values(node.folders).forEach(sortNode);
+  };
+  sortNode(root);
+
   return root;
 }
 

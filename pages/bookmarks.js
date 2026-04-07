@@ -355,7 +355,18 @@ function ensureBookmarkFolderIdAndOrder() {
     let folderId = b.folderId;
     if (fp) {
       const mapped = currentFolderIdByPath.get(fp);
-      folderId = folderId || mapped || `${currentSceneId}_${fp}`;
+      if (!mapped) {
+        // 使用简易哈希生成，使其看起来像“算出来的”且保持稳定
+        const hash = (str) => {
+          let h = 0;
+          for (let i = 0; i < str.length; i++) h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+          return Math.abs(h).toString(36);
+        };
+        const generated = `f_${hash(currentSceneId + '_' + fp)}`;
+        folderId = folderId || generated;
+      } else {
+        folderId = folderId || mapped;
+      }
     } else {
       folderId = folderId || '';
     }
