@@ -140,6 +140,10 @@ class StorageManager {
       const otherSceneFolders = otherSceneBookmarks.map(b => b.folder).filter(Boolean);
       // 2. 从当前场景的书签中提取文件夹（确保只包含当前场景实际使用的文件夹）
       const currentSceneBookmarkFolders = (bookmarks || []).map(b => b.folder).filter(Boolean);
+      
+      // 格式化当前场景的书签字段顺序
+      const formattedCurrentSceneBookmarks = (bookmarks || []).map(b => this.formatBookmarkJSON(b.scene ? b : { ...b, scene: targetSceneId }));
+
       // 3. 合并：其他场景实际使用的文件夹 + 当前场景传入的文件夹（可能包含空文件夹）+ 当前场景书签中的文件夹
       // 注意：传入的 folders 参数应该只包含当前场景的文件夹（包括空文件夹），这样每个场景的文件夹是隔离的
       const allFoldersSet = new Set([...otherSceneFolders, ...(folders || []), ...currentSceneBookmarkFolders]);
@@ -149,9 +153,19 @@ class StorageManager {
       console.log('[Storage] saveSceneFolders', { sceneId: targetSceneId, folders: folders || [] });
       await this.saveSceneFolders(targetSceneId, folders || []);
       
+      // 文件夹顺序：尊重合并后的顺序并补全层级
+      const sortedFolders = this.expandFolderPathsPreserveOrder([...new Set(mergedFolders)]);
+
+      // 文件夹顺序：尊重合并后的顺序并补全层级
+      const sortedFolderPathStrings = this.expandFolderPathsPreserveOrder([...new Set(mergedFolders)]);
+      const sortedFolderObjects = await this.formatFoldersForStorage(sortedFolderPathStrings, targetSceneId);
+
       const data = {
-        bookmarks: mergedBookmarks,
-        folders: mergedFolders,
+        bookmarks: this.bindFolderIdsToBookmarks(
+          this.sortBookmarksByHierarchy(mergedBookmarks.map(b => this.formatBookmarkJSON(b)), sortedFolderPathStrings),
+          sortedFolderObjects
+        ),
+        folders: sortedFolderObjects,
         lastSync: Date.now()
       };
 
@@ -165,10 +179,16 @@ class StorageManager {
         });
       });
     } else {
+      const sortedFolderPathStrings = this.expandFolderPathsPreserveOrder([...new Set(folders || [])]);
+      const sortedFolderObjects = await this.formatFoldersForStorage(sortedFolderPathStrings, targetSceneId || 'home');
+
       // 如果无法确定场景，或者书签来自多个场景，直接保存（覆盖模式，用于初始化或全量更新）
       const data = {
-        bookmarks: bookmarks || [],
-        folders: folders || [],
+        bookmarks: this.bindFolderIdsToBookmarks(
+          (bookmarks || []).map(b => this.formatBookmarkJSON(b)),
+          sortedFolderObjects
+        ),
+        folders: sortedFolderObjects,
         lastSync: Date.now()
       };
 
@@ -385,10 +405,194 @@ class StorageManager {
   }
 
   /**
-   * 生成唯一ID
+   * 生成唯一ID，支持前缀 (b_ 书签, f_ 文件夹)
+   * 采用 16 位随机字符，确保全局唯一性和跨设备碰撞概率极低
+   * @param {string} prefix - 前缀
    */
-  generateId() {
-    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  generateId(prefix = '') {
+    const random = Math.random().toString(36).substring(2, 10) + Math.random().toString(36).substring(2, 10);
+    return prefix + random.substring(0, 16);
+  }
+
+  generateBookmarkId() {
+    return this.generateId('b_');
+  }
+
+  generateFolderId() {
+    return this.generateId('f_');
+  }
+
+  /**
+   * 生成稳定的文件夹 ID（基于路径和场景哈希）
+   * 确保多端对同一路径生成相同的 ID，提升同步稳定性
+   */
+  generateStableFolderId(path, sceneId) {
+    if (!path) return this.generateFolderId();
+    const str = `${sceneId || 'default'}_${path}`;
+    let h = 0;
+    for (let i = 0; i < str.length; i++) {
+      h = Math.imul(31, h) + str.charCodeAt(i) | 0;
+    }
+    const hashStr = Math.abs(h).toString(36);
+    return `f_${hashStr}`;
+  }
+
+  /**
+   * 尊重原始先后顺序的层级展开
+   * 确保父文件夹在子文件夹之前，同时保持传入数组中的相对顺序（兄弟节点顺序）
+   */
+  expandFolderPathsPreserveOrder(paths) {
+    const nodes = new Map(); // path -> { children: [], firstIdx: number }
+    const roots = [];
+
+    const getOrCreate = (path) => {
+      if (!nodes.has(path)) {
+        nodes.set(path, { path, children: [], firstIdx: Infinity });
+      }
+      return nodes.get(path);
+    };
+
+    (paths || []).forEach((p, idx) => {
+      const n = (typeof p === 'string' ? p : (p.path || '')).replace(/^\/+/, '').replace(/\/+$/, '');
+      if (!n) return;
+      
+      const parts = n.split('/').filter(Boolean);
+      let cur = '';
+      let parentNode = null;
+      for (const part of parts) {
+        cur = cur ? `${cur}/${part}` : part;
+        const node = getOrCreate(cur);
+        if (idx < node.firstIdx) node.firstIdx = idx;
+
+        if (parentNode) {
+          if (!parentNode.children.includes(cur)) parentNode.children.push(cur);
+        } else {
+          if (!roots.includes(cur)) roots.push(cur);
+        }
+        parentNode = node;
+      }
+    });
+
+    const out = [];
+    const traverse = (path) => {
+      out.push(path);
+      const node = nodes.get(path);
+      if (node && node.children.length > 0) {
+        // 同级子文件夹按首次出现顺序排序
+        [...node.children]
+          .sort((a, b) => nodes.get(a).firstIdx - nodes.get(b).firstIdx)
+          .forEach(traverse);
+      }
+    };
+
+    // 顶级文件夹按首次出现顺序排序
+    roots.sort((a, b) => nodes.get(a).firstIdx - nodes.get(b).firstIdx).forEach(traverse);
+
+    return out;
+  }
+
+  /**
+   * 按照文件夹列表的物理顺序对书签进行排序
+   * 确保云端 JSON 中对应的书签位置与文件夹顺序一致
+   */
+  sortBookmarksByHierarchy(bookmarks, folderOrder = []) {
+    if (!bookmarks || !Array.isArray(bookmarks)) return [];
+    const folderToIndex = new Map();
+    (folderOrder || []).forEach((f, idx) => {
+      const path = typeof f === 'string' ? f : (f.path || '');
+      folderToIndex.set(path, idx);
+    });
+
+    return [...bookmarks].sort((a, b) => {
+      const folderA = a.folder || "";
+      const folderB = b.folder || "";
+      const idxA = folderToIndex.has(folderA) ? folderToIndex.get(folderA) : -1;
+      const idxB = folderToIndex.has(folderB) ? folderToIndex.get(folderB) : -1;
+
+      if (idxA !== idxB) {
+        return idxA - idxB;
+      }
+      return (a.order || 0) - (b.order || 0);
+    });
+  }
+
+  /**
+   * 将文件夹路径列表格式化为带 ID 和 Order 的对象数组
+   */
+  async formatFoldersForStorage(folderPaths, sceneId) {
+    const meta = await this.getSceneFolderMeta(sceneId);
+    const byId = meta && meta.byId ? meta.byId : {};
+    
+    // 建立 path -> id 反向索引
+    const pathToId = new Map();
+    Object.keys(byId).forEach(id => {
+      if (byId[id].path) pathToId.set(byId[id].path, id);
+    });
+
+    const result = [];
+    (folderPaths || []).forEach((path, index) => {
+      let id = pathToId.get(path);
+      if (!id) {
+        id = this.generateStableFolderId(path, sceneId);
+      }
+      const name = path.includes('/') ? path.split('/').pop() : path;
+      result.push({
+        id: id,
+        name: name,
+        path: path,
+        order: index
+      });
+    });
+    return result;
+  }
+
+  /**
+   * 给书签绑定对应的 folderId
+   * 通过比对文件夹名字（路径），将最终生成的文件夹 ID 赋值给对应的书签
+   */
+  bindFolderIdsToBookmarks(bookmarks, foldersObjects) {
+    if (!bookmarks || !Array.isArray(bookmarks)) return [];
+    const folderPathToId = new Map();
+    (foldersObjects || []).forEach(f => {
+      if (f.path && f.id) {
+        folderPathToId.set(f.path, f.id);
+      }
+    });
+
+    return bookmarks.map(b => {
+      const updated = { ...b };
+      if (updated.folder && folderPathToId.has(updated.folder)) {
+        updated.folderId = folderPathToId.get(updated.folder);
+      } else if (!updated.folder || updated.folder.trim() === '') {
+        updated.folderId = '';
+        updated.folder = '';
+      }
+      return updated;
+    });
+  }
+
+  /**
+   * 按照用户强制要求的顺序格式化书签数据
+   * 确保保存到本地和上传到云端时，JSON 字段顺序保持一致
+   */
+  formatBookmarkJSON(b) {
+    if (!b || typeof b !== 'object') return b;
+    return {
+      createdAt: b.createdAt || Date.now(),
+      id: b.id || this.generateBookmarkId(),
+      title: b.title || "",
+      url: b.url || "",
+      description: b.description || "",
+      favicon: b.favicon || "",
+      folder: b.folder || "",
+      folderId: b.folderId || "",
+      scene: b.scene || "home",
+      starred: !!b.starred,
+      tags: Array.isArray(b.tags) ? b.tags : [],
+      notes: b.notes || "",
+      order: typeof b.order === 'number' ? b.order : 0,
+      updatedAt: b.updatedAt || Date.now()
+    };
   }
 
   /**

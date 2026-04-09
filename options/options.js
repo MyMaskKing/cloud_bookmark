@@ -155,6 +155,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setInterval(() => {
     updateSyncStatus().catch(() => {});
     updateBrowserSyncInlineStatus().catch(() => {});
+    updateCurrentDeviceRow().catch(() => {}); // 增加此行，确保设备列表中的最后同步时间也自动刷新
   }, 5000);
 });
 
@@ -171,7 +172,7 @@ async function loadConfig() {
     syncIntervalInput.value = config.syncInterval || 5;
   }
 
-  // 如果没有 WebDAV 配置，则隐藏“浏览器书签定时同步场景”
+  // 如果没有 WebDAV 配置，则隐藏“浏览器书签定时上传选择场景”
   const hasWebdav = !!(config && config.serverUrl);
   if (browserBookmarkSyncSceneSection) {
     browserBookmarkSyncSceneSection.style.display = hasWebdav ? 'block' : 'none';
@@ -179,7 +180,7 @@ async function loadConfig() {
 }
 
 /**
- * 根据当前设备行刷新「开始定时同步」按钮
+ * 根据当前设备行刷新「开始定时上传」按钮
  */
 async function refreshBrowserTimedSyncStartButton() {
   if (!browserBookmarkTimedSyncStartBtn || !browserBookmarkSyncSceneSelect) return;
@@ -191,11 +192,11 @@ async function refreshBrowserTimedSyncStartButton() {
   const started = row?.browserBookmarkTimedSyncStarted === true;
   // 需求：已开启时禁用按钮（文字：已开启）
   browserBookmarkTimedSyncStartBtn.disabled = !sceneId || started;
-  browserBookmarkTimedSyncStartBtn.textContent = started ? '已开启' : '开始定时同步';
+  browserBookmarkTimedSyncStartBtn.textContent = started ? '已开启' : '开始定时上传';
 }
 
 /**
- * 加载“浏览器书签定时同步场景”设置
+ * 加载“浏览器书签定时上传场景”设置
  */
 async function loadBrowserBookmarkSyncSceneSetting() {
   try {
@@ -220,7 +221,7 @@ async function loadBrowserBookmarkSyncSceneSetting() {
     const targetSceneId = scenes.some(s => s.id === targetSceneIdRaw) ? targetSceneIdRaw : '';
 
     browserBookmarkSyncSceneSelect.innerHTML = [
-      `<option value="">不选择（关闭定时同步）</option>`,
+      `<option value="">不选择（关闭定时上传）</option>`,
       ...scenes.map(scene => {
         const name = scene.name || scene.id;
         const selected = scene.id === targetSceneId ? 'selected' : '';
@@ -284,7 +285,7 @@ async function loadBrowserBookmarkSyncSceneSetting() {
           await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
           await refreshBrowserTimedSyncStartButton();
           updateBrowserSyncInlineStatus().catch(() => {});
-          showMessage('浏览器书签定时同步场景已保存；需点击「开始定时同步」后才会按间隔同步', 'success');
+          showMessage('浏览器书签定时上传场景已保存；需点击「开始定时上传」后才会按间隔上传', 'success');
         } catch (e) {
           showMessage('保存失败: ' + (e?.message || e), 'error');
         }
@@ -297,7 +298,7 @@ async function loadBrowserBookmarkSyncSceneSetting() {
         try {
           const nextSceneId = browserBookmarkSyncSceneSelect.value;
           if (!nextSceneId) {
-            showMessage('请先选择同步场景', 'error');
+            showMessage('请先选择上传场景', 'error');
             return;
           }
 
@@ -339,7 +340,7 @@ async function loadBrowserBookmarkSyncSceneSetting() {
           await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
           // 为了让“浏览器最后同步时间/错误信息”等在设备列表里立即生效
           await loadDevices();
-          showMessage('已开始浏览器书签定时同步', 'success');
+          showMessage('已开始浏览器书签定时上传', 'success');
 
           await refreshBrowserTimedSyncStartButton();
           updateBrowserSyncInlineStatus().catch(() => {});
@@ -352,7 +353,7 @@ async function loadBrowserBookmarkSyncSceneSetting() {
 
     await refreshBrowserTimedSyncStartButton();
   } catch (e) {
-    console.warn('加载浏览器书签定时同步场景失败:', e);
+    console.warn('加载浏览器书签定时上传场景失败:', e);
   }
 }
 

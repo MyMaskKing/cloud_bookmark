@@ -63,9 +63,9 @@ class WebDAVClient {
 
       throw new Error(`连接失败: HTTP ${response.status}`);
     } catch (error) {
-      return { 
-        success: false, 
-        message: error.message || '无法连接到WebDAV服务器' 
+      return {
+        success: false,
+        message: error.message || '无法连接到WebDAV服务器'
       };
     }
   }
@@ -80,7 +80,7 @@ class WebDAVClient {
       // 如果路径为空，不需要创建目录
       return;
     }
-    
+
     const pathParts = normalizedPath.split('/').filter(p => p);
     let currentPath = '';
 
@@ -93,7 +93,7 @@ class WebDAVClient {
             'Authorization': this.getAuthHeader()
           }
         });
-        
+
         // 201 Created: 目录创建成功
         // 405 Method Not Allowed: 目录已存在（某些服务器返回此状态）
         // 409 Conflict: 目录已存在（坚果云等服务器返回此状态）
@@ -102,7 +102,7 @@ class WebDAVClient {
           // 目录创建成功或已存在，继续
           continue;
         }
-        
+
         // 其他状态码可能需要处理
         if (response.status >= 400 && response.status !== 405 && response.status !== 409) {
           console.warn(`创建目录失败: ${currentPath}, HTTP ${response.status}`);
@@ -121,7 +121,7 @@ class WebDAVClient {
   async readBookmarks(sceneId = null) {
     try {
       await this.ensureDirectory();
-      
+
       const filePath = this.getFilePath(sceneId);
       const url = this.serverUrl + filePath;
       console.log('[WebDAV] readBookmarks GET', { sceneId: sceneId || null, filePath });
@@ -133,9 +133,9 @@ class WebDAVClient {
       });
 
       if (response.status === 404) {
-        // 文件不存在：返回空数据 + 标记 notFound，交由上层决定是否视为失败
+        // 文件不存在：返回空数据 + 标记 notFound
         console.warn('[WebDAV] readBookmarks 404 not found', { sceneId: sceneId || null, filePath });
-        return { bookmarks: [], folders: [], _notFound: true, _filePath: filePath, _etag: null };
+        return { bookmarks: [], folders: [], _notFound: true, _filePath: filePath };
       }
 
       if (!response.ok) {
@@ -144,14 +144,11 @@ class WebDAVClient {
       }
 
       const data = await response.json();
-      const etagHdr = response.headers.get('ETag') || response.headers.get('etag');
-      data._etag = etagHdr ? String(etagHdr).trim() : null;
       console.log('[WebDAV] readBookmarks ok', {
         sceneId: sceneId || null,
         filePath,
         bookmarks: Array.isArray(data?.bookmarks) ? data.bookmarks.length : 0,
-        folders: Array.isArray(data?.folders) ? data.folders.length : 0,
-        etag: data._etag || null
+        folders: Array.isArray(data?.folders) ? data.folders.length : 0
       });
       // 确保返回的数据包含scene字段
       if (sceneId && data.bookmarks) {
@@ -168,20 +165,17 @@ class WebDAVClient {
    * 将书签数据写入WebDAV服务器
    * @param {Object} data - 书签数据
    * @param {String} sceneId - 场景ID（可选，如果提供则写入对应场景的文件）
-   * @param {{ ifMatch?: string|null }} [options] 传入 ifMatch 时使用 If-Match，412 时抛出带 status=412 的错误
    */
-  async writeBookmarks(data, sceneId = null, options = {}) {
+  async writeBookmarks(data, sceneId = null) {
     try {
       await this.ensureDirectory();
-      
+
       const filePath = this.getFilePath(sceneId);
-      const ifMatch = options && options.ifMatch != null && options.ifMatch !== '' ? options.ifMatch : null;
       console.log('[WebDAV] writeBookmarks PUT', {
         sceneId: sceneId || null,
         filePath,
         bookmarks: Array.isArray(data?.bookmarks) ? data.bookmarks.length : 0,
-        folders: Array.isArray(data?.folders) ? data.folders.length : 0,
-        ifMatch: !!ifMatch
+        folders: Array.isArray(data?.folders) ? data.folders.length : 0
       });
       // 确保数据中的书签包含scene字段
       if (sceneId && data.bookmarks) {
@@ -191,14 +185,11 @@ class WebDAVClient {
         };
       }
       const jsonData = JSON.stringify(data, null, 2);
-      
+
       const headers = {
         'Authorization': this.getAuthHeader(),
         'Content-Type': 'application/json'
       };
-      if (ifMatch) {
-        headers['If-Match'] = ifMatch;
-      }
 
       const response = await fetch(this.serverUrl + filePath, {
         method: 'PUT',
@@ -208,12 +199,6 @@ class WebDAVClient {
 
       if (!response.ok) {
         console.error('[WebDAV] writeBookmarks failed', { sceneId: sceneId || null, filePath, status: response.status });
-        if (response.status === 412) {
-          const err = new Error('Precondition Failed');
-          err.status = 412;
-          err.code = 'PRECONDITION_FAILED';
-          throw err;
-        }
         throw new Error(`写入失败: HTTP ${response.status}`);
       }
 
@@ -231,7 +216,7 @@ class WebDAVClient {
   async readSettings() {
     try {
       await this.ensureDirectory();
-      
+
       const filePath = this.getSettingsPath();
       const response = await fetch(this.serverUrl + filePath, {
         method: 'GET',
@@ -263,10 +248,10 @@ class WebDAVClient {
   async writeSettings(settings) {
     try {
       await this.ensureDirectory();
-      
+
       const filePath = this.getSettingsPath();
       const jsonData = JSON.stringify(settings || {}, null, 2);
-      
+
       const response = await fetch(this.serverUrl + filePath, {
         method: 'PUT',
         headers: {
