@@ -130,14 +130,15 @@
     <div class="modal-content">
       <div class="modal-header">
         <div class="modal-header-copy">
-          <span id="modalEyebrow" class="modal-eyebrow">快速收藏</span>
+          <span id="modalEyebrow" class="modal-eyebrow">快速添加</span>
           <h2 id="modalTitle">添加书签</h2>
           <p id="modalSubtitle" class="modal-subtitle">把当前页面整理进你的云书签。</p>
         </div>
         <button class="modal-close" id="closeModal">&times;</button>
       </div>
       <form id="bookmarkForm" class="modal-body">
-        <div class="form-group">
+        <div class="modal-form-scroll">
+        <div class="form-group form-group-primary">
           <label for="bookmarkTitle">标题 *</label>
           <input type="text" id="bookmarkTitle" required>
         </div>
@@ -157,20 +158,21 @@
           <label for="bookmarkTags">标签</label>
           <input type="text" id="bookmarkTags" placeholder="用逗号分隔多个标签">
         </div>
-        <div class="form-group">
+        <div class="form-group form-group-folder">
           <label for="bookmarkFolder">文件夹</label>
-          <div style="display: flex; gap: 8px; align-items: center;">
-            <select id="bookmarkFolder" style="flex: 1;">
+          <div class="folder-select-row">
+            <select id="bookmarkFolder">
               <option value="">未分类</option>
             </select>
-            <button type="button" id="createFolderBtn" class="btn btn-secondary" style="white-space: nowrap;" title="创建新文件夹">+ 新建</button>
+            <button type="button" id="createFolderBtn" class="btn btn-secondary btn-inline" title="创建新文件夹">+ 新建</button>
           </div>
         </div>
-        <div class="form-group">
+        <div class="form-group form-group-toggle">
           <label class="checkbox-label">
             <input type="checkbox" id="bookmarkStarred">
             <span>收藏</span>
           </label>
+        </div>
         </div>
         <div class="form-actions">
           <button type="button" class="btn btn-secondary" id="cancelBtn">取消</button>

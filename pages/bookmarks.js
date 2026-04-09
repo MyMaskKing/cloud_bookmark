@@ -186,6 +186,34 @@ function insertBookmarkSmart(bookmarks, newBookmark) {
   return list;
 }
 
+function showModalActionBarImmediately() {
+  if (!formActionsBar) return;
+  formActionsBar.classList.remove('is-scrolling');
+}
+
+function scheduleModalActionBarReveal(delay = 420) {
+  if (!formActionsBar) return;
+  if (modalActionBarTimer) {
+    clearTimeout(modalActionBarTimer);
+  }
+  modalActionBarTimer = setTimeout(() => {
+    formActionsBar.classList.remove('is-scrolling');
+    modalActionBarTimer = null;
+  }, delay);
+}
+
+function bindModalActionBarAutoHide() {
+  if (!modalFormScroll || !formActionsBar) return;
+
+  modalFormScroll.addEventListener('scroll', () => {
+    const nearBottom = modalFormScroll.scrollTop + modalFormScroll.clientHeight >= modalFormScroll.scrollHeight - 24;
+    if (!nearBottom) {
+      formActionsBar.classList.add('is-scrolling');
+    }
+    scheduleModalActionBarReveal(nearBottom ? 180 : 420);
+  }, { passive: true });
+}
+
 function getHostnameForDisplay(url) {
   if (!url) return '';
   try {
@@ -576,6 +604,8 @@ const bookmarksGrid = document.getElementById('bookmarksGrid');
 const emptyState = document.getElementById('emptyState');
 const bookmarkModal = document.getElementById('bookmarkModal');
 const bookmarkForm = document.getElementById('bookmarkForm');
+const modalFormScroll = document.querySelector('.modal-form-scroll');
+const formActionsBar = document.querySelector('.form-actions');
 const closeModal = document.getElementById('closeModal');
 const cancelBtn = document.getElementById('cancelBtn');
 const foldersList = document.getElementById('foldersList');
@@ -597,6 +627,7 @@ const selectAllBtn = document.getElementById('selectAllBtn');
 // 非阻断 Toast（用于同步失败提示）
 let toastEl = null;
 let toastTimer = null;
+let modalActionBarTimer = null;
 function showToast(message, { title = '提示', type = 'error', duration = 2000 } = {}) {
   try {
     const toastId = 'cloud-bookmark-page-toast';
@@ -780,6 +811,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadTags();
   await updateSyncErrorBanner();
   initSidebarResizer();
+  bindModalActionBarAutoHide();
   setupEventListeners();
   // 设置排序下拉框的默认值
   if (sortSelect) {
@@ -2730,6 +2762,10 @@ function showAddForm(data = {}) {
   // 加载文件夹选项
   loadFolderOptions();
 
+  if (modalFormScroll) {
+    modalFormScroll.scrollTop = 0;
+  }
+  showModalActionBarImmediately();
   bookmarkModal.style.display = 'flex';
   const titleInput = document.getElementById('bookmarkTitle');
   if (titleInput) {
@@ -2760,6 +2796,10 @@ function showEditForm(bookmark) {
 
   loadFolderOptions(bookmark.folder);
 
+  if (modalFormScroll) {
+    modalFormScroll.scrollTop = 0;
+  }
+  showModalActionBarImmediately();
   bookmarkModal.style.display = 'flex';
   const titleInput = document.getElementById('bookmarkTitle');
   if (titleInput) {
@@ -3079,6 +3119,10 @@ function hideModal() {
   if (autoCloseTimer) {
     clearTimeout(autoCloseTimer);
     autoCloseTimer = null;
+  }
+  if (modalActionBarTimer) {
+    clearTimeout(modalActionBarTimer);
+    modalActionBarTimer = null;
   }
   bookmarkModal.style.display = 'none';
   editingBookmarkId = null;
