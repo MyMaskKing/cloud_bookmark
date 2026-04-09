@@ -1330,8 +1330,11 @@ addCurrentBtn.addEventListener('click', async () => {
 
   // 打开添加书签页面
   const source = isFloatingBallPopup ? 'floating-ball' : 'popup';
-  tabsAPI.create({
-    url: runtimeAPI.getURL(`pages/bookmarks.html?action=add&url=${encodeURIComponent(targetUrl)}&title=${encodeURIComponent(targetTitle || '')}&source=${source}`)
+  await sendMessageCompat({
+    action: 'openAddBookmarkWindow',
+    currentUrl: targetUrl,
+    currentTitle: targetTitle || '',
+    source
   });
   // 操作完成后关闭弹窗
   window.close();

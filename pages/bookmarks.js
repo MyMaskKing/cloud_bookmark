@@ -186,6 +186,38 @@ function insertBookmarkSmart(bookmarks, newBookmark) {
   return list;
 }
 
+function getHostnameForDisplay(url) {
+  if (!url) return '';
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch (_) {
+    return '';
+  }
+}
+
+function updateModalHeader(mode, data = {}) {
+  const eyebrowEl = document.getElementById('modalEyebrow');
+  const titleEl = document.getElementById('modalTitle');
+  const subtitleEl = document.getElementById('modalSubtitle');
+  if (!eyebrowEl || !titleEl || !subtitleEl) return;
+
+  const sceneNameEl = document.querySelector('#sceneSwitchBtn .scene-name');
+  const sceneName = sceneNameEl ? sceneNameEl.textContent.trim() : (currentSceneId || 'home');
+  const host = getHostnameForDisplay(data.url);
+  const contextText = host ? `站点：${host}` : '整理到你的当前场景';
+
+  if (mode === 'edit') {
+    eyebrowEl.textContent = '编辑内容';
+    titleEl.textContent = '编辑书签';
+    subtitleEl.textContent = `当前场景：${sceneName} · ${contextText}`;
+    return;
+  }
+
+  eyebrowEl.textContent = '快速收藏';
+  titleEl.textContent = '添加书签';
+  subtitleEl.textContent = `当前场景：${sceneName} · ${contextText}`;
+}
+
 /**
  * 按文件夹分组排序书签，保持文件夹顺序，同一文件夹内的书签保持原有顺序
  * @param {Array} bookmarks - 书签数组
@@ -2685,6 +2717,7 @@ function showAddForm(data = {}) {
 
   editingBookmarkId = null;
   document.getElementById('modalTitle').textContent = '添加书签';
+  updateModalHeader('add', data);
   bookmarkForm.reset();
 
   if (data.url) {
@@ -2698,6 +2731,10 @@ function showAddForm(data = {}) {
   loadFolderOptions();
 
   bookmarkModal.style.display = 'flex';
+  const titleInput = document.getElementById('bookmarkTitle');
+  if (titleInput) {
+    requestAnimationFrame(() => titleInput.focus());
+  }
 }
 
 /**
@@ -2712,6 +2749,7 @@ function showEditForm(bookmark) {
 
   editingBookmarkId = bookmark.id;
   document.getElementById('modalTitle').textContent = '编辑书签';
+  updateModalHeader('edit', bookmark);
 
   document.getElementById('bookmarkTitle').value = bookmark.title || '';
   document.getElementById('bookmarkUrl').value = bookmark.url || '';
@@ -2723,6 +2761,10 @@ function showEditForm(bookmark) {
   loadFolderOptions(bookmark.folder);
 
   bookmarkModal.style.display = 'flex';
+  const titleInput = document.getElementById('bookmarkTitle');
+  if (titleInput) {
+    requestAnimationFrame(() => titleInput.focus());
+  }
 }
 
 /**

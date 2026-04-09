@@ -777,11 +777,12 @@
     if (clickAction === 'quickSave') {
       // 一键模式：直接打开「添加当前页面」的完整界面（等价于弹窗里的“添加当前页面”按钮）
       sendMessageCompat({
-        action: 'openBookmarksPage',
+        action: 'openAddBookmarkWindow',
         currentUrl,
-        currentTitle
+        currentTitle,
+        source: 'floating-ball'
       }).catch(err => {
-        console.error('[悬浮球] openBookmarksPage(quickSave) 异常:', err);
+        console.error('[悬浮球] openAddBookmarkWindow(quickSave) 异常:', err);
       });
     } else {
       // 默认：仅打开弹窗
@@ -799,19 +800,21 @@
       if (!response || !response.success) {
         console.log('[悬浮球] openPopup 失败，尝试打开完整页面');
         return sendMessageCompat({ 
-          action: 'openBookmarksPage',
+          action: 'openAddBookmarkWindow',
           currentUrl,
-          currentTitle
+          currentTitle,
+          source: 'floating-ball'
         });
       }
     }).catch((error) => {
       console.error('[悬浮球] openPopup 异常:', error);
       sendMessageCompat({ 
-        action: 'openBookmarksPage',
+        action: 'openAddBookmarkWindow',
         currentUrl,
-        currentTitle
+        currentTitle,
+        source: 'floating-ball'
       }).catch((err) => {
-        console.error('[悬浮球] openBookmarksPage 也失败:', err);
+        console.error('[悬浮球] openAddBookmarkWindow 也失败:', err);
       });
     });
   }
@@ -915,11 +918,12 @@
       const clickAction = (floatingBallSettingsCache && floatingBallSettingsCache.clickAction) || 'popup';
       if (clickAction === 'quickSave') {
         sendMessageCompat({
-          action: 'openBookmarksPage',
+          action: 'openAddBookmarkWindow',
           currentUrl,
-          currentTitle
+          currentTitle,
+          source: 'floating-ball'
         }).catch(err => {
-          console.error('[悬浮球] openBookmarksPage(quickSave touch) 异常:', err);
+          console.error('[悬浮球] openAddBookmarkWindow(quickSave touch) 异常:', err);
         });
       } else {
         fallbackOpenPopup(currentUrl, currentTitle);

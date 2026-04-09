@@ -866,6 +866,107 @@ async function queryTabsCompat(query) {
   });
 }
 
+function buildAddBookmarkPageUrl({ url = '', title = '', source = 'popup' } = {}) {
+  const params = new URLSearchParams({
+    action: 'add',
+    url: url || '',
+    source: source || 'popup'
+  });
+
+  if (title) {
+    params.set('title', title);
+  }
+
+  return runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
+}
+
+async function openAddBookmarkWindow({ url = '', title = '', source = 'popup' } = {}) {
+  if (!url) {
+    throw new Error('缺少URL');
+  }
+
+  const targetUrl = buildAddBookmarkPageUrl({ url, title, source });
+  const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
+  const popupWidth = 520;
+  const popupHeight = 720;
+
+  const openInTab = async () => {
+    if (typeof browser !== 'undefined' && browser.tabs) {
+      await tabsAPI.create({ url: targetUrl });
+      return { mode: 'tab' };
+    }
+
+    return await new Promise((resolve, reject) => {
+      tabsAPI.create({ url: targetUrl }, (tab) => {
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        if (lastError) {
+          reject(new Error(lastError.message));
+          return;
+        }
+        resolve({ mode: 'tab', tabId: tab && tab.id });
+      });
+    });
+  };
+
+  if (!windowsAPI || typeof windowsAPI.create !== 'function') {
+    return await openInTab();
+  }
+
+  let currentWindow = null;
+  try {
+    if (typeof browser !== 'undefined' && browser.windows && browser.windows.getCurrent) {
+      currentWindow = await windowsAPI.getCurrent();
+    } else {
+      currentWindow = await new Promise((resolve) => {
+        windowsAPI.getCurrent((win) => {
+          const lastError = chrome.runtime && chrome.runtime.lastError;
+          resolve(lastError ? null : win);
+        });
+      });
+    }
+  } catch (_) {
+    currentWindow = null;
+  }
+
+  let left = Math.floor((1280 - popupWidth) / 2);
+  let top = Math.max(50, Math.floor((720 - popupHeight) / 2));
+  if (currentWindow && typeof currentWindow.left === 'number' && typeof currentWindow.width === 'number') {
+    left = Math.floor(currentWindow.left + (currentWindow.width - popupWidth) / 2);
+    const windowTop = typeof currentWindow.top === 'number' ? currentWindow.top : 0;
+    const windowHeight = typeof currentWindow.height === 'number' ? currentWindow.height : popupHeight;
+    top = Math.max(50, Math.floor(windowTop + (windowHeight - popupHeight) / 2));
+  }
+
+  const popupOptions = {
+    url: targetUrl,
+    type: 'popup',
+    width: popupWidth,
+    height: popupHeight,
+    left,
+    top
+  };
+
+  try {
+    if (typeof browser !== 'undefined' && browser.windows) {
+      const win = await windowsAPI.create(popupOptions);
+      return { mode: 'popup', windowId: win?.id };
+    }
+
+    return await new Promise((resolve, reject) => {
+      windowsAPI.create(popupOptions, (win) => {
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        if (lastError) {
+          reject(new Error(lastError.message));
+          return;
+        }
+        resolve({ mode: 'popup', windowId: win && win.id });
+      });
+    });
+  } catch (_) {
+    return await openInTab();
+  }
+}
+
 async function sendMessageToTabCompat(tabId, message) {
   if (!tabsAPI || typeof tabsAPI.sendMessage !== 'function') return null;
   if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.sendMessage) {
@@ -1144,16 +1245,11 @@ if (contextMenusAPI && contextMenusAPI.onClicked && typeof contextMenusAPI.onCli
             return;
           }
 
-          // 打开添加书签页面
-          if (typeof browser !== 'undefined' && browser.tabs) {
-            await tabsAPI.create({
-              url: runtimeAPI.getURL('pages/bookmarks.html?action=add&url=' + encodeURIComponent(targetUrl))
-            });
-          } else {
-            tabsAPI.create({
-              url: runtimeAPI.getURL('pages/bookmarks.html?action=add&url=' + encodeURIComponent(targetUrl))
-            });
-          }
+          await openAddBookmarkWindow({
+            url: targetUrl,
+            title: (tab && tab.title) || '',
+            source: 'shortcut'
+          });
         } catch (error) {
           console.error('[后台] 打开书签页面失败:', error);
         }
@@ -1254,23 +1350,11 @@ if (commandsAPI && commandsAPI.onCommand && typeof commandsAPI.onCommand.addList
           }
 
           if (tab && tab.url) {
-            // 构建URL参数，包含URL和标题，使用 source=shortcut 以便自动关闭
-            const params = new URLSearchParams({
-              action: 'add',
+            await openAddBookmarkWindow({
               url: tab.url,
+              title: tab.title || '',
               source: 'shortcut'
             });
-            if (tab.title) {
-              params.set('title', tab.title);
-            }
-
-            const targetUrl = runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
-
-            if (typeof browser !== 'undefined' && browser.tabs) {
-              await tabsAPI.create({ url: targetUrl });
-            } else {
-              tabsAPI.create({ url: targetUrl });
-            }
           } else {
             console.error('[后台] 无法获取有效的活动标签页（快捷键）');
           }
@@ -1587,6 +1671,19 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     })();
 
     return true; // 异步响应，保持消息通道开放
+  }
+
+  if (request.action === 'openAddBookmarkWindow') {
+    openAddBookmarkWindow({
+      url: request.currentUrl,
+      title: request.currentTitle || '',
+      source: request.source || 'popup'
+    }).then((result) => {
+      sendResponse({ success: true, result });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message || String(error) });
+    });
+    return true;
   }
 
   if (request.action === 'openBookmarksPage') {
