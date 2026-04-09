@@ -1800,6 +1800,30 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'importBrowserBookmarksToScene') {
+    syncQueue.enqueue(() => importBrowserBookmarksToSceneUnified(request.sceneId)).then((result) => {
+      sendResponse({ success: true, result });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message || String(error) });
+    });
+    return true;
+  }
+
+  if (request.action === 'importBookmarkPayloadToScene') {
+    syncQueue.enqueue(() =>
+      importBookmarkPayloadToSceneUnified(
+        request.sceneId,
+        request.bookmarks || [],
+        request.folders || []
+      )
+    ).then((result) => {
+      sendResponse({ success: true, result });
+    }).catch(error => {
+      sendResponse({ success: false, error: error.message || String(error) });
+    });
+    return true;
+  }
+
   if (request.action === 'configUpdated') {
     // WebDAV 配置保存成功后，重置 browser->cloud 的失败计数，允许再次尝试
     (async () => {
@@ -3039,3 +3063,76 @@ async function getDeviceName() {
  * 判断是否为“未知设备”——在这种情况下跳过严格授权校验，避免误报
  */
 
+async function importBrowserBookmarksToSceneUnified(targetSceneId) {
+  if (!targetSceneId) {
+    throw new Error('未传入场景信息');
+  }
+
+  const scenes = await storage.getScenes();
+  if (!scenes.some(s => s.id === targetSceneId)) {
+    throw new Error('Target scene does not exist');
+  }
+
+  const importResult = await importFromBrowserBookmarks();
+  if (importResult?.unsupported) {
+    throw new Error(importResult.reason || 'Browser bookmarks API is unavailable');
+  }
+
+  const importedBookmarks = (importResult.bookmarks || []).map(b => ({
+    ...b,
+    folder: b.folder ? normalizeFolderPath(b.folder) : undefined,
+    scene: targetSceneId
+  }));
+
+  return importBookmarkPayloadToSceneUnified(targetSceneId, importedBookmarks, importResult.folders || []);
+}
+
+async function importBookmarkPayloadToSceneUnified(targetSceneId, importedBookmarks, importedFolders = []) {
+  if (!targetSceneId) {
+    throw new Error('Scene is required');
+  }
+
+  const scenes = await storage.getScenes();
+  if (!scenes.some(s => s.id === targetSceneId)) {
+    throw new Error('Target scene does not exist');
+  }
+
+  const normalizedBookmarks = (importedBookmarks || []).map(b => {
+    const rawFolder = typeof b?.folder === 'string'
+      ? b.folder
+      : (b?.folder && typeof b.folder === 'object' && typeof b.folder.path === 'string')
+        ? b.folder.path
+        : '';
+    return {
+      ...b,
+      folder: rawFolder ? normalizeFolderPath(rawFolder) : undefined,
+      scene: targetSceneId
+    };
+  });
+
+  const normalizedFolders = (importedFolders || []).map(f => {
+    if (typeof f === 'string') return normalizeFolderPath(f);
+    if (f && typeof f === 'object' && typeof f.path === 'string') return normalizeFolderPath(f.path);
+    return '';
+  }).filter(Boolean);
+
+  const config = await storage.getConfig();
+  const hasWebdav = !!(config && config.serverUrl);
+  const baseData = hasWebdav
+    ? await new WebDAVClient(config).readBookmarks(targetSceneId)
+    : await storage.getBookmarks(targetSceneId);
+
+  const { merged, foldersForScene } = mergeBrowserImportIntoCloudBookmarks(
+    normalizedBookmarks,
+    normalizedFolders,
+    baseData,
+    targetSceneId
+  );
+
+  if (hasWebdav) {
+    await writeBrowserBookmarksToCloud(merged, foldersForScene, targetSceneId);
+  }
+
+  await storage.saveBookmarks(merged, foldersForScene, targetSceneId);
+  return { success: true, targetSceneId, bookmarkCount: merged.length };
+}

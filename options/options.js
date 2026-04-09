@@ -892,33 +892,36 @@ async function updateBrowserSyncInlineStatus() {
  */
 exportJsonBtn.addEventListener('click', async () => {
   try {
-    // 只导出当前场景的书签
-    const currentSceneId = await storage.getCurrentScene();
-    const data = await storage.getBookmarks(currentSceneId);
+    const targetSceneId = await showSceneSelectDialog();
+    if (!targetSceneId) return;
+
+    const scenes = await storage.getScenes();
+    const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
+    const data = await storage.getBookmarks(targetSceneId);
     const jsonData = JSON.stringify(data, null, 2);
 
     const blob = new Blob([jsonData], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `bookmarks_${Date.now()}.json`;
+    a.download = `${targetSceneId}_bookmarks_${Date.now()}.json`;
     a.click();
     URL.revokeObjectURL(url);
 
-    showMessage('导出成功', 'success');
+    showMessage(`导出成功：${sceneName}`, 'success');
   } catch (error) {
     showMessage('导出失败: ' + error.message, 'error');
   }
 });
 
-/**
- * 导出书签为HTML格式
- */
 exportHtmlBtn.addEventListener('click', async () => {
   try {
-    // 只导出当前场景的书签
-    const currentSceneId = await storage.getCurrentScene();
-    const data = await storage.getBookmarks(currentSceneId);
+    const targetSceneId = await showSceneSelectDialog();
+    if (!targetSceneId) return;
+
+    const scenes = await storage.getScenes();
+    const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
+    const data = await storage.getBookmarks(targetSceneId);
     const bookmarks = data.bookmarks || [];
 
     if (typeof exportToHtml === 'function') {
@@ -928,22 +931,19 @@ exportHtmlBtn.addEventListener('click', async () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `bookmarks_${Date.now()}.html`;
+      a.download = `${targetSceneId}_bookmarks_${Date.now()}.html`;
       a.click();
       URL.revokeObjectURL(url);
 
-      showMessage('导出成功', 'success');
+      showMessage(`导出成功：${sceneName}`, 'success');
     } else {
-      showMessage('HTML导出功能未加载', 'error');
+      showMessage('HTML 导出功能不可用', 'error');
     }
   } catch (error) {
     showMessage('导出失败: ' + error.message, 'error');
   }
 });
 
-/**
- * 从浏览器书签栏导入
- */
 importBrowserBtn.addEventListener('click', async () => {
   if (!confirm('这将导入浏览器书签栏中的所有书签，是否继续？')) {
     return;
@@ -958,76 +958,18 @@ importBrowserBtn.addEventListener('click', async () => {
     }
 
     if (typeof importFromBrowserBookmarks === 'function') {
-      const data = await importFromBrowserBookmarks();
-      if (data.unsupported) {
-        showMessage(data.reason || '当前浏览器不支持书签 API，请改用 HTML 导入或桌面浏览器', 'error');
-        return;
+      const response = await sendWithRetry(
+        { action: 'importBrowserBookmarksToScene', sceneId: targetSceneId },
+        { retries: 2, delay: 300 }
+      );
+      if (!response?.success || !response?.result?.success) {
+        throw new Error(response?.error || response?.result?.error || '导入失败');
       }
-
-      // 规范化路径 + 补齐父级路径（保证 folders 与画面树一致，例如补齐 “.../4.仕事&邮件”）
-      const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
-      const expandFolderPathsPreserveOrder = (paths) => {
-        const out = [];
-        const seen = new Set();
-        (paths || []).forEach((p) => {
-          const n = normalizeFolder(p || '');
-          if (!n) return;
-          const parts = n.split('/').filter(Boolean);
-          let cur = '';
-          for (const part of parts) {
-            cur = cur ? `${cur}/${part}` : part;
-            if (!seen.has(cur)) {
-              seen.add(cur);
-              out.push(cur);
-            }
-          }
-        });
-        return out;
-      };
-      const importedBookmarks = (data.bookmarks || []).map(b => ({
-        ...b,
-        folder: b.folder ? normalizeFolder(b.folder) : undefined,
-        scene: targetSceneId // 设置场景
-      }));
-
-      await sendMessageCompat({ action: 'sync', sceneId: targetSceneId });
-      // 获取当前场景书签（与云端对齐后再合并导入）
-      const sceneData = await storage.getBookmarks(targetSceneId);
-      const sceneBookmarks = sceneData.bookmarks || [];
-      const urlMap = new Map();
-      sceneBookmarks.forEach(b => urlMap.set(b.url, b));
-
-      let added = 0;
-      const addedIds = [];
-      importedBookmarks.forEach(b => {
-        if (!urlMap.has(b.url)) {
-          sceneBookmarks.push(b);
-          urlMap.set(b.url, b);
-          added += 1;
-          if (b && b.id) addedIds.push(b.id);
-        }
-      });
-
-      // folders：优先使用导入返回的 folders（完整层级），并补齐父级；再补上书签中引用的 folder
-      const importedFoldersRaw = (data.folders || []).map(normalizeFolder).filter(Boolean);
-      const bookmarkFoldersRaw = sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean);
-      const foldersForScene = expandFolderPathsPreserveOrder([...importedFoldersRaw, ...bookmarkFoldersRaw]);
-
-      // 仅更新目标场景（保留其他场景不变），并保存该场景的 folders（包含父级层级）
-      await storage.saveBookmarks(sceneBookmarks, foldersForScene, targetSceneId);
-
-      // 1. 同步到云端（异步执行，不阻塞 UI 反馈）
-      sendMessageCompat({
-        action: 'syncToCloud',
-        bookmarks: sceneBookmarks,
-        folders: foldersForScene,
-        sceneId: targetSceneId,
-        patch: { bookmarkUpserts: addedIds }
-      }).catch(err => console.error('导入后后台同步失败:', err));
 
       const scenes = await storage.getScenes();
       const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
-      showMessage(`导入完成，正在后台同步 ${added} 个书签到"${sceneName}"场景`, 'success');
+      const total = response.result.bookmarkCount || 0;
+      showMessage(`导入完成，已按“浏览器书签定时上传”同规则合并到"${sceneName}"场景，共 ${total} 条`, 'success');
     } else {
       showMessage('浏览器书签导入功能未加载', 'error');
     }
@@ -2149,11 +2091,11 @@ importFile.addEventListener('change', async (e) => {
     if (file.name.endsWith('.json')) {
       data = JSON.parse(text);
     } else if (file.name.endsWith('.html')) {
-      // 解析HTML格式的书签
+      // 解析导入的 HTML 书签
       if (typeof parseHtmlBookmarks === 'function') {
         data = parseHtmlBookmarks(text);
       } else {
-        showMessage('HTML解析功能未加载', 'error');
+        showMessage('HTML 解析功能不可用', 'error');
         return;
       }
     } else {
@@ -2162,80 +2104,36 @@ importFile.addEventListener('change', async (e) => {
     }
 
     if (data.bookmarks && Array.isArray(data.bookmarks)) {
-      // 选择导入场景
       const targetSceneId = await showSceneSelectDialog();
       if (!targetSceneId) {
-        // 用户取消了选择
         importFile.value = '';
         return;
       }
 
-      // 规范化路径 + 补齐父级路径（保证 folders 与画面树一致）
-      const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
-      const expandFolderPathsPreserveOrder = (paths) => {
-        const out = [];
-        const seen = new Set();
-        (paths || []).forEach((p) => {
-          const n = normalizeFolder(p || '');
-          if (!n) return;
-          const parts = n.split('/').filter(Boolean);
-          let cur = '';
-          for (const part of parts) {
-            cur = cur ? `${cur}/${part}` : part;
-            if (!seen.has(cur)) {
-              seen.add(cur);
-              out.push(cur);
-            }
-          }
-        });
-        return out;
-      };
       const importedBookmarks = data.bookmarks.map(b => ({
         ...b,
-        folder: b.folder ? normalizeFolder(b.folder) : undefined,
-        scene: targetSceneId // 设置场景
+        scene: targetSceneId
       }));
 
-      await sendMessageCompat({ action: 'sync', sceneId: targetSceneId });
-      // 获取当前场景书签（与云端对齐后再合并导入）
-      const sceneData = await storage.getBookmarks(targetSceneId);
-      const sceneBookmarks = sceneData.bookmarks || [];
-      const urlMap = new Map();
-      sceneBookmarks.forEach(b => urlMap.set(b.url, b));
-
-      let added = 0;
-      const addedIds = [];
-      importedBookmarks.forEach(b => {
-        if (!urlMap.has(b.url)) {
-          sceneBookmarks.push(b);
-          urlMap.set(b.url, b);
-          added += 1;
-          if (b && b.id) addedIds.push(b.id);
-        }
-      });
-
-      // folders：优先使用导入数据携带的 folders（若有），并补齐父级；再补上书签引用的 folder
-      const importedFoldersRaw = (data.folders || []).map(normalizeFolder).filter(Boolean);
-      const bookmarkFoldersRaw = sceneBookmarks.map(b => normalizeFolder(b.folder)).filter(Boolean);
-      const foldersForScene = expandFolderPathsPreserveOrder([...importedFoldersRaw, ...bookmarkFoldersRaw]);
-
-      // 仅更新目标场景（保留其他场景不变），并保存该场景的 folders（包含父级层级）
-      await storage.saveBookmarks(sceneBookmarks, foldersForScene, targetSceneId);
-
-      // 1. 同步到云端（异步执行，不阻塞 UI 反馈）
-      sendMessageCompat({
-        action: 'syncToCloud',
-        bookmarks: sceneBookmarks,
-        folders: foldersForScene,
-        sceneId: targetSceneId,
-        patch: { bookmarkUpserts: addedIds }
-      }).catch(err => console.error('导入后后台同步失败:', err));
+      const response = await sendWithRetry(
+        {
+          action: 'importBookmarkPayloadToScene',
+          sceneId: targetSceneId,
+          bookmarks: importedBookmarks,
+          folders: data.folders || []
+        },
+        { retries: 2, delay: 300 }
+      );
+      if (!response?.success || !response?.result?.success) {
+        throw new Error(response?.error || response?.result?.error || '导入失败');
+      }
 
       const scenes = await storage.getScenes();
       const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
-      showMessage(`导入完成，正在后台同步 ${added} 个书签到"${sceneName}"场景`, 'success');
+      const total = response.result.bookmarkCount || 0;
+      showMessage(`导入完成，已按统一规则合并到"${sceneName}"场景，共 ${total} 条`, 'success');
     } else {
-      showMessage('文件格式不正确', 'error');
+      showMessage('文件内容格式不正确', 'error');
     }
   } catch (error) {
     showMessage('导入失败: ' + error.message, 'error');
@@ -2244,9 +2142,6 @@ importFile.addEventListener('change', async (e) => {
   importFile.value = '';
 });
 
-/**
- * 将本机身份置换为设备列表中的某一条：移除置换前的当前设备条目，写入新的 deviceInfo，并同步云端
- */
 async function adoptDeviceAsCurrent(targetId) {
   if (!targetId) return;
   try {
@@ -3183,4 +3078,3 @@ try {
 } catch (e) {
   // 忽略：部分环境可能不允许在此处注册
 }
-

@@ -9,98 +9,88 @@
 function parseHtmlBookmarks(htmlText) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(htmlText, 'text/html');
-  
+
   const bookmarks = [];
   const folders = [];
-
   const normalizeFolder = (p) => (p || '').trim().replace(/\/+/g, '/').replace(/^\/|\/$/g, '');
-  
-  // 递归解析书签节点
-  function parseNode(node, currentFolder = '') {
-    if (!node) return;
-    
-    // 处理文件夹（H3标签）
-    const folderNodes = node.querySelectorAll('H3');
-    folderNodes.forEach(folderNode => {
-      const folderName = folderNode.textContent.trim();
-      const folderPath = normalizeFolder(currentFolder ? `${currentFolder}/${folderName}` : folderName);
-      if (folderPath && !folders.includes(folderPath)) {
-        folders.push(folderPath);
+
+  function parseContainer(container, currentFolder = '') {
+    if (!container) return;
+
+    Array.from(container.children || []).forEach((child) => {
+      if (!child || child.tagName !== 'DT') return;
+
+      const folderNode = child.querySelector(':scope > H3');
+      if (folderNode) {
+        const folderName = folderNode.textContent.trim();
+        const folderPath = normalizeFolder(currentFolder ? `${currentFolder}/${folderName}` : folderName);
+        if (folderPath && !folders.includes(folderPath)) {
+          folders.push(folderPath);
+        }
+
+        let nested = child.nextElementSibling;
+        if (!nested || nested.tagName !== 'DL') {
+          nested = child.querySelector(':scope > DL');
+        }
+        if (nested) {
+          parseContainer(nested, folderPath);
+        }
+        return;
       }
-      
-      // 查找文件夹下的DL节点
-      let dlNode = folderNode.nextElementSibling;
-      while (dlNode && dlNode.tagName !== 'DL') {
-        dlNode = dlNode.nextElementSibling;
-      }
-      
-      if (dlNode) {
-        parseNode(dlNode, folderPath);
-      }
-    });
-    
-    // 处理书签链接（A标签）
-    const linkNodes = node.querySelectorAll('A');
-    linkNodes.forEach(linkNode => {
+
+      const linkNode = child.querySelector(':scope > A');
+      if (!linkNode) return;
+
       const href = linkNode.getAttribute('HREF');
       const title = linkNode.textContent.trim();
       const addDate = linkNode.getAttribute('ADD_DATE');
       const icon = linkNode.getAttribute('ICON');
-      
+
       if (href && title) {
-        const bookmark = {
+        bookmarks.push({
           id: Date.now().toString(36) + Math.random().toString(36).substr(2),
-          title: title,
+          title,
           url: href,
           folder: currentFolder || undefined,
           favicon: icon || undefined,
           createdAt: addDate ? parseInt(addDate) * 1000 : Date.now(),
           updatedAt: Date.now(),
           starred: false
-        };
-        
-        bookmarks.push(bookmark);
+        });
       }
     });
   }
-  
-  // 查找所有DL节点
-  const dlNodes = doc.querySelectorAll('DL');
-  dlNodes.forEach(dlNode => {
-    parseNode(dlNode);
-  });
-  
-  // 如果没有找到DL节点，尝试直接查找A标签
+
+  const rootDl = doc.querySelector('DL');
+  if (rootDl) {
+    parseContainer(rootDl);
+  }
+
   if (bookmarks.length === 0) {
     const allLinks = doc.querySelectorAll('A');
     allLinks.forEach(link => {
       const href = link.getAttribute('HREF');
       const title = link.textContent.trim();
-      
+
       if (href && title) {
-        const bookmark = {
+        bookmarks.push({
           id: Date.now().toString(36) + Math.random().toString(36).substr(2),
-          title: title,
+          title,
           url: href,
           createdAt: Date.now(),
           updatedAt: Date.now(),
           starred: false
-        };
-        
-        bookmarks.push(bookmark);
+        });
       }
     });
   }
-  
+
   return {
-    bookmarks: bookmarks,
-    folders: folders
+    bookmarks,
+    folders
   };
 }
 
-/**
- * 从浏览器书签API导入书签
- */
 async function importFromBrowserBookmarks() {
   return new Promise((resolve, reject) => {
     const bookmarks = [];
