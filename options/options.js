@@ -1669,7 +1669,7 @@ async function loadUiSettings() {
     parseInt(addBookmarkPopup.heightMobile, 10) ||
     parseInt(legacyFloatingBallAdd.heightMobile, 10) ||
     parseInt(legacyIconAdd.heightMobile, 10) ||
-    90;
+    83;
   if (addBookmarkPopupHeightPc) {
     addBookmarkPopupHeightPc.value = addPopupHeightPcValue;
   }
@@ -1918,7 +1918,7 @@ function normalizeAddPopupHeightPc() {
 
 function normalizeAddPopupHeightMobile() {
   const raw = addBookmarkPopupHeightMobile ? parseInt(addBookmarkPopupHeightMobile.value, 10) : NaN;
-  return Number.isFinite(raw) ? Math.min(100, Math.max(50, raw)) : 90;
+  return Number.isFinite(raw) ? Math.min(100, Math.max(50, raw)) : 83;
 }
 
 async function saveAddBookmarkPopupHeightLocal() {

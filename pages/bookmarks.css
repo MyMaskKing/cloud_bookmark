@@ -977,7 +977,7 @@ body.cb-add-flow-lock {
 }
 
 :root {
-  --cb-add-popup-mobile-height-vh: 90;
+  --cb-add-popup-mobile-height-vh: 83;
 }
 
 .modal-header {
@@ -1482,7 +1482,7 @@ body.cb-add-flow-lock {
 /* 仅触屏设备使用“按 vh 固定添加弹窗高度” */
 @media (max-width: 768px) and (hover: none) and (pointer: coarse) {
   .modal-content {
-    height: min(calc(var(--cb-add-popup-mobile-height-vh, 90) * 1vh), calc(100vh - 12px));
+    height: min(calc(var(--cb-add-popup-mobile-height-vh, 83) * 1vh), calc(100vh - 12px));
   }
 }
 

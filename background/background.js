@@ -965,7 +965,7 @@ function resolveAddPopupSettings(settings, source = 'popup') {
   );
   const heightMobile = clampInt(
     unified.heightMobile,
-    clampInt(legacy.heightMobile, 90, 50, 100),
+    clampInt(legacy.heightMobile, 83, 50, 100),
     50,
     100
   );
@@ -1007,7 +1007,7 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
   const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
   const popupWidth = 520;
   const defaultPcHeight = 720;
-  const defaultMobileVh = 90;
+  const defaultMobileVh = 83;
   const safePcHeight = clampInt(pcHeight, defaultPcHeight, 400, 1200);
   const safeMobileVh = clampInt(mobileVh, defaultMobileVh, 50, 100);
 

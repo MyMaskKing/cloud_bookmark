@@ -879,7 +879,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 /**
  * 检查URL参数（用于添加书签）
  */
-function clampAddPopupMobileHeightVh(value, fallback = 90) {
+function clampAddPopupMobileHeightVh(value, fallback = 83) {
   const parsed = parseInt(value, 10);
   const candidate = Number.isFinite(parsed) ? parsed : fallback;
   return Math.min(100, Math.max(50, candidate));
@@ -892,11 +892,11 @@ async function applyAddPopupMobileHeightForAddFlow(source) {
     const legacy = source === 'floating-ball'
       ? (settings?.floatingBallAddPopup || {})
       : (settings?.iconAddPopup || {});
-    const fallback = clampAddPopupMobileHeightVh(legacy.heightMobile, 90);
+    const fallback = clampAddPopupMobileHeightVh(legacy.heightMobile, 83);
     const mobileHeightVh = clampAddPopupMobileHeightVh(unified.heightMobile, fallback);
     document.documentElement.style.setProperty('--cb-add-popup-mobile-height-vh', String(mobileHeightVh));
   } catch (_) {
-    document.documentElement.style.setProperty('--cb-add-popup-mobile-height-vh', '90');
+    document.documentElement.style.setProperty('--cb-add-popup-mobile-height-vh', '83');
   }
 }
 
