@@ -914,6 +914,8 @@ async function checkUrlParams() {
 
   // 如果是从快捷键、弹窗或悬浮球打开的，隐藏主内容，只显示添加/编辑表单
   if (pageSource === 'shortcut' || pageSource === 'popup' || pageSource === 'floating-ball') {
+    document.documentElement.classList.add('cb-add-flow-lock');
+    document.body.classList.add('cb-add-flow-lock');
     const appContainer = document.querySelector('.app-container');
     if (appContainer) {
       // 隐藏侧边栏和主内容区域
@@ -931,6 +933,9 @@ async function checkUrlParams() {
       document.body.style.padding = '0';
       document.body.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
     }
+  } else {
+    document.documentElement.classList.remove('cb-add-flow-lock');
+    document.body.classList.remove('cb-add-flow-lock');
   }
 
   if (action === 'add') {
