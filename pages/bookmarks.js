@@ -526,6 +526,7 @@ let foldersInitialized = false; // 标记文件夹是否已初始化展开状态
 let batchMode = false;
 let selectedBookmarkIds = new Set();
 let pageSource = null; // 记录页面来源（popup/floating-ball等）
+let sourceTabId = null; // 记录来源标签页ID（用于关闭后恢复焦点）
 let autoCloseTimer = null; // 自动关闭定时器
 let orderSyncPending = false; // 标记是否有未执行的排序同步
 let draggingBookmarkId = null; // 当前拖拽的书签ID（自定义排序）
@@ -882,6 +883,9 @@ function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const action = params.get('action');
   pageSource = params.get('source'); // 记录页面来源
+  const sourceTabIdParam = params.get('sourceTabId');
+  const parsedSourceTabId = parseInt(sourceTabIdParam, 10);
+  sourceTabId = Number.isFinite(parsedSourceTabId) ? parsedSourceTabId : null;
 
   // 如果是从快捷键、弹窗或悬浮球打开的，隐藏主内容，只显示添加/编辑表单
   if (pageSource === 'shortcut' || pageSource === 'popup' || pageSource === 'floating-ball') {
@@ -927,6 +931,17 @@ function checkUrlParams() {
       setTimeout(tryShowEditForm, 200);
     }
   }
+}
+
+/**
+ * 关闭当前标签页，并尽量回到触发添加流程的来源标签页
+ */
+function closeCurrentTabFromAddFlow() {
+  const closePayload = { action: 'closeCurrentTab' };
+  if (typeof sourceTabId === 'number') {
+    closePayload.targetTabId = sourceTabId;
+  }
+  return sendMessageCompat(closePayload);
 }
 
 /**
@@ -3130,7 +3145,7 @@ function hideModal() {
   // 如果是从弹窗、悬浮球或快捷键打开的，关闭整个页面
   if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
     // 先尝试通过后台脚本关闭标签页
-    sendMessageCompat({ action: 'closeCurrentTab' }).then(() => {
+    closeCurrentTabFromAddFlow().then(() => {
       console.log('[书签管理] 标签页已通过后台脚本关闭');
     }).catch((error) => {
       console.warn('[书签管理] 通过后台脚本关闭标签页失败，尝试直接关闭:', error);
@@ -3185,19 +3200,6 @@ function showSuccessInModal(message = '添加成功') {
   if (closeBtn) {
     closeBtn.addEventListener('click', () => {
       hideModal();
-      // 如果是从弹窗/悬浮球/快捷键打开的，关闭页面
-      if (pageSource === 'popup' || pageSource === 'floating-ball' || pageSource === 'shortcut') {
-        sendMessageCompat({ action: 'closeCurrentTab' }).then(() => {
-          console.log('[书签管理] 标签页已通过后台脚本关闭');
-        }).catch((error) => {
-          console.warn('[书签管理] 通过后台脚本关闭标签页失败，尝试直接关闭:', error);
-          try {
-            window.close();
-          } catch (e) {
-            console.warn('[书签管理] 直接关闭窗口也失败:', e);
-          }
-        });
-      }
     });
   }
 }

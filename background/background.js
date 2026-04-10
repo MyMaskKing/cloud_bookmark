@@ -933,7 +933,7 @@ function clampInt(value, fallback, min, max) {
   return candidate;
 }
 
-function buildAddBookmarkPageUrl({ url = '', title = '', source = 'popup' } = {}) {
+function buildAddBookmarkPageUrl({ url = '', title = '', source = 'popup', sourceTabId = null } = {}) {
   const params = new URLSearchParams({
     action: 'add',
     url: url || '',
@@ -942,6 +942,10 @@ function buildAddBookmarkPageUrl({ url = '', title = '', source = 'popup' } = {}
 
   if (title) {
     params.set('title', title);
+  }
+
+  if (typeof sourceTabId === 'number' && sourceTabId >= 0 && !Number.isNaN(sourceTabId)) {
+    params.set('sourceTabId', String(sourceTabId));
   }
 
   return runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
@@ -971,7 +975,7 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
     }
   }
 
-  const targetUrl = buildAddBookmarkPageUrl({ url, title, source });
+  const targetUrl = buildAddBookmarkPageUrl({ url, title, source, sourceTabId: targetTabId });
   const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
   const popupWidth = 520;
   const settings = await storage.getSettings().catch(() => ({}));
@@ -1350,7 +1354,8 @@ if (contextMenusAPI && contextMenusAPI.onClicked && typeof contextMenusAPI.onCli
           await openAddBookmarkWindow({
             url: targetUrl,
             title: (tab && tab.title) || '',
-            source: 'shortcut'
+            source: 'shortcut',
+            tabId: tab && typeof tab.id === 'number' ? tab.id : null
           });
         } catch (error) {
           console.error('[后台] 打开书签页面失败:', error);
@@ -1455,7 +1460,8 @@ if (commandsAPI && commandsAPI.onCommand && typeof commandsAPI.onCommand.addList
             await openAddBookmarkWindow({
               url: tab.url,
               title: tab.title || '',
-              source: 'shortcut'
+              source: 'shortcut',
+              tabId: typeof tab.id === 'number' ? tab.id : null
             });
           } else {
             console.error('[后台] 无法获取有效的活动标签页（快捷键）');
@@ -1967,13 +1973,56 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'closeCurrentTab') {
     console.log('[后台] 收到 closeCurrentTab 请求');
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+    const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
+    const targetTabId = (typeof request.targetTabId === 'number' && request.targetTabId >= 0 && !Number.isNaN(request.targetTabId))
+      ? request.targetTabId
+      : null;
+
+    const focusTargetTab = async (closingTabId) => {
+      if (typeof targetTabId !== 'number' || targetTabId === closingTabId) return;
+      try {
+        let targetTab = null;
+        if (typeof browser !== 'undefined' && browser.tabs && typeof tabsAPI.get === 'function') {
+          targetTab = await tabsAPI.get(targetTabId).catch(() => null);
+        } else if (typeof tabsAPI.get === 'function') {
+          targetTab = await new Promise((resolve) => {
+            tabsAPI.get(targetTabId, (tab) => {
+              const lastError = chrome.runtime && chrome.runtime.lastError;
+              resolve(lastError ? null : (tab || null));
+            });
+          });
+        }
+        if (!targetTab || typeof targetTab.id !== 'number') return;
+
+        if (windowsAPI && typeof windowsAPI.update === 'function' && typeof targetTab.windowId === 'number') {
+          if (typeof browser !== 'undefined' && browser.windows) {
+            await windowsAPI.update(targetTab.windowId, { focused: true }).catch(() => { });
+          } else {
+            await new Promise((resolve) => {
+              windowsAPI.update(targetTab.windowId, { focused: true }, () => resolve());
+            });
+          }
+        }
+
+        if (typeof browser !== 'undefined' && browser.tabs) {
+          await tabsAPI.update(targetTabId, { active: true }).catch(() => { });
+        } else {
+          await new Promise((resolve) => {
+            tabsAPI.update(targetTabId, { active: true }, () => resolve());
+          });
+        }
+      } catch (_) {
+        // ignore focus-restore errors
+      }
+    };
 
     // 获取发送消息的标签页ID
     if (sender && sender.tab && sender.tab.id) {
       const tabId = sender.tab.id;
       if (typeof browser !== 'undefined' && browser.tabs) {
         // Firefox: 使用 Promise
-        tabsAPI.remove(tabId).then(() => {
+        tabsAPI.remove(tabId).then(async () => {
+          await focusTargetTab(tabId);
           console.log('[后台] closeCurrentTab 成功');
           sendResponse({ success: true });
         }).catch(error => {
@@ -1982,7 +2031,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         });
       } else {
         // Chrome: 使用回调
-        tabsAPI.remove(tabId, () => {
+        tabsAPI.remove(tabId, async () => {
           const lastError = chrome.runtime.lastError;
           if (lastError) {
             // 忽略标签页不存在的错误（可能已经被关闭）
@@ -1994,6 +2043,7 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
               sendResponse({ success: false, error: lastError.message });
             }
           } else {
+            await focusTargetTab(tabId);
             console.log('[后台] closeCurrentTab 成功');
             sendResponse({ success: true });
           }
