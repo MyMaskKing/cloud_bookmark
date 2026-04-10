@@ -111,6 +111,14 @@ const iconPopupHeightPc = document.getElementById('iconPopupHeightPc');
 const iconPopupHeightMobile = document.getElementById('iconPopupHeightMobile');
 const syncIconHeightPc = document.getElementById('syncIconHeightPc');
 const syncIconHeightMobile = document.getElementById('syncIconHeightMobile');
+const floatingBallAddPopupHeightPc = document.getElementById('floatingBallAddPopupHeightPc');
+const floatingBallAddPopupHeightMobile = document.getElementById('floatingBallAddPopupHeightMobile');
+const syncFloatingBallAddHeightPc = document.getElementById('syncFloatingBallAddHeightPc');
+const syncFloatingBallAddHeightMobile = document.getElementById('syncFloatingBallAddHeightMobile');
+const iconAddPopupHeightPc = document.getElementById('iconAddPopupHeightPc');
+const iconAddPopupHeightMobile = document.getElementById('iconAddPopupHeightMobile');
+const syncIconAddHeightPc = document.getElementById('syncIconAddHeightPc');
+const syncIconAddHeightMobile = document.getElementById('syncIconAddHeightMobile');
 const shortcutDisplayWin = document.getElementById('shortcutDisplayWin');
 const shortcutDisplayMac = document.getElementById('shortcutDisplayMac');
 const sceneList = document.getElementById('sceneList');
@@ -1652,6 +1660,23 @@ async function loadUiSettings() {
     iconPopupHeightMobile.value = iconPopup.heightMobile || 90;
   }
 
+  // 加载添加书签弹窗高度设置
+  const floatingBallAddPopup = settings?.floatingBallAddPopup || {};
+  if (floatingBallAddPopupHeightPc) {
+    floatingBallAddPopupHeightPc.value = floatingBallAddPopup.heightPc || 720;
+  }
+  if (floatingBallAddPopupHeightMobile) {
+    floatingBallAddPopupHeightMobile.value = floatingBallAddPopup.heightMobile || 90;
+  }
+
+  const iconAddPopup = settings?.iconAddPopup || {};
+  if (iconAddPopupHeightPc) {
+    iconAddPopupHeightPc.value = iconAddPopup.heightPc || 720;
+  }
+  if (iconAddPopupHeightMobile) {
+    iconAddPopupHeightMobile.value = iconAddPopup.heightMobile || 90;
+  }
+
   // 更新同步按钮状态
   updateSyncButtonStates();
 }
@@ -1886,6 +1911,70 @@ async function syncIconPopupHeightToCloud() {
   }
 }
 
+async function saveFloatingBallAddPopupHeightLocal() {
+  try {
+    const settings = await storage.getSettings();
+    const floatingBallAddPopup = {
+      heightPc: floatingBallAddPopupHeightPc ? parseInt(floatingBallAddPopupHeightPc.value) || 720 : 720,
+      heightMobile: floatingBallAddPopupHeightMobile ? parseInt(floatingBallAddPopupHeightMobile.value) || 90 : 90
+    };
+    const newSettings = { ...(settings || {}), floatingBallAddPopup };
+    await storage.saveSettings(newSettings);
+    showMessage('添加书签弹窗高度已保存（本地）', 'success');
+    updateSyncButtonStates();
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+}
+
+async function syncFloatingBallAddPopupHeightToCloud() {
+  try {
+    const settings = await storage.getSettings();
+    const floatingBallAddPopup = {
+      heightPc: floatingBallAddPopupHeightPc ? parseInt(floatingBallAddPopupHeightPc.value) || 720 : 720,
+      heightMobile: floatingBallAddPopupHeightMobile ? parseInt(floatingBallAddPopupHeightMobile.value) || 90 : 90
+    };
+    const newSettings = { ...(settings || {}), floatingBallAddPopup };
+    await storage.saveSettings(newSettings);
+    showMessage('添加书签弹窗高度已保存，正在后台同步到云端...', 'success');
+    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('添加书签弹窗高度同步失败:', err));
+  } catch (e) {
+    showMessage('同步失败: ' + e.message, 'error');
+  }
+}
+
+async function saveIconAddPopupHeightLocal() {
+  try {
+    const settings = await storage.getSettings();
+    const iconAddPopup = {
+      heightPc: iconAddPopupHeightPc ? parseInt(iconAddPopupHeightPc.value) || 720 : 720,
+      heightMobile: iconAddPopupHeightMobile ? parseInt(iconAddPopupHeightMobile.value) || 90 : 90
+    };
+    const newSettings = { ...(settings || {}), iconAddPopup };
+    await storage.saveSettings(newSettings);
+    showMessage('添加书签弹窗高度已保存（本地）', 'success');
+    updateSyncButtonStates();
+  } catch (e) {
+    showMessage('保存失败: ' + e.message, 'error');
+  }
+}
+
+async function syncIconAddPopupHeightToCloud() {
+  try {
+    const settings = await storage.getSettings();
+    const iconAddPopup = {
+      heightPc: iconAddPopupHeightPc ? parseInt(iconAddPopupHeightPc.value) || 720 : 720,
+      heightMobile: iconAddPopupHeightMobile ? parseInt(iconAddPopupHeightMobile.value) || 90 : 90
+    };
+    const newSettings = { ...(settings || {}), iconAddPopup };
+    await storage.saveSettings(newSettings);
+    showMessage('添加书签弹窗高度已保存，正在后台同步到云端...', 'success');
+    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('添加书签弹窗高度同步失败:', err));
+  } catch (e) {
+    showMessage('同步失败: ' + e.message, 'error');
+  }
+}
+
 // 悬浮球弹窗高度设置 - PC端
 if (floatingBallPopupHeightPc) {
   floatingBallPopupHeightPc.addEventListener('change', () => {
@@ -1935,6 +2024,54 @@ if (iconPopupHeightMobile) {
 if (syncIconHeightMobile) {
   syncIconHeightMobile.addEventListener('click', async () => {
     await syncIconPopupHeightToCloud();
+  });
+}
+
+if (floatingBallAddPopupHeightPc) {
+  floatingBallAddPopupHeightPc.addEventListener('change', () => {
+    saveFloatingBallAddPopupHeightLocal();
+  });
+}
+
+if (syncFloatingBallAddHeightPc) {
+  syncFloatingBallAddHeightPc.addEventListener('click', async () => {
+    await syncFloatingBallAddPopupHeightToCloud();
+  });
+}
+
+if (floatingBallAddPopupHeightMobile) {
+  floatingBallAddPopupHeightMobile.addEventListener('change', () => {
+    saveFloatingBallAddPopupHeightLocal();
+  });
+}
+
+if (syncFloatingBallAddHeightMobile) {
+  syncFloatingBallAddHeightMobile.addEventListener('click', async () => {
+    await syncFloatingBallAddPopupHeightToCloud();
+  });
+}
+
+if (iconAddPopupHeightPc) {
+  iconAddPopupHeightPc.addEventListener('change', () => {
+    saveIconAddPopupHeightLocal();
+  });
+}
+
+if (syncIconAddHeightPc) {
+  syncIconAddHeightPc.addEventListener('click', async () => {
+    await syncIconAddPopupHeightToCloud();
+  });
+}
+
+if (iconAddPopupHeightMobile) {
+  iconAddPopupHeightMobile.addEventListener('change', () => {
+    saveIconAddPopupHeightLocal();
+  });
+}
+
+if (syncIconAddHeightMobile) {
+  syncIconAddHeightMobile.addEventListener('click', async () => {
+    await syncIconAddPopupHeightToCloud();
   });
 }
 

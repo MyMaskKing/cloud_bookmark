@@ -111,6 +111,8 @@ let sceneSwitchBusy = false;
 let currentSceneId = null;
 let expandedFolders = new Set(['']); // 根默认展开
 let isFloatingBallPopup = false; // 是否为悬浮球打开的弹窗
+let isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+  (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
 let lastRenderedBookmarks = [];
 let popupSettings = {
   expandFirstLevel: false,
@@ -310,7 +312,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   isFloatingBallPopup = source === 'floating-ball';
 
   // 检测是否为移动设备
-  const isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+  isMobileDevice = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
     (window.matchMedia && window.matchMedia('(max-width: 768px)').matches && 'ontouchstart' in window);
 
   // PC端和移动端都需要根据自定义高度调整容器高度
@@ -1307,12 +1309,17 @@ addCurrentBtn.addEventListener('click', async () => {
   const urlParams = new URLSearchParams(window.location.search);
   const urlFromParams = urlParams.get('url');
   const titleFromParams = urlParams.get('title');
+  const sourceTabIdParam = urlParams.get('sourceTabId');
+  const sourceTabIdFromParams = Number.isFinite(parseInt(sourceTabIdParam, 10))
+    ? parseInt(sourceTabIdParam, 10)
+    : null;
 
   let targetUrl, targetTitle;
+  let targetTabId = sourceTabIdFromParams;
 
-  if (urlFromParams && titleFromParams) {
+  if (urlFromParams) {
     targetUrl = urlFromParams;
-    targetTitle = titleFromParams;
+    targetTitle = titleFromParams || '';
     pushOpLog(`addCurrent: using params from floating ball url=${targetUrl}`);
   } else {
     // 回退到查询标签页（PC 端或非悬浮球触发的情况）
@@ -1320,6 +1327,7 @@ addCurrentBtn.addEventListener('click', async () => {
     if (tab && tab.url) {
       targetUrl = tab.url;
       targetTitle = tab.title || '';
+      targetTabId = typeof tab.id === 'number' ? tab.id : null;
       pushOpLog(`addCurrent: got tab url=${targetUrl}`);
     } else {
       pushOpLog('addCurrent: failed to get active tab');
@@ -1329,12 +1337,32 @@ addCurrentBtn.addEventListener('click', async () => {
   }
 
   // 打开添加书签页面
+  if (isMobileDevice && targetTabId === null) {
+    const urlMatchedTab = await findTabByUrlSafe(targetUrl);
+    if (urlMatchedTab && typeof urlMatchedTab.id === 'number') {
+      targetTabId = urlMatchedTab.id;
+    }
+  }
+
+  if (isMobileDevice && targetTabId === null) {
+    try {
+      const activeTab = await getActiveTabSafe();
+      if (activeTab && typeof activeTab.id === 'number') {
+        targetTabId = activeTab.id;
+      }
+    } catch (_) {
+      // 忽略，拿不到就回退到原有扩展页模式
+    }
+  }
+
   const source = isFloatingBallPopup ? 'floating-ball' : 'popup';
   await sendMessageCompat({
     action: 'openAddBookmarkWindow',
     currentUrl: targetUrl,
     currentTitle: targetTitle || '',
-    source
+    source,
+    tabId: targetTabId,
+    preferInlineOverlay: !!isMobileDevice
   });
   // 操作完成后关闭弹窗
   window.close();
@@ -1346,6 +1374,42 @@ function isExtensionUrl(url) {
     url.startsWith('moz-extension://') ||
     url.startsWith('edge-extension://')
   );
+}
+
+function pickNonExtensionTab(tabs) {
+  if (!Array.isArray(tabs) || tabs.length === 0) return null;
+  return tabs.find(t => t && t.url && !isExtensionUrl(t.url)) || null;
+}
+
+function normalizeUrlForMatch(url) {
+  if (!url || typeof url !== 'string') return '';
+  try {
+    const u = new URL(url);
+    u.hash = '';
+    return u.toString();
+  } catch (_) {
+    return String(url).trim();
+  }
+}
+
+async function findTabByUrlSafe(targetUrl) {
+  const normalizedTarget = normalizeUrlForMatch(targetUrl);
+  if (!normalizedTarget) return null;
+  try {
+    const tabs = await queryTabsCompat({});
+    const allTabs = Array.isArray(tabs) ? tabs : [];
+    const exact = allTabs.find(t =>
+      t &&
+      typeof t.id === 'number' &&
+      t.url &&
+      !isExtensionUrl(t.url) &&
+      normalizeUrlForMatch(t.url) === normalizedTarget
+    );
+    return exact || null;
+  } catch (e) {
+    console.warn('findTabByUrlSafe 失败:', e?.message || e);
+    return null;
+  }
 }
 
 async function getActiveTabSafe() {
@@ -1362,7 +1426,7 @@ async function getActiveTabSafe() {
   // 2. 本地回退：currentWindow
   try {
     const tabs = await queryTabsCompat({ active: true, currentWindow: true });
-    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    const tab = pickNonExtensionTab(tabs);
     if (tab && tab.url && !isExtensionUrl(tab.url)) return tab;
   } catch (e) {
     console.warn('tabs.query(currentWindow) 失败:', e?.message || e);
@@ -1371,7 +1435,7 @@ async function getActiveTabSafe() {
   // 3. lastFocusedWindow
   try {
     const tabs = await queryTabsCompat({ active: true, lastFocusedWindow: true });
-    const tab = Array.isArray(tabs) ? tabs[0] : null;
+    const tab = pickNonExtensionTab(tabs);
     if (tab && tab.url && !isExtensionUrl(tab.url)) return tab;
   } catch (e) {
     console.warn('tabs.query(lastFocusedWindow) 失败:', e?.message || e);

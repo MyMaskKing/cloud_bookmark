@@ -780,7 +780,8 @@
         action: 'openAddBookmarkWindow',
         currentUrl,
         currentTitle,
-        source: 'floating-ball'
+        source: 'floating-ball',
+        preferInlineOverlay: !!isMobileDevice
       }).catch(err => {
         console.error('[悬浮球] openAddBookmarkWindow(quickSave) 异常:', err);
       });
@@ -803,7 +804,8 @@
           action: 'openAddBookmarkWindow',
           currentUrl,
           currentTitle,
-          source: 'floating-ball'
+          source: 'floating-ball',
+          preferInlineOverlay: !!isMobileDevice
         });
       }
     }).catch((error) => {
@@ -812,7 +814,8 @@
         action: 'openAddBookmarkWindow',
         currentUrl,
         currentTitle,
-        source: 'floating-ball'
+        source: 'floating-ball',
+        preferInlineOverlay: !!isMobileDevice
       }).catch((err) => {
         console.error('[悬浮球] openAddBookmarkWindow 也失败:', err);
       });
@@ -921,7 +924,8 @@
           action: 'openAddBookmarkWindow',
           currentUrl,
           currentTitle,
-          source: 'floating-ball'
+          source: 'floating-ball',
+          preferInlineOverlay: !!isMobileDevice
         }).catch(err => {
           console.error('[悬浮球] openAddBookmarkWindow(quickSave touch) 异常:', err);
         });
@@ -1008,6 +1012,146 @@
   }
   
   // 监听消息
+  let inlineBookmarkOverlay = null;
+  const INLINE_BOOKMARK_STYLE_ID = 'cloud-bookmark-inline-overlay-style';
+
+  function ensureInlineBookmarkStyle() {
+    if (document.getElementById(INLINE_BOOKMARK_STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = INLINE_BOOKMARK_STYLE_ID;
+    style.textContent = `
+#cloud-bookmark-inline-overlay { position: fixed; inset: 0; z-index: 2147483646; display: flex; align-items: flex-end; justify-content: center; padding: 8px; background: radial-gradient(circle at top, rgba(251,191,36,0.12), transparent 34%), linear-gradient(180deg, rgba(15,23,42,0.22), rgba(15,23,42,0.38)); backdrop-filter: blur(10px); }
+#cloud-bookmark-inline-overlay .cb-inline-panel { width: min(720px, 100%); max-height: min(94vh, 820px); background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(248,250,252,0.99)); border-radius: 26px; box-shadow: 0 18px 48px rgba(15,23,42,0.22); border: 1px solid rgba(255,255,255,0.74); overflow: hidden; display: flex; flex-direction: column; }
+#cloud-bookmark-inline-overlay .cb-inline-head { padding: 22px 18px 16px; border-bottom: 1px solid rgba(226,232,240,0.88); background: radial-gradient(circle at top left, rgba(251,191,36,0.18), transparent 38%), linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,250,252,0.90)); position: relative; }
+#cloud-bookmark-inline-overlay .cb-inline-head-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+#cloud-bookmark-inline-overlay .cb-inline-badge { display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px; border-radius: 999px; background: rgba(245,158,11,0.10); color: #c2410c; font-size: 12px; font-weight: 700; }
+#cloud-bookmark-inline-overlay .cb-inline-close { width: 42px; height: 42px; border: 1px solid rgba(148,163,184,0.20); background: rgba(255,255,255,0.76); color: #334155; border-radius: 14px; font-size: 24px; cursor: pointer; }
+#cloud-bookmark-inline-overlay .cb-inline-title { margin: 14px 0 6px; font-size: 30px; line-height: 1.1; font-weight: 700; color: #0f172a; }
+#cloud-bookmark-inline-overlay .cb-inline-subtitle { font-size: 13px; color: #475569; line-height: 1.6; }
+#cloud-bookmark-inline-overlay .cb-inline-body { padding: 16px 18px 18px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+#cloud-bookmark-inline-overlay .cb-inline-field { padding: 14px; border-radius: 18px; border: 1px solid rgba(226,232,240,0.95); background: rgba(255,255,255,0.88); box-shadow: inset 0 1px 0 rgba(255,255,255,0.72); }
+#cloud-bookmark-inline-overlay .cb-inline-field.--primary { background: radial-gradient(circle at top right, rgba(59,130,246,0.09), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,250,252,0.95)); border-color: rgba(125,211,252,0.55); box-shadow: inset 0 1px 0 rgba(255,255,255,0.88), 0 18px 34px rgba(148,163,184,0.10); }
+#cloud-bookmark-inline-overlay .cb-inline-field.--folder { background: radial-gradient(circle at top left, rgba(251,191,36,0.14), transparent 34%), linear-gradient(180deg, #fffdf7, #fff7ed); border-color: rgba(251,191,36,0.42); box-shadow: inset 0 1px 0 rgba(255,255,255,0.88), 0 16px 30px rgba(245,158,11,0.08); }
+#cloud-bookmark-inline-overlay label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: #334155; }
+#cloud-bookmark-inline-overlay .cb-inline-field.--primary label::after { content: "核心"; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(59,130,246,0.10); color: #2563eb; font-size: 11px; font-weight: 700; }
+#cloud-bookmark-inline-overlay .cb-inline-field.--folder label::after { content: "高频"; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(245,158,11,0.12); color: #c2410c; font-size: 11px; font-weight: 700; }
+#cloud-bookmark-inline-overlay input, #cloud-bookmark-inline-overlay select { width: 100%; height: 50px; border-radius: 14px; border: 1px solid #d7dee8; background: #f8fafc; padding: 0 14px; font-size: 15px; color: #0f172a; box-sizing: border-box; }
+#cloud-bookmark-inline-overlay #cbInlineUrl { color: #475569; }
+#cloud-bookmark-inline-overlay .cb-inline-folder-row { display: flex; gap: 10px; align-items: center; }
+#cloud-bookmark-inline-overlay .cb-inline-folder-row select { flex: 1; min-width: 0; }
+#cloud-bookmark-inline-overlay .cb-inline-btn { border: none; border-radius: 14px; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease; }
+#cloud-bookmark-inline-overlay .cb-inline-btn.--secondary { min-width: 102px; height: 50px; background: #eef2f7; color: #334155; }
+#cloud-bookmark-inline-overlay .cb-inline-actions { display: flex; gap: 10px; padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid rgba(226,232,240,0.9); background: linear-gradient(180deg, rgba(248,250,252,0.82), rgba(255,255,255,0.96)); backdrop-filter: blur(10px); }
+#cloud-bookmark-inline-overlay .cb-inline-actions .cb-inline-btn { flex: 1; height: 50px; }
+#cloud-bookmark-inline-overlay .cb-inline-btn.--ghost { background: #eef2f7; color: #334155; }
+#cloud-bookmark-inline-overlay .cb-inline-btn.--primary { background: linear-gradient(135deg, #f59e0b, #ea580c); color: #fff; box-shadow: 0 14px 28px rgba(234,88,12,0.24); }
+@media (max-width: 768px) { #cloud-bookmark-inline-overlay { padding: 6px; } #cloud-bookmark-inline-overlay .cb-inline-panel { max-height: calc(100vh - 12px); border-radius: 24px; } #cloud-bookmark-inline-overlay .cb-inline-title { font-size: 26px; } }
+@media (min-width: 769px) { #cloud-bookmark-inline-overlay { align-items: center; padding: 16px; } #cloud-bookmark-inline-overlay .cb-inline-panel { max-width: 580px; max-height: min(84vh, 740px); border-radius: 26px; } }
+    `.trim();
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function removeInlineBookmarkOverlay() {
+    if (inlineBookmarkOverlay) {
+      inlineBookmarkOverlay.remove();
+      inlineBookmarkOverlay = null;
+    }
+  }
+
+  function buildFolderOptions(folders, selected) {
+    return [''].concat(Array.isArray(folders) ? folders : []).map((folder) => {
+      const label = folder || '未分类';
+      const isSelected = folder === selected ? ' selected' : '';
+      const value = String(folder).replace(/"/g, '&quot;');
+      return `<option value="${value}"${isSelected}>${label}</option>`;
+    }).join('');
+  }
+
+  async function showInlineBookmarkOverlay(request) {
+    ensureInlineBookmarkStyle();
+    removeInlineBookmarkOverlay();
+    const formData = await sendMessageCompat({ action: 'getInlineBookmarkFormData' });
+    if (!formData || !formData.success) {
+      throw new Error((formData && formData.error) || '无法读取书签表单数据');
+    }
+    let host = '';
+    try { host = new URL(request.url || '').hostname.replace(/^www\./, ''); } catch (_) {}
+    const overlay = document.createElement('div');
+    overlay.id = 'cloud-bookmark-inline-overlay';
+    overlay.innerHTML = `
+      <div class="cb-inline-panel" role="dialog" aria-modal="true">
+        <div class="cb-inline-head">
+          <span class="cb-inline-badge">快速收藏</span>
+          <div class="cb-inline-title">添加书签</div>
+          <div class="cb-inline-subtitle">当前场景：${formData.sceneName || formData.sceneId || 'home'}${host ? ` · 站点：${host}` : ''}</div>
+        </div>
+        <div class="cb-inline-body">
+          <div class="cb-inline-field --primary">
+            <label for="cbInlineTitle">标题</label>
+            <input id="cbInlineTitle" type="text" value="${String(request.title || '').replace(/"/g, '&quot;')}">
+          </div>
+          <div class="cb-inline-field --folder">
+            <label for="cbInlineFolder">文件夹</label>
+            <div class="cb-inline-folder-row">
+              <select id="cbInlineFolder">${buildFolderOptions(formData.folders || [], '')}</select>
+              <button type="button" class="cb-inline-btn --secondary" id="cbInlineNewFolder">+ 新建</button>
+            </div>
+          </div>
+          <div class="cb-inline-field">
+            <label for="cbInlineUrl">URL</label>
+            <input id="cbInlineUrl" type="text" value="${String(request.url || '').replace(/"/g, '&quot;')}" readonly>
+          </div>
+        </div>
+        <div class="cb-inline-actions">
+          <button type="button" class="cb-inline-btn --ghost" id="cbInlineCancel">取消</button>
+          <button type="button" class="cb-inline-btn --primary" id="cbInlineSave">保存</button>
+        </div>
+      </div>
+    `;
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) removeInlineBookmarkOverlay();
+    });
+    document.documentElement.appendChild(overlay);
+    inlineBookmarkOverlay = overlay;
+    const titleInput = overlay.querySelector('#cbInlineTitle');
+    const folderSelect = overlay.querySelector('#cbInlineFolder');
+    overlay.querySelector('#cbInlineCancel').addEventListener('click', removeInlineBookmarkOverlay);
+    overlay.querySelector('#cbInlineNewFolder').addEventListener('click', () => {
+      const folderName = (window.prompt('请输入新文件夹名称') || '').trim();
+      if (!folderName) return;
+      const option = document.createElement('option');
+      option.value = folderName;
+      option.textContent = folderName;
+      folderSelect.appendChild(option);
+      folderSelect.value = folderName;
+    });
+    overlay.querySelector('#cbInlineSave').addEventListener('click', async (e) => {
+      const saveBtn = e.currentTarget;
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中...';
+      const response = await sendMessageCompat({
+        action: 'saveInlineBookmark',
+        bookmark: {
+          title: titleInput.value.trim(),
+          url: request.url || '',
+          folder: folderSelect.value || '',
+          starred: false
+        }
+      }).catch(error => ({ success: false, error: error && error.message ? error.message : String(error) }));
+      if (!response || !response.success) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '保存';
+        window.alert((response && response.error) || '保存失败');
+        return;
+      }
+      removeInlineBookmarkOverlay();
+    });
+    requestAnimationFrame(() => {
+      titleInput.focus();
+      titleInput.select();
+    });
+  }
+
   runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'updateFloatingBall') {
       initFloatingBall();
@@ -1028,6 +1172,14 @@
         duration: request.duration
       });
       sendResponse({ success: true });
+      return true;
+    }
+    if (request.action === 'showInlineBookmarkOverlay') {
+      showInlineBookmarkOverlay(request).then(() => {
+        sendResponse({ success: true });
+      }).catch((error) => {
+        sendResponse({ success: false, error: error.message || String(error) });
+      });
       return true;
     }
   });

@@ -866,6 +866,73 @@ async function queryTabsCompat(query) {
   });
 }
 
+function isExtensionUrl(url) {
+  return typeof url === 'string' && (
+    url.startsWith('chrome-extension://') ||
+    url.startsWith('moz-extension://') ||
+    url.startsWith('edge-extension://')
+  );
+}
+
+function isMessageableTabUrl(url) {
+  if (typeof url !== 'string' || !url) return false;
+  if (isExtensionUrl(url)) return false;
+  const lower = url.toLowerCase();
+  if (
+    lower.startsWith('about:') ||
+    lower.startsWith('chrome://') ||
+    lower.startsWith('edge://') ||
+    lower.startsWith('opera://') ||
+    lower.startsWith('vivaldi://') ||
+    lower.startsWith('brave://') ||
+    lower.startsWith('devtools://') ||
+    lower.startsWith('view-source:')
+  ) {
+    return false;
+  }
+  return /^https?:\/\//i.test(lower) || /^file:\/\//i.test(lower);
+}
+
+function toTabSummary(tab) {
+  if (!tab || typeof tab.id !== 'number' || Number.isNaN(tab.id) || tab.id < 0) return null;
+  return { id: tab.id, url: tab.url || '', title: tab.title || '' };
+}
+
+function pickPreferredTab(tabs, { messageableOnly = false } = {}) {
+  if (!Array.isArray(tabs) || tabs.length === 0) return null;
+  const normalized = tabs.map(toTabSummary).filter(Boolean);
+  if (normalized.length === 0) return null;
+
+  if (messageableOnly) {
+    return normalized.find(tab => isMessageableTabUrl(tab.url)) || null;
+  }
+
+  return normalized.find(tab => tab.url && !isExtensionUrl(tab.url)) || null;
+}
+
+async function resolvePreferredTab(options = {}) {
+  const queries = [
+    { active: true, currentWindow: true },
+    { active: true, lastFocusedWindow: true },
+    { active: true },
+    {}
+  ];
+  for (const query of queries) {
+    const tabs = await queryTabsCompat(query);
+    const tab = pickPreferredTab(tabs, options);
+    if (tab) return tab;
+  }
+  return null;
+}
+
+function clampInt(value, fallback, min, max) {
+  const parsed = parseInt(value, 10);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  if (typeof min === 'number' && candidate < min) return min;
+  if (typeof max === 'number' && candidate > max) return max;
+  return candidate;
+}
+
 function buildAddBookmarkPageUrl({ url = '', title = '', source = 'popup' } = {}) {
   const params = new URLSearchParams({
     action: 'add',
@@ -880,15 +947,41 @@ function buildAddBookmarkPageUrl({ url = '', title = '', source = 'popup' } = {}
   return runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
 }
 
-async function openAddBookmarkWindow({ url = '', title = '', source = 'popup' } = {}) {
+async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', tabId = null, preferInlineOverlay = false } = {}) {
   if (!url) {
     throw new Error('缺少URL');
+  }
+
+  let targetTabId = typeof tabId === 'number' ? tabId : null;
+  if (preferInlineOverlay) {
+    if (targetTabId === null) {
+      const targetTab = await resolvePreferredTab({ messageableOnly: true });
+      targetTabId = targetTab ? targetTab.id : null;
+    }
+    if (typeof targetTabId === 'number') {
+      const inlineResp = await sendMessageToTabCompat(targetTabId, {
+        action: 'showInlineBookmarkOverlay',
+        url,
+        title,
+        source
+      });
+      if (inlineResp && inlineResp.success) {
+        return { mode: 'inline', tabId: targetTabId };
+      }
+    }
   }
 
   const targetUrl = buildAddBookmarkPageUrl({ url, title, source });
   const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
   const popupWidth = 520;
-  const popupHeight = 720;
+  const settings = await storage.getSettings().catch(() => ({}));
+  const addPopupSettings = source === 'floating-ball'
+    ? (settings?.floatingBallAddPopup || {})
+    : (settings?.iconAddPopup || {});
+  const defaultPcHeight = 720;
+  const defaultMobileVh = 90;
+  const pcHeight = clampInt(addPopupSettings.heightPc, defaultPcHeight, 400, 1200);
+  const mobileVh = clampInt(addPopupSettings.heightMobile, defaultMobileVh, 50, 100);
 
   const openInTab = async () => {
     if (typeof browser !== 'undefined' && browser.tabs) {
@@ -927,6 +1020,15 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup' } 
   } catch (_) {
     currentWindow = null;
   }
+
+  const deviceType = await detectDeviceType().catch(() => 'pc');
+  const isMobile = deviceType === 'android' || deviceType === 'ios';
+  const baseWindowHeight = (currentWindow && typeof currentWindow.height === 'number' && currentWindow.height > 0)
+    ? currentWindow.height
+    : 800;
+  const popupHeight = isMobile
+    ? Math.min(Math.max(300, baseWindowHeight - 50), Math.floor(baseWindowHeight * (mobileVh / 100)))
+    : pcHeight;
 
   let left = Math.floor((1280 - popupWidth) / 2);
   let top = Math.max(50, Math.floor((720 - popupHeight) / 2));
@@ -1447,12 +1549,18 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
 
     // 构建 popup URL，如果悬浮球传递了当前页面信息，通过 URL 参数传递
     let popupUrl = runtimeAPI.getURL('popup/popup.html');
-    if (request.currentUrl && request.currentTitle) {
+    if (request.currentUrl) {
+      const sourceTabId = typeof request.tabId === 'number'
+        ? request.tabId
+        : (sender && sender.tab && typeof sender.tab.id === 'number' ? sender.tab.id : null);
       const params = new URLSearchParams({
         url: request.currentUrl,
-        title: request.currentTitle,
+        title: request.currentTitle || '',
         source: 'floating-ball'
       });
+      if (typeof sourceTabId === 'number') {
+        params.set('sourceTabId', String(sourceTabId));
+      }
       popupUrl = runtimeAPI.getURL(`popup/popup.html?${params.toString()}`);
     }
 
@@ -1677,7 +1785,9 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     openAddBookmarkWindow({
       url: request.currentUrl,
       title: request.currentTitle || '',
-      source: request.source || 'popup'
+      source: request.source || 'popup',
+      tabId: typeof request.tabId === 'number' ? request.tabId : (sender && sender.tab ? sender.tab.id : null),
+      preferInlineOverlay: !!request.preferInlineOverlay
     }).then((result) => {
       sendResponse({ success: true, result });
     }).catch(error => {
@@ -1774,6 +1884,83 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         sendResponse({ success: false, error: error.message });
       }
     })();
+    return true;
+  }
+
+  if (request.action === 'getInlineBookmarkFormData') {
+    (async () => {
+      const sceneId = await storage.getCurrentScene();
+      const [sceneData, scenes] = await Promise.all([
+        storage.getBookmarks(sceneId),
+        storage.getScenes()
+      ]);
+      const bookmarkFolders = (sceneData.bookmarks || []).map(b => normalizeFolderPath(b.folder || '')).filter(Boolean);
+      const storedFolders = (sceneData.folders || []).map(normalizeFolderPath).filter(Boolean);
+      const folders = expandFolderPathsPreserveOrder([...storedFolders, ...bookmarkFolders]);
+      const currentScene = (scenes || []).find(scene => scene.id === sceneId);
+      sendResponse({
+        success: true,
+        sceneId,
+        sceneName: currentScene && currentScene.name ? currentScene.name : sceneId,
+        folders
+      });
+    })().catch(error => {
+      sendResponse({ success: false, error: error.message || String(error) });
+    });
+    return true;
+  }
+
+  if (request.action === 'saveInlineBookmark') {
+    (async () => {
+      const sceneId = await storage.getCurrentScene();
+      const sceneData = await storage.getBookmarks(sceneId);
+      const existingBookmarks = sceneData.bookmarks || [];
+      const existingFolders = sceneData.folders || [];
+      const rawBookmark = request.bookmark || {};
+      const now = Date.now();
+      const folderPath = rawBookmark.folder ? normalizeFolderPath(rawBookmark.folder) : '';
+      const folders = expandFolderPathsPreserveOrder([
+        ...existingFolders,
+        ...(folderPath ? [folderPath] : [])
+      ]);
+
+      const newBookmark = {
+        id: `inline_${now}_${Math.random().toString(36).slice(2, 8)}`,
+        title: String(rawBookmark.title || '').trim() || String(rawBookmark.url || '').trim() || '未命名',
+        url: String(rawBookmark.url || '').trim(),
+        description: String(rawBookmark.description || '').trim(),
+        notes: String(rawBookmark.notes || '').trim(),
+        tags: Array.isArray(rawBookmark.tags)
+          ? rawBookmark.tags.map(tag => String(tag || '').trim()).filter(Boolean)
+          : [],
+        folder: folderPath || '',
+        scene: sceneId,
+        starred: !!rawBookmark.starred,
+        createdAt: now,
+        updatedAt: now,
+        favicon: ''
+      };
+
+      if (!newBookmark.url) {
+        throw new Error('缺少URL');
+      }
+
+      const updatedBookmarks = insertBookmarkSmart(existingBookmarks, newBookmark, folders);
+      await storage.saveBookmarks(updatedBookmarks, folders, sceneId);
+      runtimeAPI.sendMessage({ action: 'bookmarksUpdated' }).catch(() => { });
+
+      storage.getConfig().then((config) => {
+        if (config && config.serverUrl) {
+          syncQueue.enqueue(() => syncToCloud(updatedBookmarks, folders, sceneId)).catch(err => {
+            console.error('[后台] saveInlineBookmark 同步失败:', err);
+          });
+        }
+      }).catch(() => { });
+
+      sendResponse({ success: true, bookmarkId: newBookmark.id, sceneId });
+    })().catch(error => {
+      sendResponse({ success: false, error: error.message || String(error) });
+    });
     return true;
   }
 
@@ -2029,85 +2216,16 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'getActiveTab') {
-    try {
-      const handleTabs = (tabs) => {
-        const tab = Array.isArray(tabs) ? tabs[0] : null;
-        // 验证 tab 和 tab.id 是否有效（tab.id 必须是有效数字）
-        if (tab && typeof tab.id !== 'undefined' && tab.id !== null && !isNaN(tab.id) && tab.id >= 0) {
-          sendResponse({ tab: { id: tab.id, url: tab.url || '', title: tab.title || '' } });
-        } else {
-          sendResponse({ tab: null, error: 'no-active-tab' });
-        }
-      };
-
-      if (typeof browser !== 'undefined' && browser.tabs && browser.tabs.query) {
-        // Firefox: 使用 Promise
-        tabsAPI.query({ active: true, currentWindow: true })
-          .then(tabs => {
-            if (tabs && tabs.length) {
-              handleTabs(tabs);
-            } else {
-              return tabsAPI.query({ active: true, lastFocusedWindow: true })
-                .then(res => {
-                  if (res && res.length) return handleTabs(res);
-                  // 继续回退：不带窗口限制
-                  return tabsAPI.query({ active: true }).then(list => {
-                    if (list && list.length) return handleTabs(list);
-                    // 最后回退：取所有标签第一页
-                    return tabsAPI.query({}).then(all => {
-                      if (all && all.length) return handleTabs(all);
-                      sendResponse({ tab: null, error: 'no-active-tab' });
-                    });
-                  });
-                });
-            }
-          })
-          .catch(err => {
-            console.error('[后台] getActiveTab 查询失败:', err);
-            sendResponse({ tab: null, error: err.message || 'query-failed' });
-          });
-        return true;
+    resolvePreferredTab({ messageableOnly: false }).then((tab) => {
+      if (tab) {
+        sendResponse({ tab });
+      } else {
+        sendResponse({ tab: null, error: 'no-active-tab' });
       }
-
-      // Chrome 回退：callback 形式
-      tabsAPI.query({ active: true, currentWindow: true }, (tabs) => {
-        if (chrome.runtime.lastError) {
-          console.error('[后台] getActiveTab 查询失败:', chrome.runtime.lastError);
-          sendResponse({ tab: null, error: chrome.runtime.lastError.message || 'query-failed' });
-          return;
-        }
-        if (tabs && tabs.length) {
-          handleTabs(tabs);
-        } else {
-          tabsAPI.query({ active: true, lastFocusedWindow: true }, (res) => {
-            if (chrome.runtime.lastError) {
-              sendResponse({ tab: null, error: chrome.runtime.lastError.message || 'query-failed' });
-              return;
-            }
-            if (res && res.length) return handleTabs(res);
-            tabsAPI.query({ active: true }, (list) => {
-              if (chrome.runtime.lastError) {
-                sendResponse({ tab: null, error: chrome.runtime.lastError.message || 'query-failed' });
-                return;
-              }
-              if (list && list.length) return handleTabs(list);
-              tabsAPI.query({}, (all) => {
-                if (chrome.runtime.lastError) {
-                  sendResponse({ tab: null, error: chrome.runtime.lastError.message || 'query-failed' });
-                  return;
-                }
-                if (all && all.length) return handleTabs(all);
-                sendResponse({ tab: null, error: 'no-active-tab' });
-              });
-            });
-          });
-        }
-      });
-      return true;
-    } catch (error) {
-      console.error('[后台] getActiveTab 异常:', error);
-      sendResponse({ tab: null, error: error.message || 'query-failed' });
-    }
+    }).catch((error) => {
+      console.error('[后台] getActiveTab 查询失败:', error);
+      sendResponse({ tab: null, error: error?.message || 'query-failed' });
+    });
     return true;
   }
 });
