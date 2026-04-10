@@ -1045,7 +1045,7 @@ body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 18px 24px 100px;
+  padding: 18px 24px 18px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1193,7 +1193,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
-  padding: 14px 24px calc(16px + env(safe-area-inset-bottom, 0px));
+  padding: 14px 24px calc(12px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid rgba(148, 163, 184, 0.12);
   background:
     linear-gradient(180deg, rgba(248, 250, 252, 0.76), rgba(255, 255, 255, 0.96));
@@ -1392,7 +1392,6 @@ body {
 
   .modal-content {
     width: 100%;
-    height: min(calc(var(--cb-add-popup-mobile-height-vh, 90) * 1vh), calc(100vh - 12px));
     max-height: calc(100vh - 12px);
     border-radius: 22px;
   }
@@ -1415,7 +1414,7 @@ body {
   }
 
   .modal-form-scroll {
-    padding: 14px 12px 92px;
+    padding: 14px 12px 74px;
     gap: 10px;
   }
 
@@ -1425,7 +1424,7 @@ body {
   }
 
   .form-actions {
-    padding: 12px 12px calc(14px + env(safe-area-inset-bottom, 0px));
+    padding: 10px 12px calc(10px + env(safe-area-inset-bottom, 0px));
     gap: 10px;
   }
 
@@ -1464,6 +1463,13 @@ body {
     padding: 10px 12px;
     -webkit-appearance: none;
     appearance: none;
+  }
+}
+
+/* 仅触屏设备使用“按 vh 固定添加弹窗高度” */
+@media (max-width: 768px) and (hover: none) and (pointer: coarse) {
+  .modal-content {
+    height: min(calc(var(--cb-add-popup-mobile-height-vh, 90) * 1vh), calc(100vh - 12px));
   }
 }
 
