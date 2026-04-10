@@ -1022,7 +1022,7 @@
     style.textContent = `
 #cloud-bookmark-inline-overlay { --cb-inline-mobile-height-vh: 90; position: fixed; inset: 0; z-index: 2147483646; display: flex; align-items: flex-end; justify-content: center; padding: 8px; background: radial-gradient(circle at top, rgba(251,191,36,0.12), transparent 34%), linear-gradient(180deg, rgba(15,23,42,0.22), rgba(15,23,42,0.38)); backdrop-filter: blur(10px); }
 #cloud-bookmark-inline-overlay .cb-inline-panel { width: min(720px, 100%); max-height: min(94vh, 820px); background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(248,250,252,0.99)); border-radius: 26px; box-shadow: 0 18px 48px rgba(15,23,42,0.22); border: 1px solid rgba(255,255,255,0.74); overflow: hidden; display: flex; flex-direction: column; }
-#cloud-bookmark-inline-overlay .cb-inline-head { padding: 22px 18px 16px; border-bottom: 1px solid rgba(226,232,240,0.88); background: radial-gradient(circle at top left, rgba(251,191,36,0.18), transparent 38%), linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,250,252,0.90)); position: relative; }
+#cloud-bookmark-inline-overlay .cb-inline-head { padding: 20px 18px 16px; border-bottom: 1px solid rgba(226,232,240,0.88); background: radial-gradient(circle at top left, rgba(251,191,36,0.18), transparent 38%), linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,250,252,0.90)); position: relative; }
 #cloud-bookmark-inline-overlay .cb-inline-head-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 #cloud-bookmark-inline-overlay .cb-inline-badge { display: inline-flex; align-items: center; min-height: 28px; padding: 0 12px; border-radius: 999px; background: rgba(245,158,11,0.10); color: #c2410c; font-size: 12px; font-weight: 700; }
 #cloud-bookmark-inline-overlay .cb-inline-close { width: 42px; height: 42px; border: 1px solid rgba(148,163,184,0.20); background: rgba(255,255,255,0.76); color: #334155; border-radius: 14px; font-size: 24px; cursor: pointer; }
@@ -1041,7 +1041,7 @@
 #cloud-bookmark-inline-overlay .cb-inline-folder-row select { flex: 1; min-width: 0; }
 #cloud-bookmark-inline-overlay .cb-inline-btn { border: none; border-radius: 14px; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease; }
 #cloud-bookmark-inline-overlay .cb-inline-btn.--secondary { min-width: 102px; height: 50px; background: #eef2f7; color: #334155; }
-#cloud-bookmark-inline-overlay .cb-inline-actions { display: flex; gap: 10px; padding: 14px 18px calc(14px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid rgba(226,232,240,0.9); background: linear-gradient(180deg, rgba(248,250,252,0.82), rgba(255,255,255,0.96)); backdrop-filter: blur(10px); }
+#cloud-bookmark-inline-overlay .cb-inline-actions { display: flex; gap: 10px; padding: 14px 18px calc(16px + env(safe-area-inset-bottom, 0px)); border-top: 1px solid rgba(226,232,240,0.9); background: linear-gradient(180deg, rgba(248,250,252,0.82), rgba(255,255,255,0.96)); backdrop-filter: blur(10px); }
 #cloud-bookmark-inline-overlay .cb-inline-actions .cb-inline-btn { flex: 1; height: 50px; }
 #cloud-bookmark-inline-overlay .cb-inline-btn.--ghost { background: #eef2f7; color: #334155; }
 #cloud-bookmark-inline-overlay .cb-inline-btn.--primary { background: linear-gradient(135deg, #f59e0b, #ea580c); color: #fff; box-shadow: 0 14px 28px rgba(234,88,12,0.24); }

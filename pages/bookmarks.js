@@ -818,7 +818,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (sortSelect) {
     sortSelect.value = currentSort;
   }
-  checkUrlParams();
+  await checkUrlParams();
 
   // 页面隐藏/关闭时兜底执行一次排序同步，避免防抖未触发导致顺序丢失
   document.addEventListener('visibilitychange', () => {
@@ -879,13 +879,38 @@ document.addEventListener('DOMContentLoaded', async () => {
 /**
  * 检查URL参数（用于添加书签）
  */
-function checkUrlParams() {
+function clampAddPopupMobileHeightVh(value, fallback = 90) {
+  const parsed = parseInt(value, 10);
+  const candidate = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.min(100, Math.max(50, candidate));
+}
+
+async function applyAddPopupMobileHeightForAddFlow(source) {
+  try {
+    const settings = await storage.getSettings();
+    const unified = settings?.addBookmarkPopup || {};
+    const legacy = source === 'floating-ball'
+      ? (settings?.floatingBallAddPopup || {})
+      : (settings?.iconAddPopup || {});
+    const fallback = clampAddPopupMobileHeightVh(legacy.heightMobile, 90);
+    const mobileHeightVh = clampAddPopupMobileHeightVh(unified.heightMobile, fallback);
+    document.documentElement.style.setProperty('--cb-add-popup-mobile-height-vh', String(mobileHeightVh));
+  } catch (_) {
+    document.documentElement.style.setProperty('--cb-add-popup-mobile-height-vh', '90');
+  }
+}
+
+async function checkUrlParams() {
   const params = new URLSearchParams(window.location.search);
   const action = params.get('action');
   pageSource = params.get('source'); // 记录页面来源
   const sourceTabIdParam = params.get('sourceTabId');
   const parsedSourceTabId = parseInt(sourceTabIdParam, 10);
   sourceTabId = Number.isFinite(parsedSourceTabId) ? parsedSourceTabId : null;
+
+  if (action === 'add' && (pageSource === 'shortcut' || pageSource === 'popup' || pageSource === 'floating-ball')) {
+    await applyAddPopupMobileHeightForAddFlow(pageSource || 'popup');
+  }
 
   // 如果是从快捷键、弹窗或悬浮球打开的，隐藏主内容，只显示添加/编辑表单
   if (pageSource === 'shortcut' || pageSource === 'popup' || pageSource === 'floating-ball') {
