@@ -189,9 +189,9 @@
         <!-- 弹窗尺寸与快捷键 -->
         <div class="ui-settings-block">
           <h3 class="section-subtitle">弹窗(尺寸与快捷键设置)</h3>
-          <p class="section-desc">自定义不同入口打开弹窗的高度，并查看当前「保存书签」快捷键的实际生效状态。</p>
+          <p class="section-desc">自定义弹窗高度（普通弹窗与添加书签弹窗分开设置），并查看当前「保存书签」快捷键的实际生效状态。</p>
         <div class="form-group">
-          <label>弹窗高度自定义</label>
+          <label>普通书签弹窗高度自定义</label>
           <div class="height-custom-group">
             <div class="height-section">
               <h3>悬浮球打开的弹窗</h3>
@@ -234,44 +234,25 @@
           </div>
         </div>
         <div class="form-group">
-          <label>添加书签弹窗高度自定义</label>
+          <label>添加书签弹窗高度（统一所有入口）</label>
           <div class="height-custom-group">
             <div class="height-section">
-              <h3>悬浮球 / 快速收藏入口</h3>
+              <h3>悬浮球 / 插件图标 / 快捷键共用</h3>
               <div class="height-item">
-                <label for="floatingBallAddPopupHeightPc">PC端高度（px）</label>
+                <label for="addBookmarkPopupHeightPc">PC端高度（px）</label>
                 <div class="height-input-group">
-                  <input type="number" id="floatingBallAddPopupHeightPc" min="400" max="1000" step="10" placeholder="720">
-                  <button type="button" class="btn btn-small btn-sync" id="syncFloatingBallAddHeightPc" title="同步到云端">上传云端</button>
+                  <input type="number" id="addBookmarkPopupHeightPc" min="400" max="1200" step="10" placeholder="720">
+                  <button type="button" class="btn btn-small btn-sync" id="syncAddBookmarkHeightPc" title="同步到云端">上传云端</button>
                 </div>
                 <small>默认 720px。</small>
               </div>
               <div class="height-item">
-                <label for="floatingBallAddPopupHeightMobile">移动端高度（vh）</label>
+                <label for="addBookmarkPopupHeightMobile">移动端高度（vh）</label>
                 <div class="height-input-group">
-                  <input type="number" id="floatingBallAddPopupHeightMobile" min="50" max="100" step="1" placeholder="90">
-                  <button type="button" class="btn btn-small btn-sync" id="syncFloatingBallAddHeightMobile" title="同步到云端">上传云端</button>
+                  <input type="number" id="addBookmarkPopupHeightMobile" min="50" max="100" step="1" placeholder="90">
+                  <button type="button" class="btn btn-small btn-sync" id="syncAddBookmarkHeightMobile" title="同步到云端">上传云端</button>
                 </div>
-                <small>默认 90vh（仅在移动端回退为页面弹窗时生效）。</small>
-              </div>
-            </div>
-            <div class="height-section">
-              <h3>插件图标 / 快捷键入口</h3>
-              <div class="height-item">
-                <label for="iconAddPopupHeightPc">PC端高度（px）</label>
-                <div class="height-input-group">
-                  <input type="number" id="iconAddPopupHeightPc" min="400" max="1000" step="10" placeholder="720">
-                  <button type="button" class="btn btn-small btn-sync" id="syncIconAddHeightPc" title="同步到云端">上传云端</button>
-                </div>
-                <small>默认 720px。</small>
-              </div>
-              <div class="height-item">
-                <label for="iconAddPopupHeightMobile">移动端高度（vh）</label>
-                <div class="height-input-group">
-                  <input type="number" id="iconAddPopupHeightMobile" min="50" max="100" step="1" placeholder="90">
-                  <button type="button" class="btn btn-small btn-sync" id="syncIconAddHeightMobile" title="同步到云端">上传云端</button>
-                </div>
-                <small>默认 90vh（仅在移动端回退为页面弹窗时生效）。</small>
+                <small>默认 90vh。现在会同时作用于手机内嵌添加层和回退弹窗。</small>
               </div>
             </div>
           </div>

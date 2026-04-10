@@ -1020,7 +1020,7 @@
     const style = document.createElement('style');
     style.id = INLINE_BOOKMARK_STYLE_ID;
     style.textContent = `
-#cloud-bookmark-inline-overlay { position: fixed; inset: 0; z-index: 2147483646; display: flex; align-items: flex-end; justify-content: center; padding: 8px; background: radial-gradient(circle at top, rgba(251,191,36,0.12), transparent 34%), linear-gradient(180deg, rgba(15,23,42,0.22), rgba(15,23,42,0.38)); backdrop-filter: blur(10px); }
+#cloud-bookmark-inline-overlay { --cb-inline-mobile-height-vh: 90; position: fixed; inset: 0; z-index: 2147483646; display: flex; align-items: flex-end; justify-content: center; padding: 8px; background: radial-gradient(circle at top, rgba(251,191,36,0.12), transparent 34%), linear-gradient(180deg, rgba(15,23,42,0.22), rgba(15,23,42,0.38)); backdrop-filter: blur(10px); }
 #cloud-bookmark-inline-overlay .cb-inline-panel { width: min(720px, 100%); max-height: min(94vh, 820px); background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(248,250,252,0.99)); border-radius: 26px; box-shadow: 0 18px 48px rgba(15,23,42,0.22); border: 1px solid rgba(255,255,255,0.74); overflow: hidden; display: flex; flex-direction: column; }
 #cloud-bookmark-inline-overlay .cb-inline-head { padding: 22px 18px 16px; border-bottom: 1px solid rgba(226,232,240,0.88); background: radial-gradient(circle at top left, rgba(251,191,36,0.18), transparent 38%), linear-gradient(135deg, rgba(255,255,255,0.96), rgba(248,250,252,0.90)); position: relative; }
 #cloud-bookmark-inline-overlay .cb-inline-head-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
@@ -1028,7 +1028,7 @@
 #cloud-bookmark-inline-overlay .cb-inline-close { width: 42px; height: 42px; border: 1px solid rgba(148,163,184,0.20); background: rgba(255,255,255,0.76); color: #334155; border-radius: 14px; font-size: 24px; cursor: pointer; }
 #cloud-bookmark-inline-overlay .cb-inline-title { margin: 14px 0 6px; font-size: 30px; line-height: 1.1; font-weight: 700; color: #0f172a; }
 #cloud-bookmark-inline-overlay .cb-inline-subtitle { font-size: 13px; color: #475569; line-height: 1.6; }
-#cloud-bookmark-inline-overlay .cb-inline-body { padding: 16px 18px 18px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+#cloud-bookmark-inline-overlay .cb-inline-body { padding: 16px 18px 18px; overflow: auto; display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; }
 #cloud-bookmark-inline-overlay .cb-inline-field { padding: 14px; border-radius: 18px; border: 1px solid rgba(226,232,240,0.95); background: rgba(255,255,255,0.88); box-shadow: inset 0 1px 0 rgba(255,255,255,0.72); }
 #cloud-bookmark-inline-overlay .cb-inline-field.--primary { background: radial-gradient(circle at top right, rgba(59,130,246,0.09), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.98), rgba(247,250,252,0.95)); border-color: rgba(125,211,252,0.55); box-shadow: inset 0 1px 0 rgba(255,255,255,0.88), 0 18px 34px rgba(148,163,184,0.10); }
 #cloud-bookmark-inline-overlay .cb-inline-field.--folder { background: radial-gradient(circle at top left, rgba(251,191,36,0.14), transparent 34%), linear-gradient(180deg, #fffdf7, #fff7ed); border-color: rgba(251,191,36,0.42); box-shadow: inset 0 1px 0 rgba(255,255,255,0.88), 0 16px 30px rgba(245,158,11,0.08); }
@@ -1045,7 +1045,7 @@
 #cloud-bookmark-inline-overlay .cb-inline-actions .cb-inline-btn { flex: 1; height: 50px; }
 #cloud-bookmark-inline-overlay .cb-inline-btn.--ghost { background: #eef2f7; color: #334155; }
 #cloud-bookmark-inline-overlay .cb-inline-btn.--primary { background: linear-gradient(135deg, #f59e0b, #ea580c); color: #fff; box-shadow: 0 14px 28px rgba(234,88,12,0.24); }
-@media (max-width: 768px) { #cloud-bookmark-inline-overlay { padding: 6px; } #cloud-bookmark-inline-overlay .cb-inline-panel { max-height: calc(100vh - 12px); border-radius: 24px; } #cloud-bookmark-inline-overlay .cb-inline-title { font-size: 26px; } }
+@media (max-width: 768px) { #cloud-bookmark-inline-overlay { padding: 6px; } #cloud-bookmark-inline-overlay .cb-inline-panel { height: min(calc(var(--cb-inline-mobile-height-vh, 90) * 1vh), calc(100vh - 12px)); max-height: min(calc(var(--cb-inline-mobile-height-vh, 90) * 1vh), calc(100vh - 12px)); border-radius: 24px; } #cloud-bookmark-inline-overlay .cb-inline-title { font-size: 26px; } }
 @media (min-width: 769px) { #cloud-bookmark-inline-overlay { align-items: center; padding: 16px; } #cloud-bookmark-inline-overlay .cb-inline-panel { max-width: 580px; max-height: min(84vh, 740px); border-radius: 26px; } }
     `.trim();
     (document.head || document.documentElement).appendChild(style);
@@ -1067,6 +1067,32 @@
     }).join('');
   }
 
+  function normalizeMobileOverlayHeight(value, fallback = 90) {
+    const parsed = parseInt(value, 10);
+    const candidate = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.min(100, Math.max(50, candidate));
+  }
+
+  async function resolveInlineOverlayHeightVh(request) {
+    const direct = parseInt(request && request.heightMobileVh, 10);
+    if (Number.isFinite(direct)) {
+      return normalizeMobileOverlayHeight(direct, 90);
+    }
+
+    try {
+      const settings = await getSettings();
+      const unified = settings && settings.addBookmarkPopup ? settings.addBookmarkPopup : {};
+      const source = (request && request.source) || 'popup';
+      const legacy = source === 'floating-ball'
+        ? ((settings && settings.floatingBallAddPopup) || {})
+        : ((settings && settings.iconAddPopup) || {});
+      const fallback = normalizeMobileOverlayHeight(legacy.heightMobile, 90);
+      return normalizeMobileOverlayHeight(unified.heightMobile, fallback);
+    } catch (_) {
+      return 90;
+    }
+  }
+
   async function showInlineBookmarkOverlay(request) {
     ensureInlineBookmarkStyle();
     removeInlineBookmarkOverlay();
@@ -1078,6 +1104,8 @@
     try { host = new URL(request.url || '').hostname.replace(/^www\./, ''); } catch (_) {}
     const overlay = document.createElement('div');
     overlay.id = 'cloud-bookmark-inline-overlay';
+    const mobileHeightVh = await resolveInlineOverlayHeightVh(request);
+    overlay.style.setProperty('--cb-inline-mobile-height-vh', String(mobileHeightVh));
     overlay.innerHTML = `
       <div class="cb-inline-panel" role="dialog" aria-modal="true">
         <div class="cb-inline-head">

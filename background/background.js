@@ -951,10 +951,37 @@ function buildAddBookmarkPageUrl({ url = '', title = '', source = 'popup', sourc
   return runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`);
 }
 
+function resolveAddPopupSettings(settings, source = 'popup') {
+  const unified = settings?.addBookmarkPopup || {};
+  const legacy = source === 'floating-ball'
+    ? (settings?.floatingBallAddPopup || {})
+    : (settings?.iconAddPopup || {});
+
+  const heightPc = clampInt(
+    unified.heightPc,
+    clampInt(legacy.heightPc, 720, 400, 1200),
+    400,
+    1200
+  );
+  const heightMobile = clampInt(
+    unified.heightMobile,
+    clampInt(legacy.heightMobile, 90, 50, 100),
+    50,
+    100
+  );
+
+  return { heightPc, heightMobile };
+}
+
 async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', tabId = null, preferInlineOverlay = false } = {}) {
   if (!url) {
     throw new Error('缺少URL');
   }
+
+  const settings = await storage.getSettings().catch(() => ({}));
+  const addPopupSettings = resolveAddPopupSettings(settings, source);
+  const pcHeight = addPopupSettings.heightPc;
+  const mobileVh = addPopupSettings.heightMobile;
 
   let targetTabId = typeof tabId === 'number' ? tabId : null;
   if (preferInlineOverlay) {
@@ -967,7 +994,8 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
         action: 'showInlineBookmarkOverlay',
         url,
         title,
-        source
+        source,
+        heightMobileVh: mobileVh
       });
       if (inlineResp && inlineResp.success) {
         return { mode: 'inline', tabId: targetTabId };
@@ -978,14 +1006,10 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
   const targetUrl = buildAddBookmarkPageUrl({ url, title, source, sourceTabId: targetTabId });
   const windowsAPI = (typeof browser !== 'undefined' ? browser.windows : chrome.windows) || null;
   const popupWidth = 520;
-  const settings = await storage.getSettings().catch(() => ({}));
-  const addPopupSettings = source === 'floating-ball'
-    ? (settings?.floatingBallAddPopup || {})
-    : (settings?.iconAddPopup || {});
   const defaultPcHeight = 720;
   const defaultMobileVh = 90;
-  const pcHeight = clampInt(addPopupSettings.heightPc, defaultPcHeight, 400, 1200);
-  const mobileVh = clampInt(addPopupSettings.heightMobile, defaultMobileVh, 50, 100);
+  const safePcHeight = clampInt(pcHeight, defaultPcHeight, 400, 1200);
+  const safeMobileVh = clampInt(mobileVh, defaultMobileVh, 50, 100);
 
   const openInTab = async () => {
     if (typeof browser !== 'undefined' && browser.tabs) {
@@ -1031,8 +1055,8 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
     ? currentWindow.height
     : 800;
   const popupHeight = isMobile
-    ? Math.min(Math.max(300, baseWindowHeight - 50), Math.floor(baseWindowHeight * (mobileVh / 100)))
-    : pcHeight;
+    ? Math.min(Math.max(300, baseWindowHeight - 50), Math.floor(baseWindowHeight * (safeMobileVh / 100)))
+    : safePcHeight;
 
   let left = Math.floor((1280 - popupWidth) / 2);
   let top = Math.max(50, Math.floor((720 - popupHeight) / 2));
