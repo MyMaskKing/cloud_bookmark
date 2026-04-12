@@ -167,8 +167,18 @@ class SyncQueue {
 
 const syncQueue = new SyncQueue();
 // 防抖变量：用于返回检测时的防抖机制
-let focusCheckTimeout = null;
-let tabActivatedCheckTimeout = null;
+const RETURN_SYNC_CHECK_THROTTLE_MS = 2000;
+let lastReturnSyncCheckAt = 0;
+
+function triggerReturnSyncCheck(reason, extra = {}) {
+  const now = Date.now();
+  if (now - lastReturnSyncCheckAt < RETURN_SYNC_CHECK_THROTTLE_MS) {
+    return;
+  }
+  lastReturnSyncCheckAt = now;
+  console.log('[return-check] trigger', { reason, ...extra });
+  checkAndSyncOnReturn();
+}
 
 function normalizeFolderPath(path) {
   if (!path) return '';
@@ -1262,30 +1272,48 @@ async function shouldSyncOnReturn() {
     }
 
     // 获取同步状态
+    const syncIntervalMinutesRaw = Number(config.syncInterval);
+    const syncIntervalMinutes = Number.isFinite(syncIntervalMinutesRaw) && syncIntervalMinutesRaw > 0
+      ? syncIntervalMinutesRaw
+      : 5;
+    const syncIntervalMs = syncIntervalMinutes * 60 * 1000;
     const syncStatus = await storage.getSyncStatus();
+    const lastSyncTs = Number(syncStatus.lastSync) || 0;
 
     // 如果正在同步中，不需要再次触发
     if (syncStatus.status === 'syncing') {
+      const staleSyncingMs = Math.max(syncIntervalMs * 2, 10 * 60 * 1000);
+      const syncingForMs = lastSyncTs > 0 ? (Date.now() - lastSyncTs) : Number.POSITIVE_INFINITY;
+      if (!Number.isFinite(syncingForMs) || syncingForMs >= staleSyncingMs) {
+        console.warn('[return-check] stale syncing detected, force-recover', {
+          lastSync: lastSyncTs ? new Date(lastSyncTs).toLocaleString() : 'N/A',
+          syncingMinutes: Number.isFinite(syncingForMs) ? Math.floor(syncingForMs / 60000) : 'unknown',
+          staleThresholdMinutes: Math.floor(staleSyncingMs / 60000)
+        });
+        await storage.saveSyncStatus({
+          status: 'error',
+          lastSync: lastSyncTs || Date.now(),
+          error: 'detected-stale-syncing-auto-recovered'
+        });
+        return true;
+      }
       console.log('[返回检测] 同步正在进行中，跳过');
       return false;
     }
 
-    if (!syncStatus.lastSync) {
+    if (!lastSyncTs) {
       // 从未同步过，需要同步
       return true;
     }
 
     // 获取同步间隔（分钟转毫秒）
-    const syncIntervalMinutes = config.syncInterval || 5;
-    const syncIntervalMs = syncIntervalMinutes * 60 * 1000;
-
-    // 计算距离上次同步的时间
-    const timeSinceLastSync = Date.now() - syncStatus.lastSync;
+        // 计算距离上次同步的时间
+    const timeSinceLastSync = Date.now() - lastSyncTs;
 
     // 如果超过时间间隔，需要同步
     if (timeSinceLastSync >= syncIntervalMs) {
       console.log('[返回检测] 距离上次同步已超过时间间隔，需要立即同步', {
-        lastSync: new Date(syncStatus.lastSync).toLocaleString(),
+        lastSync: new Date(lastSyncTs).toLocaleString(),
         timeSinceLastSync: Math.floor(timeSinceLastSync / 1000 / 60) + '分钟',
         syncInterval: syncIntervalMinutes + '分钟'
       });
@@ -1325,17 +1353,9 @@ if (windowsAPI && windowsAPI.onFocusChanged && typeof windowsAPI.onFocusChanged.
       // windowId 为 -1 表示所有窗口都失去焦点（用户切换到其他应用）
       // windowId 为有效数字时，表示有窗口获得焦点（用户回到浏览器）
       // 注意：某些浏览器可能使用其他值表示无焦点窗口，我们只检查是否为有效正数
-      if (windowId !== -1 && typeof windowId === 'number' && windowId > 0) {
+      if (windowId !== -1 && typeof windowId === 'number' && windowId >= 0) {
         // 使用防抖机制，避免频繁触发
-        if (focusCheckTimeout) {
-          clearTimeout(focusCheckTimeout);
-        }
-        // 延迟一小段时间，避免频繁触发
-        focusCheckTimeout = setTimeout(() => {
-          console.log('[返回检测] 检测到窗口获得焦点，检查是否需要同步', { windowId });
-          checkAndSyncOnReturn();
-          focusCheckTimeout = null;
-        }, 1000);
+        triggerReturnSyncCheck('window-focus', { windowId });
       }
     });
   } catch (e) {
@@ -1348,14 +1368,10 @@ if (tabsAPI && tabsAPI.onActivated && typeof tabsAPI.onActivated.addListener ===
   try {
     tabsAPI.onActivated.addListener(async (activeInfo) => {
       // 使用防抖机制，避免频繁触发
-      if (tabActivatedCheckTimeout) {
-        clearTimeout(tabActivatedCheckTimeout);
-      }
-      // 延迟检查，避免频繁触发
-      tabActivatedCheckTimeout = setTimeout(() => {
-        checkAndSyncOnReturn();
-        tabActivatedCheckTimeout = null;
-      }, 2000);
+      triggerReturnSyncCheck('tab-activated', {
+        tabId: activeInfo && activeInfo.tabId,
+        windowId: activeInfo && activeInfo.windowId
+      });
     });
   } catch (e) {
     console.warn('[返回检测] 注册标签页激活监听失败（可能当前平台不支持）:', e?.message || e);

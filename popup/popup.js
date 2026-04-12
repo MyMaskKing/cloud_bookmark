@@ -711,10 +711,13 @@ async function runPopupSceneSwitchTransition(workFn) {
 
 /**
  * 加载弹窗展示的书签（显示所有书签，与完整画面保持一致）
- * @param {{ lightLoading?: boolean }} [options] lightLoading 为 true 时不使用全列表遮罩（用于场景切换时的轻反馈）
+ * @param {{ lightLoading?: boolean, skipRestoreScroll?: boolean }} [options]
+ * lightLoading 为 true 时不使用全列表遮罩（用于场景切换时的轻反馈）
+ * skipRestoreScroll 为 true 时跳过自动恢复滚动位置（用于目录跳转等主动定位场景）
  */
 async function loadBookmarksForPopup(options = {}) {
   const lightLoading = !!(options && options.lightLoading);
+  const skipRestoreScroll = !!(options && options.skipRestoreScroll);
   try {
     if (!lightLoading) {
       // 列表区域 loading 遮罩 + 右上角目录/收藏按钮置灰
@@ -768,29 +771,33 @@ async function loadBookmarksForPopup(options = {}) {
     // 渲染后先刷新一次回到顶部按钮（此时 scrollTop 可能还没恢复，但至少不滞后）
     refreshBackToTopVisibility();
 
-    // 恢复滚动位置（延迟执行，确保DOM完全渲染）
-    // 使用 requestAnimationFrame 等待渲染完成
-    console.log('[弹窗] 书签渲染完成，准备恢复滚动位置');
+    if (!skipRestoreScroll) {
+      // 恢复滚动位置（延迟执行，确保DOM完全渲染）
+      // 使用 requestAnimationFrame 等待渲染完成
+      console.log('[弹窗] 书签渲染完成，准备恢复滚动位置');
 
-    // 增加延迟和多次轮询，确保在各种设备上都能成功恢复
-    let scrollRetries = 0;
-    const MAX_SCROLL_RETRIES = 5;
+      // 增加延迟和多次轮询，确保在各种设备上都能成功恢复
+      let scrollRetries = 0;
+      const MAX_SCROLL_RETRIES = 5;
 
-    const attemptRestore = () => {
-      restoreScrollPosition().then(success => {
-        if (!success && scrollRetries < MAX_SCROLL_RETRIES) {
-          scrollRetries++;
-          console.log(`[弹窗] 恢复滚动位置未成功，进行第 ${scrollRetries} 次重试`);
-          setTimeout(attemptRestore, 100 * scrollRetries);
-        } else {
-          // 无论恢复成功与否，都刷新一次“回到顶部”按钮显示状态（restoreScrollPosition 不触发 scroll 事件）
-          refreshBackToTopVisibility();
-        }
-      });
-    };
+      const attemptRestore = () => {
+        restoreScrollPosition().then(success => {
+          if (!success && scrollRetries < MAX_SCROLL_RETRIES) {
+            scrollRetries++;
+            console.log(`[弹窗] 恢复滚动位置未成功，进行第 ${scrollRetries} 次重试`);
+            setTimeout(attemptRestore, 100 * scrollRetries);
+          } else {
+            // 无论恢复成功与否，都刷新一次“回到顶部”按钮显示状态（restoreScrollPosition 不触发 scroll 事件）
+            refreshBackToTopVisibility();
+          }
+        });
+      };
 
-    // 初始延迟，等待 DOM 解析和初步渲染
-    setTimeout(attemptRestore, 100);
+      // 初始延迟，等待 DOM 解析和初步渲染
+      setTimeout(attemptRestore, 100);
+    } else {
+      refreshBackToTopVisibility();
+    }
   } catch (error) {
     console.error('加载书签失败:', error);
     pushOpLog(`loadBookmarks failed: ${error.message}`);

@@ -183,7 +183,7 @@
         }
         // 如果 popup.js 中暴露了 loadBookmarksForPopup，则调用它刷新列表
         if (typeof window.loadBookmarksForPopup === 'function') {
-          Promise.resolve(window.loadBookmarksForPopup())
+          Promise.resolve(window.loadBookmarksForPopup({ skipRestoreScroll: true }))
             .then(() => resolve())
             .catch(() => resolve());
         } else {
