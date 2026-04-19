@@ -24,17 +24,9 @@ async function ensureDeviceInCloud() {
     return;
   }
 
-  // 从云端拉取最新的设备列表（不覆盖本地的 deviceInfo）
-  // 即使拉取失败，也继续执行设备注册逻辑（可能是首次连接，云端文件不存在）
-  try {
-    await syncSettingsFromCloud();
-  } catch (e) {
-    console.warn('拉取云端设置失败，继续执行设备注册:', e.message);
-  }
-
-  // 获取设备列表（可能是从云端拉取的，也可能是本地已有的）
-  // 确保从云端同步后，获取最新的设备列表
-  let devices = await storage.getDevices() || [];
+  // 设备列表更新前必须先拿到云端最新快照，避免旧列表把别的设备覆盖掉
+  const latestCloudSettings = await readLatestCloudSettings();
+  let devices = await getLatestDevicesBase(latestCloudSettings);
   const now = Date.now();
 
   console.log('[设备注册] 拉取云端后，本地设备列表数量:', devices.length, '当前设备ID:', currentDevice.id);
@@ -79,7 +71,7 @@ async function ensureDeviceInCloud() {
   // 这样可以避免时序问题，确保同步的是最新的设备列表
   try {
     console.log('[设备注册] 开始同步设备列表到云端，设备数量:', devices.length);
-    await syncSettingsToCloud(devices);
+    await syncSettingsToCloud(devices, latestCloudSettings);
     console.log('[设备注册] 设备列表已成功同步到云端，当前设备ID:', currentDevice.id);
   } catch (error) {
     console.error('[设备注册] 同步设备列表到云端失败:', error);
@@ -719,16 +711,69 @@ function insertBookmarkSmart(bookmarks, newBookmark, folders = []) {
 }
 
 /**
- * 同步设置到云端（非敏感）
- * @param {Array} devicesOverride - 可选的设备列表，如果提供则使用此列表而不是从存储读取
+ * 读取云端最新设置。
+ * 设备列表相关更新必须先读取这份最新快照，再基于最新快照做增量修改。
  */
-async function syncSettingsToCloud(devicesOverride = null) {
+async function readLatestCloudSettings() {
+  const config = await storage.getConfig();
+  if (!config || !config.serverUrl) return {};
+  const webdav = new WebDAVClient(config);
+  const cloud = await webdav.readSettings();
+  return (cloud && typeof cloud === 'object') ? cloud : {};
+}
+
+/**
+ * 克隆设备列表，避免直接修改读取到的原始对象。
+ */
+function cloneDevices(devices) {
+  return Array.isArray(devices) ? devices.map(device => ({ ...device })) : [];
+}
+
+/**
+ * 获取设备列表更新时的基准数据。
+ * 优先使用云端最新 devices；如果云端暂时没有该字段，再回退到本地已缓存的 devices。
+ */
+async function getLatestDevicesBase(latestCloudSettings = null) {
+  const cloud = latestCloudSettings || await readLatestCloudSettings();
+  if (Array.isArray(cloud.devices)) {
+    return cloneDevices(cloud.devices);
+  }
+  return cloneDevices(await storage.getDevices());
+}
+
+/**
+ * 基于云端最新快照更新设备列表。
+ * 这里统一做「先拉最新，再修改，再保存本地并回写云端」。
+ */
+async function updateDevicesWithLatest(mutator) {
+  const latestCloudSettings = await readLatestCloudSettings();
+  const baseDevices = await getLatestDevicesBase(latestCloudSettings);
+  const nextDevices = await mutator(baseDevices);
+  const safeDevices = Array.isArray(nextDevices) ? nextDevices : baseDevices;
+
+  await storage.saveDevices(safeDevices);
+  await syncSettingsToCloud(safeDevices, latestCloudSettings);
+
+  return safeDevices;
+}
+
+/**
+ * 同步设置到云端（非敏感）。
+ * @param {Array|null} devicesOverride - 可选的设备列表，如果提供则使用此列表而不是从存储读取
+ * @param {Object|null} latestCloudSettings - 可选的云端最新快照，避免同一次更新内重复拉取
+ */
+async function syncSettingsToCloud(devicesOverride = null, latestCloudSettings = null) {
   const config = await storage.getConfig();
   if (!config || !config.serverUrl) return;
   const webdav = new WebDAVClient(config);
   const settings = await storage.getSettings();
-  // 如果提供了设备列表参数，使用参数；否则从存储读取
-  const devices = devicesOverride !== null ? devicesOverride : await storage.getDevices();
+  // 每次写 settings.json 前都先读取云端最新数据，避免拿旧的 devices 覆盖别的设备
+  const cloudSettings = latestCloudSettings || await readLatestCloudSettings();
+  const localDevices = await storage.getDevices();
+  // 如果提供了设备列表参数，说明调用方已经基于最新快照算出了最终结果，直接使用
+  const devices = devicesOverride !== null
+    ? devicesOverride
+    : (Array.isArray(cloudSettings.devices) ? cloudSettings.devices : localDevices);
   const deviceInfo = await storage.getDeviceInfo();
   const scenes = await storage.getScenes();
 
@@ -736,6 +781,7 @@ async function syncSettingsToCloud(devicesOverride = null) {
 
   // 注意：currentScene 不同步到云端，每个设备独立维护当前场景
   await webdav.writeSettings({
+    ...(cloudSettings && typeof cloudSettings === 'object' ? cloudSettings : {}),
     settings: settings || {},
     devices: devices || [],
     deviceInfo: deviceInfo || null,
@@ -1529,6 +1575,133 @@ alarmsAPI.onAlarm.addListener((alarm) => {
   }
 });
 
+/**
+ * 更新当前设备的浏览器书签定时上传绑定场景。
+ * 这里统一要求先读取云端最新 devices，再在最新列表上修改当前设备。
+ */
+async function updateBrowserBookmarkSyncBindingForCurrentDevice(sceneId = '') {
+  await ensureDeviceRegistered();
+
+  const deviceInfo = await storage.getDeviceInfo();
+  const deviceId = deviceInfo?.id;
+  if (!deviceId) {
+    throw new Error('当前设备ID为空');
+  }
+
+  const now = Date.now();
+  return updateDevicesWithLatest((devices) => {
+    const idx = devices.findIndex(d => d.id === deviceId);
+    const sceneBinding = sceneId || '';
+
+    if (idx === -1) {
+      devices.push({
+        id: deviceId,
+        name: deviceInfo?.name || currentDevice?.name || '未命名设备',
+        createdAt: deviceInfo?.createdAt || currentDevice?.createdAt || now,
+        lastSeen: now,
+        browserBookmarkSyncSceneId: sceneBinding || undefined,
+        browserBookmarkTimedSyncStarted: false
+      });
+    } else {
+      devices[idx] = {
+        ...devices[idx],
+        browserBookmarkSyncSceneId: sceneBinding || undefined,
+        // 切换场景后要求用户重新确认，避免旧定时任务直接沿用
+        browserBookmarkTimedSyncStarted: false
+      };
+    }
+
+    return devices;
+  });
+}
+
+/**
+ * 标记当前设备已开启浏览器书签定时上传。
+ * 同样基于云端最新 devices 快照更新，避免误覆盖其他设备条目。
+ */
+async function startBrowserBookmarkTimedSyncForCurrentDevice() {
+  await ensureDeviceRegistered();
+
+  const deviceInfo = await storage.getDeviceInfo();
+  const deviceId = deviceInfo?.id;
+  if (!deviceId) {
+    throw new Error('当前设备ID为空');
+  }
+
+  return updateDevicesWithLatest((devices) => {
+    const idx = devices.findIndex(d => d.id === deviceId);
+    if (idx === -1) {
+      throw new Error('当前设备不在设备列表中，请刷新页面后重试');
+    }
+    devices[idx] = {
+      ...devices[idx],
+      browserBookmarkTimedSyncStarted: true
+    };
+    return devices;
+  });
+}
+
+/**
+ * 从云端最新设备列表中移除指定设备。
+ */
+async function removeDeviceFromLatest(deviceId) {
+  return updateDevicesWithLatest((devices) => devices.filter(d => d.id !== deviceId));
+}
+
+/**
+ * 将设备列表中的某台设备置换为当前设备。
+ * 必须先拿到云端最新 devices，再做置换，避免把别的设备的新状态带回旧值。
+ */
+async function adoptDeviceAsCurrentFromLatest(targetId) {
+  await ensureDeviceRegistered();
+
+  const currentInfo = await storage.getDeviceInfo();
+  const currentId = currentInfo?.id;
+  if (!currentId) {
+    throw new Error('当前设备ID为空');
+  }
+
+  const now = Date.now();
+  let adoptedDevice = null;
+
+  await updateDevicesWithLatest((devices) => {
+    const target = devices.find(d => d.id === targetId);
+    if (!target) {
+      throw new Error('目标设备不存在或已被其他设备移除');
+    }
+
+    const nextDevices = devices.filter(d => d.id !== currentId);
+    const targetIndex = nextDevices.findIndex(d => d.id === targetId);
+    if (targetIndex !== -1) {
+      nextDevices[targetIndex] = {
+        ...nextDevices[targetIndex],
+        lastSeen: now
+      };
+      adoptedDevice = nextDevices[targetIndex];
+    }
+
+    return nextDevices;
+  });
+
+  if (!adoptedDevice) {
+    throw new Error('置换当前设备失败：未找到目标设备');
+  }
+
+  const newInfo = {
+    id: adoptedDevice.id,
+    name: adoptedDevice.name || '未命名设备',
+    createdAt: adoptedDevice.createdAt || now,
+    lastSeen: now
+  };
+
+  await storage.saveDeviceInfo(newInfo);
+  currentDevice = newInfo;
+  // 置换设备会同时改变顶层 deviceInfo，因此这里补一次 settings 同步，避免云端仍残留旧 deviceInfo
+  await syncSettingsToCloud(await storage.getDevices());
+
+  return newInfo;
+}
+
 // 监听来自popup或pages的消息
 runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
@@ -2217,6 +2390,34 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     Promise.all([storage.getDevices(), storage.getDeviceInfo()]).then(([devices, info]) => {
       sendResponse({ devices, deviceInfo: info });
     }).catch(error => sendResponse({ error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'updateBrowserBookmarkSyncBinding') {
+    syncQueue.enqueue(() => updateBrowserBookmarkSyncBindingForCurrentDevice(request.sceneId || '')).then(() => {
+      sendResponse({ success: true });
+    }).catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'startBrowserBookmarkTimedSync') {
+    syncQueue.enqueue(() => startBrowserBookmarkTimedSyncForCurrentDevice()).then(() => {
+      sendResponse({ success: true });
+    }).catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'removeDevice') {
+    syncQueue.enqueue(() => removeDeviceFromLatest(request.deviceId)).then(() => {
+      sendResponse({ success: true });
+    }).catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'adoptDeviceAsCurrent') {
+    syncQueue.enqueue(() => adoptDeviceAsCurrentFromLatest(request.targetId)).then((deviceInfo) => {
+      sendResponse({ success: true, deviceInfo });
+    }).catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
@@ -3137,18 +3338,16 @@ async function writeBrowserBookmarksToCloud(bookmarks, folders, sceneId) {
   // 注意：不再更新 lastSeen，避免混用“在线时间”和“最后同步时间”
   try {
     const browserTimedSyncLastSyncKey = 'browserBookmarkTimedSyncLastSync';
-    const devices = await storage.getDevices();
-    if (Array.isArray(devices) && devices.length > 0) {
+    await updateDevicesWithLatest((devices) => {
       const idx = devices.findIndex(d => d.id === currentDevice.id);
       if (idx !== -1) {
         devices[idx] = {
           ...devices[idx],
           [browserTimedSyncLastSyncKey]: now
         };
-        await storage.saveDevices(devices);
-        await syncSettingsToCloud(devices);
       }
-    }
+      return devices;
+    });
 
     runtimeAPI.sendMessage({
       action: 'browserTimedSyncDevicesUpdated',
@@ -3224,14 +3423,13 @@ async function touchCurrentDevice() {
   if (!currentDevice) return;
   currentDevice.lastSeen = Date.now();
   await storage.saveDeviceInfo(currentDevice);
-  const devices = await storage.getDevices();
-  const idx = devices.findIndex(d => d.id === currentDevice.id);
-  if (idx !== -1) {
-    devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen, name: currentDevice.name };
-    await storage.saveDevices(devices);
-  }
-  // 设备信息更新后也同步设置到云端
-  await syncSettingsToCloud();
+  await updateDevicesWithLatest((devices) => {
+    const idx = devices.findIndex(d => d.id === currentDevice.id);
+    if (idx !== -1) {
+      devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen, name: currentDevice.name };
+    }
+    return devices;
+  });
 }
 
 /**

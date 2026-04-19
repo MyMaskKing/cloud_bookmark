@@ -232,7 +232,6 @@ async function loadBrowserBookmarkSyncSceneSetting() {
         return `<option value="${scene.id}" ${selected}>${name}</option>`;
       })
     ].join('');
-
     browserBookmarkSyncSceneSelect.value = targetSceneId;
 
     // 绑定 change 事件（只绑定一次）
@@ -241,55 +240,22 @@ async function loadBrowserBookmarkSyncSceneSetting() {
       browserBookmarkSyncSceneSelect.addEventListener('change', async () => {
         try {
           const nextSceneId = browserBookmarkSyncSceneSelect.value;
-          let deviceInfo = await storage.getDeviceInfo();
-          let deviceId = deviceInfo?.id;
-          // 确保当前设备已生成 deviceInfo（防止首次进入设置页时 deviceInfo 为空）
-          if (!deviceId) {
-            try {
-              await sendMessageCompat({ action: 'registerDevice' });
-            } catch (_) {}
-            deviceInfo = await storage.getDeviceInfo();
-            deviceId = deviceInfo?.id;
+          // 绑定场景时走后台统一更新，确保设备列表总是基于云端最新快照修改
+          const result = await sendWithRetry(
+            { action: 'updateBrowserBookmarkSyncBinding', sceneId: nextSceneId || '' },
+            { retries: 2, delay: 300 }
+          );
+          if (!result?.success) {
+            throw new Error(result?.error || '未知错误');
           }
-          if (!deviceId) throw new Error('当前设备ID为空');
-
-          let devices = await storage.getDevices();
-          if (!Array.isArray(devices)) devices = [];
-
-          const idx = devices.findIndex(d => d.id === deviceId);
-          const sceneBinding = nextSceneId || '';
-
-          if (idx === -1) {
-            devices.push({
-              id: deviceId,
-              name: deviceInfo?.name || '未命名设备',
-              createdAt: Date.now(),
-              lastSeen: Date.now(),
-              browserBookmarkSyncSceneId: sceneBinding || undefined,
-              browserBookmarkTimedSyncStarted: false
-            });
-          } else {
-            devices[idx] = {
-              ...devices[idx],
-              browserBookmarkSyncSceneId: sceneBinding || undefined,
-              // 切换场景视为重新确认：停止定时同步，需用户再次点击「开始」
-              browserBookmarkTimedSyncStarted: false
-            };
-          }
-
-          await storage.saveDevices(devices);
-
-          // 同步 devices 到云端（包含当前设备绑定的 scene）
-          await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
 
           // 更新设备列表展示的绑定信息（不阻塞同步逻辑）
           loadDevices().catch(() => {});
-
           // 用户显式调整同步场景：重置失败计数并重新计算 alarms
           await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
           await refreshBrowserTimedSyncStartButton();
           updateBrowserSyncInlineStatus().catch(() => {});
-          showMessage('浏览器书签定时上传场景已保存；需点击「开始定时上传」后才会按间隔上传', 'success');
+          showMessage('浏览器书签定时上传场景已保存；需点击“开始定时上传”后才会按间隔上传', 'success');
         } catch (e) {
           showMessage('保存失败: ' + (e?.message || e), 'error');
         }
@@ -306,43 +272,19 @@ async function loadBrowserBookmarkSyncSceneSetting() {
             return;
           }
 
-          let deviceInfo = await storage.getDeviceInfo();
-          let deviceId = deviceInfo?.id;
-          if (!deviceId) {
-            try {
-              await sendMessageCompat({ action: 'registerDevice' });
-            } catch (_) {}
-            deviceInfo = await storage.getDeviceInfo();
-            deviceId = deviceInfo?.id;
-          }
-          if (!deviceId) throw new Error('当前设备ID为空');
-
-          let devices = await storage.getDevices();
-          if (!Array.isArray(devices)) devices = [];
-          const idx = devices.findIndex(d => d.id === deviceId);
-          if (idx === -1) throw new Error('当前设备不在设备列表中，请刷新页面后重试');
-
-          const row = devices[idx];
-          if (row?.browserBookmarkTimedSyncStarted === true) {
-            // 按钮本应禁用，这里做保护避免重复点击触发异常状态
-            showMessage('已开启', 'success');
-            return;
+          // 开始定时上传也交给后台处理，避免本地旧 devices 覆盖云端最新设备列表
+          const result = await sendWithRetry(
+            { action: 'startBrowserBookmarkTimedSync' },
+            { retries: 2, delay: 300 }
+          );
+          if (!result?.success) {
+            throw new Error(result?.error || '未知错误');
           }
 
-          // 只负责开始：开启后按钮会变为禁用（已开启）
-          devices[idx] = {
-            ...devices[idx],
-            browserBookmarkTimedSyncStarted: true
-          };
-
-          await storage.saveDevices(devices);
-          await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
           loadDevices().catch(() => {});
-
-          // 切换场景后需要再点开始：这里确保立即执行一次
+          // 开始定时上传后立即执行一次，确保设备列表里的同步时间/错误信息刷新
           await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
           await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
-          // 为了让“浏览器最后同步时间/错误信息”等在设备列表里立即生效
           await loadDevices();
           showMessage('已开始浏览器书签定时上传', 'success');
 
@@ -2258,24 +2200,15 @@ async function adoptDeviceAsCurrent(targetId) {
     });
     if (!ok) return;
 
-    const newDevices = devices.filter(d => d.id !== currentId);
-    const ti = newDevices.findIndex(d => d.id === targetId);
-    if (ti !== -1) {
-      newDevices[ti] = { ...newDevices[ti], lastSeen: Date.now() };
+    // 设备置换改为走后台统一处理，避免本地旧设备列表回写时覆盖云端最新数据
+    const adoptResult = await sendWithRetry(
+      { action: 'adoptDeviceAsCurrent', targetId },
+      { retries: 2, delay: 300 }
+    );
+    if (!adoptResult?.success) {
+      throw new Error(adoptResult?.error || '未知错误');
     }
 
-    const newInfo = {
-      id: target.id,
-      name: target.name || '未命名设备',
-      createdAt: target.createdAt || Date.now(),
-      lastSeen: Date.now()
-    };
-
-    await storage.saveDeviceInfo(newInfo);
-    await storage.saveDevices(newDevices);
-
-    await sendWithRetry({ action: 'refreshCurrentDeviceCache' }, { retries: 2, delay: 300 });
-    await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
     await sendWithRetry({ action: 'refreshSyncAlarms' }, { retries: 2, delay: 300 });
 
     showMessage('已切换为本机设备并同步到云端', 'success');
@@ -2486,15 +2419,17 @@ async function loadDevices() {
           const doubleCheck = confirm('这是当前设备，移除后本机会在下一次同步清空本地数据并停止同步，确定继续？');
           if (!doubleCheck) return;
         }
-        const newDevices = devices.filter(d => d.id !== id);
-        const saveRes = await sendWithRetry({ action: 'saveDevices', devices: newDevices }, { retries: 2, delay: 300 });
-        if (saveRes?.success) {
-          showMessage('已移除设备', 'success');
-          await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
-          loadDevices();
-        } else {
-          showMessage('移除失败: ' + (saveRes?.error || '未知错误'), 'error');
+        const removeResult = await sendWithRetry(
+          { action: 'removeDevice', deviceId: id },
+          { retries: 2, delay: 300 }
+        );
+        if (!removeResult?.success) {
+          showMessage('移除失败: ' + (removeResult?.error || '未知错误'), 'error');
+          return;
         }
+        showMessage('已移除设备', 'success');
+        await loadDevices();
+        return;
       });
     });
   } catch (error) {
@@ -2575,15 +2510,17 @@ async function updateCurrentDeviceRow() {
           const doubleCheck = confirm('这是当前设备，移除后本机会在下一次同步清空本地数据并停止同步，确定继续？');
           if (!doubleCheck) return;
         }
-        const newDevices = devices.filter(d => d.id !== id);
-        const saveRes = await sendWithRetry({ action: 'saveDevices', devices: newDevices }, { retries: 2, delay: 300 });
-        if (saveRes?.success) {
-          showMessage('已移除设备', 'success');
-          await sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 });
-          await loadDevices();
-        } else {
-          showMessage('移除失败: ' + (saveRes?.error || '未知错误'), 'error');
+        const removeResult = await sendWithRetry(
+          { action: 'removeDevice', deviceId: id },
+          { retries: 2, delay: 300 }
+        );
+        if (!removeResult?.success) {
+          showMessage('移除失败: ' + (removeResult?.error || '未知错误'), 'error');
+          return;
         }
+        showMessage('已移除设备', 'success');
+        await loadDevices();
+        return;
       });
     }
   } catch (e) {
