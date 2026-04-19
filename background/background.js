@@ -800,6 +800,7 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
   const config = await storage.getConfig();
   if (!config || !config.serverUrl) return;
   const webdav = new WebDAVClient(config);
+  let deviceListChanged = false;
   try {
     const cloud = await webdav.readSettings();
     if (cloud) {
@@ -816,10 +817,12 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
         if (cloud.devices && Array.isArray(cloud.devices)) {
           console.log('[设置同步] 从云端同步设备列表，数量:', cloud.devices.length);
           await storage.saveDevices(cloud.devices);
+          deviceListChanged = true;
         } else if (forceClear) {
           // 非首次保存时，即使云端没有设备列表，也清空本地设备列表
           console.log('[设置同步] 非首次保存，清空本地设备列表');
           await storage.saveDevices([]);
+          deviceListChanged = true;
         } else {
           console.log('[设置同步] 云端没有设备列表，保留本地设备列表');
         }
@@ -855,6 +858,7 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
       await storage.saveSettings({});
       if (!skipDevices) {
         await storage.saveDevices([]);
+        deviceListChanged = true;
       }
       // 清空场景列表，确保使用新的云端数据
       await storage.saveScenes([]);
@@ -867,6 +871,11 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
   } catch (e) {
     // 忽略设置读取失败，不影响书签同步
     console.warn('同步设置失败（忽略）：', e.message);
+    return;
+  }
+
+  if (deviceListChanged) {
+    runtimeAPI.sendMessage({ action: 'cloudDevicesUpdated' }).catch(() => {});
   }
 }
 

@@ -3102,6 +3102,15 @@ try {
       sendResponse({ success: true });
       return true;
     }
+
+    if (request && request.action === 'cloudDevicesUpdated') {
+      // 后台完成 cloud->local 的设备列表同步后，需要整表刷新，避免已删除设备仍停留在画面上
+      loadDevices().catch(() => {});
+      loadBrowserBookmarkSyncSceneSetting().catch(() => {});
+      updateBrowserSyncInlineStatus().catch(() => {});
+      sendResponse({ success: true });
+      return true;
+    }
   });
 } catch (e) {
   // 忽略：部分环境可能不允许在此处注册
