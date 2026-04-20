@@ -464,13 +464,13 @@ configForm.addEventListener('submit', async (e) => {
         }
       }
 
-      // 刷新设置页面显示云端同步的最新数据
-      loadScenes();
-      loadDevices();
-      loadUiSettings();
-      loadDeviceDetectionSetting();
-      loadFloatingBallSetting();
-      updateSyncStatus();
+      // 刷新设置页面显示云端同步的最新数据（此时 background 已经处理完注册并保存了 storage）
+      await loadScenes();
+      await loadDevices();
+      await loadUiSettings();
+      await loadDeviceDetectionSetting();
+      await loadFloatingBallSetting();
+      await updateSyncStatus();
 
       // WebDAV 配置刚接续成功后，立即展示“浏览器书签定时同步场景”
       await loadBrowserBookmarkSyncSceneSetting();
