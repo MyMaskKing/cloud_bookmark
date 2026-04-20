@@ -1,3 +1,10 @@
+// 兼容的 API 对象（部分 API 在移动端可能不存在，例如 Firefox Android 不支持 contextMenus/commands）
+const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+const contextMenusAPI = (typeof browser !== 'undefined' ? browser.contextMenus : chrome.contextMenus) || null;
+const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+const commandsAPI = (typeof browser !== 'undefined' ? browser.commands : chrome.commands) || null;
+const alarmsAPI = typeof browser !== 'undefined' ? browser.alarms : chrome.alarms;
+
 /**
  * 确保当前设备已在云端设备列表（先拉取，再判定）
  * 若缺失则添加并写回云端；若已存在则仅刷新 lastSeen
@@ -73,6 +80,10 @@ async function ensureDeviceInCloud() {
     console.log('[设备注册] 开始同步设备列表到云端，设备数量:', devices.length);
     await syncSettingsToCloud(devices, latestCloudSettings);
     console.log('[设备注册] 设备列表已成功同步到云端，当前设备ID:', currentDevice.id);
+    // 成功后通知 UI 刷新设备列表
+    if (runtimeAPI && runtimeAPI.sendMessage) {
+      runtimeAPI.sendMessage({ action: 'cloudDevicesUpdated' }).catch(() => { });
+    }
   } catch (error) {
     console.error('[设备注册] 同步设备列表到云端失败:', error);
     throw error;
@@ -248,7 +259,7 @@ function expandFolderPathsPreserveOrder(paths) {
     const raw = (p && typeof p === 'object') ? (p.path || '') : p;
     const n = normalizeFolderPath(raw || '');
     if (!n) return;
-    
+
     const parts = n.split('/').filter(Boolean);
     let cur = '';
     let parentNode = null;
@@ -597,17 +608,17 @@ function mergeBrowserImportIntoCloudBookmarks(importedBookmarks, importFolders, 
 
   importedUrlGroups.forEach((importedList, u) => {
     let cloudIndices = cloudUrlGroups.get(u) || [];
-    
+
     // 第一步：精准备配 (URL + 名字完全相同)
     const exactMatchedCloudIdx = new Set();
     const exactMatchedImportedIdx = new Set();
-    
+
     importedList.forEach((ib, iIdx) => {
       for (let cIdx of cloudIndices) {
         if (!exactMatchedCloudIdx.has(cIdx) && finalMerged[cIdx].title === ib.title) {
           exactMatchedCloudIdx.add(cIdx);
           exactMatchedImportedIdx.add(iIdx);
-           // 同名同 URL，只更新可能的 folder 变化或不变化
+          // 同名同 URL，只更新可能的 folder 变化或不变化
           finalMerged[cIdx] = {
             ...finalMerged[cIdx],
             folder: ib.folder !== undefined ? ib.folder : finalMerged[cIdx].folder,
@@ -627,18 +638,18 @@ function mergeBrowserImportIntoCloudBookmarks(importedBookmarks, importFolders, 
         // 如果云端还有同 URL 的闲置名额，我们就把它更新掉（比如用户改了名字）
         const targetCIdx = remainingCloudIdx[rIdx];
         finalMerged[targetCIdx] = {
-           ...finalMerged[targetCIdx],
-           title: ib.title,
-           folder: ib.folder !== undefined ? ib.folder : finalMerged[targetCIdx].folder,
-           scene: targetSceneId,
-           updatedAt: Date.now() // 当做是发生了名字修改
+          ...finalMerged[targetCIdx],
+          title: ib.title,
+          folder: ib.folder !== undefined ? ib.folder : finalMerged[targetCIdx].folder,
+          scene: targetSceneId,
+          updatedAt: Date.now() // 当做是发生了名字修改
         };
       } else {
         // 余出来的就是全新书签（云端这条 URL 的数量不够了）
         finalMerged.push({
-           ...ib,
-           scene: targetSceneId,
-           updatedAt: Date.now()
+          ...ib,
+          scene: targetSceneId,
+          updatedAt: Date.now()
         });
       }
     });
@@ -904,7 +915,7 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
   }
 
   if (deviceListChanged) {
-    runtimeAPI.sendMessage({ action: 'cloudDevicesUpdated' }).catch(() => {});
+    runtimeAPI.sendMessage({ action: 'cloudDevicesUpdated' }).catch(() => { });
   }
   return result;
 }
@@ -954,12 +965,7 @@ async function verifyCurrentDeviceAuthorization(syncSettingsResult = null) {
   };
 }
 
-// 兼容的 API 对象（部分 API 在移动端可能不存在，例如 Firefox Android 不支持 contextMenus/commands）
-const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
-const contextMenusAPI = (typeof browser !== 'undefined' ? browser.contextMenus : chrome.contextMenus) || null;
-const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
-const commandsAPI = (typeof browser !== 'undefined' ? browser.commands : chrome.commands) || null;
-const alarmsAPI = typeof browser !== 'undefined' ? browser.alarms : chrome.alarms;
+
 
 // 同步失败提示（Toast）防泛滥机制：本地持久化（兼容 MV3 service worker 可能被唤醒/休眠）
 const SYNC_ERROR_TOAST_STATE_KEY = 'syncErrorToastState'; // local-only，不同步云端
@@ -1441,7 +1447,7 @@ async function shouldSyncOnReturn() {
     }
 
     // 获取同步间隔（分钟转毫秒）
-        // 计算距离上次同步的时间
+    // 计算距离上次同步的时间
     const timeSinceLastSync = Date.now() - lastSyncTs;
 
     // 如果超过时间间隔，需要同步
@@ -2767,7 +2773,7 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
             const sceneData = await storage.getBookmarks(scene.id);
             const sceneBookmarks = sceneData.bookmarks || [];
             const sceneFoldersPaths = sceneData.folders || [];
-            
+
             // 将文件夹路径转换为对象以便上传
             const foldersObjects = await storage.formatFoldersForStorage(sceneFoldersPaths, scene.id);
 
@@ -2861,7 +2867,7 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
         const sortedFoldersPaths = storage.expandFolderPathsPreserveOrder(foldersForWrite);
         // 关键：将路径列表转换为对象数组再写入
         const foldersObjects = await storage.formatFoldersForStorage(sortedFoldersPaths, currentSceneId);
-        
+
         await webdav.writeBookmarks(
           {
             bookmarks: storage.sortBookmarksByHierarchy(migratedBookmarks.bookmarks.map(b => storage.formatBookmarkJSON(b)), sortedFoldersPaths),
@@ -3115,7 +3121,7 @@ async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null
     }
 
     const webdav = new WebDAVClient(config);
-    
+
     // 1. 读取云端数据
     let cloudData;
     try {
@@ -3132,7 +3138,7 @@ async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null
       bookmarks: cloudData.bookmarks || [],
       folders: cloudFoldersForPatch
     };
-    
+
     const effectivePatch = patch && typeof patch === 'object' ? patch : null;
     if (!effectivePatch) {
       throw new Error('syncToCloud 缺少 patch：非 BS 写操作必须携带本次目标ID集合');
@@ -3147,14 +3153,14 @@ async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null
       targetSceneId,
       deletedFolderPaths
     );
-    
+
     // 4. 数据规格化与格式化
     const cleanedPatched = normalizeData(patched.bookmarks || [], (patched.folders || []).map(f => f.path));
     const sceneBookmarks = cleanedPatched.bookmarks.filter(b => b.scene === targetSceneId);
     const patchedFolderMeta = parseCloudFoldersAndMeta({ folders: patched.folders || [] }, targetSceneId).folderMeta;
     const folderPaths = (patched.folders || []).map(f => normalizeFolderPath(f.path || '')).filter(Boolean);
     const foldersForWrite = buildCloudFoldersObjects(patchedFolderMeta, folderPaths);
-    
+
     const deviceInfo = await storage.getDeviceInfo();
     const meta = {
       updatedByDeviceId: (deviceInfo && deviceInfo.id) || (currentDevice && currentDevice.id) || null,
@@ -3167,7 +3173,7 @@ async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null
       const sortedFoldersPaths = storage.expandFolderPathsPreserveOrder(foldersForWrite);
       // 关键：将路径列表转换为对象数组再写入
       const foldersObjects = await storage.formatFoldersForStorage(sortedFoldersPaths, targetSceneId);
-      
+
       await webdav.writeBookmarks(
         {
           bookmarks: storage.bindFolderIdsToBookmarks(
@@ -3381,13 +3387,13 @@ async function writeBrowserBookmarksToCloud(bookmarks, folders, sceneId) {
   const foldersObjects = await storage.formatFoldersForStorage(sceneFoldersPaths, sceneId);
 
   await webdav.writeBookmarks(
-    { 
+    {
       bookmarks: storage.bindFolderIdsToBookmarks(
         storage.sortBookmarksByHierarchy(sceneBookmarks.map(b => storage.formatBookmarkJSON(b)), sceneFoldersPaths), // 强制格式化字段顺序并按层级排序
         foldersObjects
       ),
-      folders: foldersObjects, 
-      _meta: meta 
+      folders: foldersObjects,
+      _meta: meta
     },
     sceneId,
     {}
@@ -3420,7 +3426,7 @@ async function writeBrowserBookmarksToCloud(bookmarks, folders, sceneId) {
       action: 'browserTimedSyncDevicesUpdated',
       deviceId: currentDevice && currentDevice.id,
       lastSync: now
-    }).catch(() => {});
+    }).catch(() => { });
   } catch (e) {
     // best-effort：这不影响本次写云结果
     console.warn('[browser->cloud] 同步 browserBookmarkTimedSyncLastSync 到云端失败：', e?.message || e);
