@@ -146,6 +146,12 @@ const browserBookmarkTimedSyncStartBtn = document.getElementById('browserBookmar
 document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
   await updateSyncStatus();
+  // 设备列表加载前先补注册当前设备，避免移动端 Firefox 出现“顶部有当前设备，列表里没有”的情况
+  try {
+    await sendWithRetry({ action: 'registerDevice' }, { retries: 2, delay: 300 });
+  } catch (error) {
+    console.warn('页面初始化时补注册当前设备失败:', error.message || error);
+  }
   await loadDevices();
   await loadUiSettings();
   await loadDeviceDetectionSetting();
