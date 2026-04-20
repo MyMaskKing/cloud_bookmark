@@ -798,9 +798,24 @@ async function syncSettingsToCloud(devicesOverride = null, latestCloudSettings =
  */
 async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
   const config = await storage.getConfig();
-  if (!config || !config.serverUrl) return;
+  if (!config || !config.serverUrl) {
+    return {
+      success: false,
+      deviceListChanged: false,
+      deviceListVerified: false,
+      cloudDevices: null,
+      error: 'WebDAV配置未设置'
+    };
+  }
   const webdav = new WebDAVClient(config);
   let deviceListChanged = false;
+  const result = {
+    success: false,
+    deviceListChanged: false,
+    deviceListVerified: false,
+    cloudDevices: null,
+    error: null
+  };
   try {
     const cloud = await webdav.readSettings();
     if (cloud) {
@@ -818,11 +833,15 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
           console.log('[设置同步] 从云端同步设备列表，数量:', cloud.devices.length);
           await storage.saveDevices(cloud.devices);
           deviceListChanged = true;
+          result.deviceListVerified = true;
+          result.cloudDevices = cloneDevices(cloud.devices);
         } else if (forceClear) {
           // 非首次保存时，即使云端没有设备列表，也清空本地设备列表
           console.log('[设置同步] 非首次保存，清空本地设备列表');
           await storage.saveDevices([]);
           deviceListChanged = true;
+          result.deviceListVerified = true;
+          result.cloudDevices = [];
         } else {
           console.log('[设置同步] 云端没有设备列表，保留本地设备列表');
         }
@@ -859,6 +878,8 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
       if (!skipDevices) {
         await storage.saveDevices([]);
         deviceListChanged = true;
+        result.deviceListVerified = true;
+        result.cloudDevices = [];
       }
       // 清空场景列表，确保使用新的云端数据
       await storage.saveScenes([]);
@@ -868,15 +889,69 @@ async function syncSettingsFromCloud(skipDevices = false, forceClear = false) {
       await storage.saveCurrentScene(defaultSceneId);
       console.log('[设置同步] 场景列表已清空，当前场景已重置为:', defaultSceneId);
     }
+    result.success = true;
+    result.deviceListChanged = deviceListChanged;
   } catch (e) {
     // 忽略设置读取失败，不影响书签同步
     console.warn('同步设置失败（忽略）：', e.message);
-    return;
+    return {
+      success: false,
+      deviceListChanged: false,
+      deviceListVerified: false,
+      cloudDevices: null,
+      error: e.message
+    };
   }
 
   if (deviceListChanged) {
     runtimeAPI.sendMessage({ action: 'cloudDevicesUpdated' }).catch(() => {});
   }
+  return result;
+}
+
+/**
+ * 校验当前设备是否在最新授权设备列表中。
+ * 只有在成功确认云端最新 devices 且当前设备明确不存在时，才允许判定为“未授权”。
+ * 如果只是网络异常或暂时拿不到最新 devices，则返回“未验证”，调用方不得按未授权清理本地数据。
+ */
+async function verifyCurrentDeviceAuthorization(syncSettingsResult = null) {
+  await ensureDeviceRegistered();
+
+  const deviceInfo = await storage.getDeviceInfo();
+  const currentId = deviceInfo?.id || currentDevice?.id;
+  if (!currentId) {
+    throw new Error('当前设备ID为空');
+  }
+
+  const localDevices = await storage.getDevices();
+  const hasLocalDevice = Array.isArray(localDevices) && localDevices.some(d => d.id === currentId);
+  const result = syncSettingsResult || await syncSettingsFromCloud();
+
+  if (result?.success && result.deviceListVerified) {
+    const cloudDevices = Array.isArray(result.cloudDevices) ? result.cloudDevices : [];
+    return {
+      verified: true,
+      authorized: cloudDevices.some(d => d.id === currentId),
+      usedLocalFallback: false,
+      error: null
+    };
+  }
+
+  if (hasLocalDevice) {
+    return {
+      verified: false,
+      authorized: true,
+      usedLocalFallback: true,
+      error: result?.error || '云端设备列表暂时不可用'
+    };
+  }
+
+  return {
+    verified: false,
+    authorized: false,
+    usedLocalFallback: false,
+    error: result?.error || '云端设备列表暂时不可用'
+  };
 }
 
 // 兼容的 API 对象（部分 API 在移动端可能不存在，例如 Firefox Android 不支持 contextMenus/commands）
@@ -1304,6 +1379,7 @@ runtimeAPI.onInstalled.addListener(async () => {
   // 设置初始同步任务
   await setupSyncAlarm();
   await ensureDeviceRegistered();
+  syncQueue.enqueue(() => ensureDeviceInCloud()).catch(() => { });
 });
 
 // 监听浏览器启动（保证每次启动都注册设备与定时任务）
@@ -1311,7 +1387,10 @@ runtimeAPI.onStartup.addListener(async () => {
   await setupSyncAlarm();
   await ensureDeviceRegistered();
   // 尝试同步一次设置，保证设备列表/当前场景及时更新（加入队列）
-  syncQueue.enqueue(() => syncSettingsFromCloud()).catch(() => { });
+  syncQueue.enqueue(async () => {
+    await syncSettingsFromCloud();
+    await ensureDeviceInCloud();
+  }).catch(() => { });
 });
 
 /**
@@ -2624,7 +2703,7 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
     // 先拉取云端设置，获取最新设备列表
     // skipDeviceListSync 为 true 时跳过设备列表同步（刚注册设备后避免覆盖）
     // forceClear 为 true 时，即使云端没有设置也清空本地设置和设备列表（非首次保存时使用）
-    await syncSettingsFromCloud(skipDeviceListSync, clearLocalFirst);
+    const settingsSyncResult = await syncSettingsFromCloud(skipDeviceListSync, clearLocalFirst);
 
     // 设备校验：严格模式，云端缺少当前设备则清理并停止；
     // 但对于"未知设备"一律跳过校验，避免在无法识别设备信息时误报。
@@ -2633,12 +2712,9 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
     const settings = await storage.getSettings();
     const deviceDetectionEnabled = settings?.deviceDetection?.enabled === true;
 
-    // 设备校验：仅在设备检测开关开启时进行严格模式检测，云端缺少当前设备则清理并停止
-    // 保存配置时（skipDeviceDetection=true）跳过设备检测，只注册设备
     if (deviceDetectionEnabled && !skipDeviceDetection) {
-      let devices = await storage.getDevices();
-      if (!devices || devices.length === 0) {
-        // 云端空列表视为缺设备，清理并停
+      const authState = await verifyCurrentDeviceAuthorization(settingsSyncResult);
+      if (authState.verified && !authState.authorized) {
         const errorMsg = '当前设备未被授权，已清理本地数据并停止同步';
         await storage.clearAllData();
         await storage.saveSyncStatus({
@@ -2649,21 +2725,8 @@ async function syncFromCloud(sceneId = null, skipDeviceDetection = false, skipDe
         await showSyncErrorNotification(errorMsg);
         return;
       }
-      if (!devices.find(d => d.id === currentDevice.id)) {
-        // 再次拉取确认，避免误判
-        await syncSettingsFromCloud();
-        devices = await storage.getDevices();
-        if (!devices.find(d => d.id === currentDevice.id)) {
-          const errorMsg = '当前设备未被授权，已清理本地数据并停止同步';
-          await storage.clearAllData();
-          await storage.saveSyncStatus({
-            status: 'error',
-            lastSync: Date.now(),
-            error: errorMsg
-          });
-          await showSyncErrorNotification(errorMsg);
-          return;
-        }
+      if (!authState.verified && !authState.authorized) {
+        throw new Error('云端设备列表暂时不可用，无法校验当前设备授权，请稍后重试');
       }
     }
 
@@ -3026,17 +3089,13 @@ async function syncToCloud(bookmarks, folders, sceneId = null, deletedIds = null
     // 检查设备检测开关（默认关闭）
     const settings = await storage.getSettings();
     const deviceDetectionEnabled = settings?.deviceDetection?.enabled === true;
-
-    // 上行同步仅在设备检测开关开启时检查授权
     if (deviceDetectionEnabled) {
-      let devices = await storage.getDevices();
-      if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
-        // 再拉取一次云端设置确认
-        await syncSettingsFromCloud();
-        devices = await storage.getDevices();
-        if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
-          throw new Error('当前设备未被授权，请在设置页重新测试连接以注册设备');
-        }
+      const authState = await verifyCurrentDeviceAuthorization();
+      if (authState.verified && !authState.authorized) {
+        throw new Error('当前设备未被授权，请在设置页重新测试连接以注册设备');
+      }
+      if (!authState.verified && !authState.authorized) {
+        throw new Error('云端设备列表暂时不可用，无法校验当前设备授权，请稍后重试');
       }
     }
 
@@ -3281,13 +3340,12 @@ async function writeBrowserBookmarksToCloud(bookmarks, folders, sceneId) {
   const settings = await storage.getSettings();
   const deviceDetectionEnabled = settings?.deviceDetection?.enabled === true;
   if (deviceDetectionEnabled) {
-    let devices = await storage.getDevices();
-    if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
-      await syncSettingsFromCloud();
-      devices = await storage.getDevices();
-      if (!devices || devices.length === 0 || !devices.find(d => d.id === currentDevice.id)) {
-        throw new Error('当前设备未被授权，请在设置页重新测试连接以注册设备');
-      }
+    const authState = await verifyCurrentDeviceAuthorization();
+    if (authState.verified && !authState.authorized) {
+      throw new Error('当前设备未被授权，请在设置页重新测试连接以注册设备');
+    }
+    if (!authState.verified && !authState.authorized) {
+      throw new Error('云端设备列表暂时不可用，无法校验当前设备授权，请稍后重试');
     }
   }
 
