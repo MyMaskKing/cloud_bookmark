@@ -928,7 +928,9 @@ async function checkUrlParams() {
       document.body.style.display = 'flex';
       document.body.style.alignItems = 'center';
       document.body.style.justifyContent = 'center';
+      // 添加书签弹窗：优先跟随动态视口高度
       document.body.style.minHeight = '100vh';
+      document.body.style.minHeight = '100dvh';
       document.body.style.margin = '0';
       document.body.style.padding = '0';
       document.body.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
