@@ -483,14 +483,14 @@ configForm.addEventListener('submit', async (e) => {
       try {
         // 保存配置时只注册设备，不进行设备检测（skipDeviceDetection: true）
         // 设备检测只在定时同步时进行
-        // skipDeviceListSync: true - 跳过设备列表同步，避免覆盖刚注册的设备（首次保存时）
+        // skipDeviceListSync: true - 保存配置刚注册完设备后，跳过本次设备列表拉取，避免移动端读到旧云端列表覆盖当前设备。
         // clearLocalFirst: false - 非首次保存时，已经在前面清空了本地数据，这里不再清空
         const syncResponse = await sendWithRetry(
           {
             action: 'sync',
             sceneId: currentSceneId,
             skipDeviceDetection: true,
-            skipDeviceListSync: isFirstTime, // 首次保存时跳过设备列表同步，非首次保存时同步设备列表
+            skipDeviceListSync: true, // 刚注册完设备后统一跳过，避免旧云端 devices 覆盖当前设备
             clearLocalFirst: false // 非首次保存时已经在前面清空了，这里不再清空
           },
           { retries: 2, delay: 300 }
