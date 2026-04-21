@@ -72,6 +72,84 @@ async function sendWithRetry(message, { retries = 2, delay = 300 } = {}) {
   }
 }
 
+/**
+ * 确认当前设备是否已经进入设备列表。
+ */
+async function waitForCurrentDeviceInDeviceList({ attempts = 4, delay = 250 } = {}) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const res = await sendWithRetry({ action: 'getDevices' }, { retries: 1, delay });
+      const currentId = res?.deviceInfo?.id || (await storage.getDeviceInfo())?.id;
+      const devices = Array.isArray(res?.devices) ? res.devices : [];
+      if (currentId && devices.some(dev => dev && dev.id === currentId)) {
+        return true;
+      }
+    } catch (error) {
+      if (!isReceivingEndError(error)) {
+        console.warn('确认当前设备是否进入设备列表失败:', error.message || error);
+      }
+    }
+
+    if (i < attempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 注册当前设备，并在继续后续流程前确认设备已进入设备列表。
+ */
+async function ensureCurrentDeviceRegistered({
+  attempts = 3,
+  registerRetries = 2,
+  registerDelay = 300,
+  verifyAttempts = 4,
+  verifyDelay = 250,
+  throwOnFailure = false,
+  failureMessage = '当前设备注册失败'
+} = {}) {
+  let lastError = null;
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const registerResponse = await sendWithRetry(
+        { action: 'registerDevice' },
+        { retries: registerRetries, delay: registerDelay }
+      );
+
+      if (registerResponse?.success) {
+        const confirmed = await waitForCurrentDeviceInDeviceList({
+          attempts: verifyAttempts,
+          delay: verifyDelay
+        });
+        if (confirmed) {
+          return true;
+        }
+        lastError = new Error('当前设备注册后未出现在设备列表');
+      } else if (registerResponse?.error) {
+        lastError = new Error(registerResponse.error);
+      } else {
+        lastError = new Error('后台未返回注册成功结果');
+      }
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (i < attempts - 1) {
+      await new Promise(resolve => setTimeout(resolve, registerDelay * (i + 1)));
+    }
+  }
+
+  if (throwOnFailure) {
+    throw new Error(lastError ? `${failureMessage}: ${lastError.message || lastError}` : failureMessage);
+  }
+
+  console.warn('[设备注册] 未确认当前设备已注册完成:', lastError?.message || lastError || 'unknown');
+  return false;
+}
+
 // DOM元素
 const configForm = document.getElementById('configForm');
 const testBtn = document.getElementById('testBtn');
@@ -146,12 +224,6 @@ const browserBookmarkTimedSyncStartBtn = document.getElementById('browserBookmar
 document.addEventListener('DOMContentLoaded', async () => {
   await loadConfig();
   await updateSyncStatus();
-  // 设备列表加载前先补注册当前设备，避免移动端 Firefox 出现“顶部有当前设备，列表里没有”的情况
-  try {
-    await sendWithRetry({ action: 'registerDevice' }, { retries: 2, delay: 300 });
-  } catch (error) {
-    console.warn('页面初始化时补注册当前设备失败:', error.message || error);
-  }
   await loadDevices();
   await loadUiSettings();
   await loadDeviceDetectionSetting();
@@ -396,47 +468,16 @@ configForm.addEventListener('submit', async (e) => {
         }
       }
 
-      // 等待设备注册完成（带重试机制）
-      // 非首次保存时，本地数据已清空，注册设备时会从新云端拉取设备列表
-      let registerSuccess = false;
-      for (let retry = 0; retry < 3; retry++) {
-        try {
-          const registerResponse = await sendMessageCompat({ action: 'registerDevice' });
-          if (registerResponse && registerResponse.success) {
-            registerSuccess = true;
-            break;
-          } else if (registerResponse && !registerResponse.success) {
-            // 明确的失败响应，不再重试
-            break;
-          } else if (registerResponse === null) {
-            // Firefox 中，如果 background script 未准备好，sendMessage 返回 null
-            if (retry < 2) {
-              // 等待后重试
-              await new Promise(resolve => setTimeout(resolve, 200 * (retry + 1)));
-              continue;
-            }
-          }
-        } catch (error) {
-          // Firefox 中，如果 background script 未准备好，会抛出 "Receiving end does not exist" 错误
-          const isReceivingEndError = error && (
-            error.message?.includes('Receiving end does not exist') ||
-            error.message?.includes('Could not establish connection') ||
-            String(error).includes('Receiving end does not exist') ||
-            String(error).includes('Could not establish connection')
-          );
-          if (isReceivingEndError && retry < 2) {
-            // 等待后重试
-            await new Promise(resolve => setTimeout(resolve, 200 * (retry + 1)));
-            continue;
-          } else if (!isReceivingEndError) {
-            // 其他错误只记录一次
-            if (retry === 0) {
-              console.warn('设备注册失败:', error.message || error);
-            }
-            break;
-          }
-        }
-      }
+      // 设备注册必须明确成功并进入设备列表后，才继续后续同步，避免手机 Firefox 首次保存时误继续流程。
+      await ensureCurrentDeviceRegistered({
+        attempts: 3,
+        registerRetries: 3,
+        registerDelay: 350,
+        verifyAttempts: 5,
+        verifyDelay: 250,
+        throwOnFailure: true,
+        failureMessage: '当前设备注册失败，已停止后续同步'
+      });
 
       const currentSceneId = await storage.getCurrentScene();
       try {
