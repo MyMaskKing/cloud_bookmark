@@ -3496,10 +3496,23 @@ async function touchCurrentDevice() {
   if (!currentDevice) return;
   currentDevice.lastSeen = Date.now();
   await storage.saveDeviceInfo(currentDevice);
+  const localDevices = await storage.getDevices();
   await updateDevicesWithLatest((devices) => {
     const idx = devices.findIndex(d => d.id === currentDevice.id);
     if (idx !== -1) {
       devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen, name: currentDevice.name };
+    } else {
+      // 云端刚写入当前设备后，短时间内再次读取可能还是旧设备列表，这里补回本地当前设备，避免被旧值覆盖。
+      const localCurrentDevice = Array.isArray(localDevices)
+        ? localDevices.find(d => d && d.id === currentDevice.id)
+        : null;
+      if (localCurrentDevice) {
+        devices.push({
+          ...localCurrentDevice,
+          lastSeen: currentDevice.lastSeen,
+          name: currentDevice.name
+        });
+      }
     }
     return devices;
   });

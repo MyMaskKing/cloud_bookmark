@@ -490,7 +490,7 @@ configForm.addEventListener('submit', async (e) => {
             action: 'sync',
             sceneId: currentSceneId,
             skipDeviceDetection: true,
-            skipDeviceListSync: true, // 刚注册完设备后统一跳过，避免旧云端 devices 覆盖当前设备
+            skipDeviceListSync: isFirstTime, // 刚注册完设备后统一跳过，避免旧云端 devices 覆盖当前设备
             clearLocalFirst: false // 非首次保存时已经在前面清空了，这里不再清空
           },
           { retries: 2, delay: 300 }
