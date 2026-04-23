@@ -1290,6 +1290,20 @@ body.cb-add-flow-lock {
   box-shadow: 0 5px 12px rgba(53, 115, 197, 0.18);
 }
 
+/* 创建文件夹弹窗按钮：统一为蓝色渐变样式 */
+.dialog-container .btn-primary {
+  background: linear-gradient(135deg, #4a90e2, #3573c5) !important;
+  color: #ffffff !important;
+  border: 1px solid rgba(53, 115, 197, 0.18) !important;
+  box-shadow: 0 8px 18px rgba(53, 115, 197, 0.20) !important;
+}
+
+.dialog-container .btn-primary:hover {
+  background: linear-gradient(135deg, #4286d7, #2f68b6) !important;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(53, 115, 197, 0.24) !important;
+}
+
 .btn-small {
   padding: 6px 10px;
   font-size: 12px;
