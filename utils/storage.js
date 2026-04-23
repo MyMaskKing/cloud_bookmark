@@ -40,6 +40,9 @@ class StorageManager {
         enabled: true, // 默认开启悬浮球
         defaultPosition: 'auto',
         clickAction: 'popup'
+      },
+      developerSettings: {
+        enableConsoleLogging: false // 默认关闭开发者控制台日志
       }
     };
   }
@@ -53,6 +56,10 @@ class StorageManager {
       floatingBall: {
         ...(d.floatingBall || {}),
         ...(s.floatingBall || {})
+      },
+      developerSettings: {
+        ...(d.developerSettings || {}),
+        ...(s.developerSettings || {})
       }
     };
   }

@@ -48,13 +48,14 @@ async function ensureDeviceInCloud() {
     devices.push({
       id: currentDevice.id,
       name: currentDevice.name,
+      customName: currentDevice.customName, // 添加customName字段
       createdAt: currentDevice.createdAt || now,
       lastSeen: now
     });
   } else {
-    // 当前设备已在列表中，仅刷新 lastSeen 和 name
+    // 当前设备已在列表中，仅刷新 lastSeen、name 和 customName
     console.log('[设备注册] 当前设备已在列表中，更新 lastSeen:', currentDevice.id);
-    devices[idx] = { ...devices[idx], lastSeen: now, name: currentDevice.name };
+    devices[idx] = { ...devices[idx], lastSeen: now, name: currentDevice.name, customName: currentDevice.customName };
   }
 
   // 更新本地设备信息（仅更新 lastSeen）
@@ -107,6 +108,40 @@ let syncInterval = 5 * 60 * 1000; // 默认5分钟
 let syncAlarmName = 'syncBookmarks';
 let browserToCloudSyncAlarmName = 'syncBrowserBookmarksToCloud';
 let currentDevice = null;
+
+// 开发者日志开关：默认关闭，仅在设置中开启后才输出 console.log。
+const originalConsoleLog = console.log.bind(console);
+let enableDeveloperConsoleLogging = false;
+console.log = (...args) => {
+  if (enableDeveloperConsoleLogging) {
+    originalConsoleLog(...args);
+  }
+};
+
+// 从本地设置初始化开发者日志开关，并在后台常驻上下文中即时生效。
+async function initDeveloperConsoleLogging() {
+  try {
+    const settings = await storage.getSettings();
+    enableDeveloperConsoleLogging = !!settings?.developerSettings?.enableConsoleLogging;
+  } catch (_) {
+    enableDeveloperConsoleLogging = false;
+  }
+}
+
+initDeveloperConsoleLogging().catch(() => { });
+
+// 监听 settings 变化，确保后台日志开关即时生效。
+try {
+  const storageAreaAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+  if (storageAreaAPI && storageAreaAPI.onChanged) {
+    storageAreaAPI.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes.settings) {
+        const nextSettings = changes.settings.newValue || {};
+        enableDeveloperConsoleLogging = !!nextSettings?.developerSettings?.enableConsoleLogging;
+      }
+    });
+  }
+} catch (_) { }
 
 const MAX_BROWSER_BOOKMARK_SYNC_FAILURES = 3;
 
@@ -1691,6 +1726,7 @@ async function updateBrowserBookmarkSyncBindingForCurrentDevice(sceneId = '') {
       devices.push({
         id: deviceId,
         name: deviceInfo?.name || currentDevice?.name || '未命名设备',
+        customName: deviceInfo?.customName || currentDevice?.customName, // 保留customName字段
         createdAt: deviceInfo?.createdAt || currentDevice?.createdAt || now,
         lastSeen: now,
         browserBookmarkSyncSceneId: sceneBinding || undefined,
@@ -1784,6 +1820,7 @@ async function adoptDeviceAsCurrentFromLatest(targetId) {
   const newInfo = {
     id: adoptedDevice.id,
     name: adoptedDevice.name || '未命名设备',
+    customName: adoptedDevice.customName, // 保留customName字段
     createdAt: adoptedDevice.createdAt || now,
     lastSeen: now
   };
@@ -2200,6 +2237,39 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'updateDeveloperSettings') {
+    // 更新开发者设置（主要是控制台日志开关）
+    (async () => {
+      try {
+        const developerSettings = request.developerSettings || {};
+        const enableConsoleLogging = !!developerSettings.enableConsoleLogging;
+        
+        // 保存设置到storage（可选，用于持久化）
+        const settings = await storage.getSettings();
+        const newSettings = {
+          ...(settings || {}),
+          developerSettings: {
+            ...(settings?.developerSettings || {}),
+            ...developerSettings
+          }
+        };
+        await storage.saveSettings(newSettings);
+
+        // 根据设置即时更新后台日志输出开关
+        enableDeveloperConsoleLogging = enableConsoleLogging;
+        if (enableConsoleLogging) {
+          originalConsoleLog('[后台] 开发者模式已开启 - 控制台日志输出已启用');
+        }
+
+        sendResponse({ success: true, enableConsoleLogging });
+      } catch (error) {
+        console.error('[后台] 更新开发者设置失败:', error);
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true;
+  }
+
   if (request.action === 'getInlineBookmarkFormData') {
     (async () => {
       const sceneId = await storage.getCurrentScene();
@@ -2511,6 +2581,37 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'adoptDeviceAsCurrent') {
     syncQueue.enqueue(() => adoptDeviceAsCurrentFromLatest(request.targetId)).then((deviceInfo) => {
       sendResponse({ success: true, deviceInfo });
+    }).catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'updateDeviceName') {
+    // 更新设备自定义名称
+    syncQueue.enqueue(async () => {
+      const { deviceId, deviceName } = request;
+      if (!deviceId || !deviceName) {
+        throw new Error('设备ID和设备名称不能为空');
+      }
+      
+      await updateDevicesWithLatest((devices) => {
+        const updated = devices.map(d => {
+          if (d.id === deviceId) {
+            return { ...d, customName: deviceName }; // 更新customName字段
+          }
+          return d;
+        });
+        return updated;
+      });
+      
+      // 同时更新当前设备的customName（如果是当前设备）
+      const currentInfo = await storage.getDeviceInfo();
+      if (currentInfo && currentInfo.id === deviceId) {
+        await storage.saveDeviceInfo({ ...currentInfo, customName: deviceName });
+      }
+      
+      return { success: true };
+    }).then((result) => {
+      sendResponse(result);
     }).catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
@@ -3500,7 +3601,7 @@ async function touchCurrentDevice() {
   await updateDevicesWithLatest((devices) => {
     const idx = devices.findIndex(d => d.id === currentDevice.id);
     if (idx !== -1) {
-      devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen, name: currentDevice.name };
+      devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen, name: currentDevice.name, customName: currentDevice.customName };
     } else {
       // 云端刚写入当前设备后，短时间内再次读取可能还是旧设备列表，这里补回本地当前设备，避免被旧值覆盖。
       const localCurrentDevice = Array.isArray(localDevices)
@@ -3510,7 +3611,8 @@ async function touchCurrentDevice() {
         devices.push({
           ...localCurrentDevice,
           lastSeen: currentDevice.lastSeen,
-          name: currentDevice.name
+          name: currentDevice.name,
+          customName: currentDevice.customName
         });
       }
     }
@@ -3636,7 +3738,7 @@ async function getDeviceName() {
       if (platform?.os) parts.push(platform.os);
       if (platform?.arch) parts.push(platform.arch);
       if (platform?.nacl_arch && platform?.nacl_arch !== platform.arch) parts.push(platform.nacl_arch);
-      if (parts.length) return parts.join(' / ');
+      if (parts.length) return parts.join('/'); // 修改为不带空格的格式，如 win/x86
     }
     // 回退：navigator.userAgent
     if (typeof navigator !== 'undefined' && navigator.userAgent) {

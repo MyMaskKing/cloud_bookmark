@@ -5,6 +5,27 @@
 const storage = new StorageManager();
 const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
 
+// 开发者日志开关：默认关闭，仅在设置中开启后才输出 console.log。
+const originalConsoleLog = console.log.bind(console);
+let enableDeveloperConsoleLogging = false;
+console.log = (...args) => {
+  if (enableDeveloperConsoleLogging) {
+    originalConsoleLog(...args);
+  }
+};
+
+// 初始化设置页的开发者日志开关，并保持和本地 settings 一致。
+async function initDeveloperConsoleLogging() {
+  try {
+    const settings = await storage.getSettings();
+    enableDeveloperConsoleLogging = !!settings?.developerSettings?.enableConsoleLogging;
+  } catch (_) {
+    enableDeveloperConsoleLogging = false;
+  }
+}
+
+initDeveloperConsoleLogging().catch(() => { });
+
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
 const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function (message, callback) {
   const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
@@ -203,6 +224,7 @@ const sceneSelectList = document.getElementById('sceneSelectList');
 const sceneSelectClose = document.getElementById('sceneSelectClose');
 const sceneSelectCancel = document.getElementById('sceneSelectCancel');
 const sceneSelectConfirm = document.getElementById('sceneSelectConfirm');
+const enableConsoleLogging = document.getElementById('enableConsoleLogging');
 
 const serverUrlInput = document.getElementById('serverUrl');
 const usernameInput = document.getElementById('username');
@@ -232,6 +254,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadScenes();
   await loadBrowserBookmarkSyncSceneSetting();
   await updateBrowserSyncInlineStatus();
+  await loadDeveloperSettings();
 
   // 定时更新同步状态
   setInterval(() => {
@@ -1816,6 +1839,62 @@ if (rememberScrollPosition) {
 }
 
 /**
+ * 控制台日志开关变更
+ */
+if (enableConsoleLogging) {
+  enableConsoleLogging.addEventListener('change', async () => {
+    try {
+      // 设置页内立即切换日志输出开关，避免等待存储回写后才生效。
+      enableDeveloperConsoleLogging = enableConsoleLogging.checked;
+      const settings = await storage.getSettings();
+      const developerSettings = { ...(settings?.developerSettings || {}), enableConsoleLogging: enableConsoleLogging.checked };
+      const newSettings = { ...(settings || {}), developerSettings };
+      await storage.saveSettings(newSettings);
+      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('开发者设置同步失败:', e));
+      showMessage('开发者设置已保存（后台同步中）', 'success');
+      
+      sendMessageCompat({ 
+        action: 'updateDeveloperSettings', 
+        developerSettings 
+      }).catch(err => console.error('通知后台失败:', err));
+    } catch (e) {
+      showMessage('保存失败: ' + e.message, 'error');
+    }
+  });
+}
+
+/**
+ * 加载开发者设置
+ */
+async function loadDeveloperSettings() {
+  try {
+    const settings = await storage.getSettings();
+    const developerSettings = settings?.developerSettings || {};
+    
+    // 加载控制台日志开关（默认关闭）
+    if (enableConsoleLogging) {
+      enableConsoleLogging.checked = !!developerSettings.enableConsoleLogging;
+    }
+    enableDeveloperConsoleLogging = !!developerSettings.enableConsoleLogging;
+  } catch (error) {
+    console.error('加载开发者设置失败:', error);
+  }
+}
+
+// 监听 settings 变化，确保设置页里的日志开关即时生效。
+try {
+  const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+  if (storageAPI && storageAPI.onChanged) {
+    storageAPI.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes.settings) {
+        const nextSettings = changes.settings.newValue || {};
+        enableDeveloperConsoleLogging = !!nextSettings?.developerSettings?.enableConsoleLogging;
+      }
+    });
+  }
+} catch (_) { }
+
+/**
  * 更新同步按钮状态
  */
 function updateSyncButtonStates() {
@@ -2326,8 +2405,8 @@ function showAdoptDeviceDialog({ current, currentId, target, sceneNameMap }) {
       `;
     };
 
-    const currentDeviceTitle = current?.name || currentId || '-';
-    const targetDeviceTitle = target?.name || target?.id || '-';
+    const currentDeviceTitle = formatDeviceName(current || {}); // 使用格式化函数
+    const targetDeviceTitle = formatDeviceName(target || {}); // 使用格式化函数
 
     dialog.innerHTML = `
       <div style="margin-bottom: 14px;">
@@ -2386,6 +2465,21 @@ function showAdoptDeviceDialog({ current, currentId, target, sceneNameMap }) {
 }
 
 /**
+ * 格式化设备名显示：平台/架构（自定义名称）
+ * @param {Object} device - 设备对象
+ * @returns {string} 格式化后的设备名
+ */
+function formatDeviceName(device) {
+  const platformName = device.name || '未知设备'; // 平台/架构，如 win/x86
+  const customName = device.customName; // 自定义名称，如 家-Edge
+  
+  if (customName) {
+    return `${platformName}（${customName}）`;
+  }
+  return platformName;
+}
+
+/**
  * 加载设备列表
  */
 async function loadDevices() {
@@ -2397,8 +2491,48 @@ async function loadDevices() {
     const scenes = await storage.getScenes();
     const sceneNameMap = new Map((scenes || []).map(s => [s.id, s.name || s.id]));
 
-    currentDeviceName.textContent = deviceInfo?.name || '未知设备';
+    // 更新当前设备显示（使用标签形式）
+    const deviceNameContainer = document.querySelector('.device-header .device-name');
+    
+    if (deviceNameContainer && deviceInfo) {
+      const platformName = deviceInfo.name || '未知设备';
+      const customName = deviceInfo.customName;
+      
+      // 保存编辑按钮
+      const editBtn = document.getElementById('editCurrentDeviceNameBtn');
+      
+      // 清空容器
+      deviceNameContainer.innerHTML = '';
+      
+      // 平台/架构文本
+      const platformSpan = document.createElement('span');
+      platformSpan.className = 'device-platform';
+      platformSpan.textContent = platformName;
+      deviceNameContainer.appendChild(platformSpan);
+      
+      // customName 标签（如果有）
+      if (customName) {
+        const tagSpan = document.createElement('span');
+        tagSpan.className = 'device-custom-tag';
+        tagSpan.textContent = customName;
+        deviceNameContainer.appendChild(tagSpan);
+      }
+      
+      // 重新添加编辑按钮
+      if (editBtn) {
+        deviceNameContainer.appendChild(editBtn);
+      }
+    }
+    
     currentDeviceId.textContent = deviceInfo?.id || '-';
+    
+    // 显示当前设备的编辑按钮
+    const editCurrentBtn = document.getElementById('editCurrentDeviceNameBtn');
+    if (editCurrentBtn && deviceInfo) {
+      editCurrentBtn.style.display = 'inline-block';
+      // 传递customName作为当前值，如果没有则传空字符串
+      editCurrentBtn.onclick = () => editDeviceName(deviceInfo.id, deviceInfo.customName || '', true);
+    }
 
     if (!devices.length) {
       deviceList.innerHTML = '<div class="empty-state">暂无设备</div>';
@@ -2426,15 +2560,24 @@ async function loadDevices() {
       const browserTimedLastSyncLine = bindingSceneId
         ? `<div class="device-meta">浏览器最后同步：${browserTimedLastSync ? new Date(browserTimedLastSync).toLocaleString() : '-'}</div>`
         : '';
-      const displayName = escapeHtml(dev.name || '未命名设备');
+      const platformName = escapeHtml(dev.name || '未知设备'); // 平台/架构，如 win/x86
+      const customName = dev.customName; // 自定义名称，如 家-Edge
       const safeSceneName = escapeHtml(String(bindingSceneName));
       const adoptBtn = !isCurrent
         ? `<button type="button" class="btn btn-secondary ui-settings-btn device-adopt" data-id="${dev.id}">选为当前设备</button>`
         : '';
+      // 添加编辑设备名按钮，传递customName作为当前值
+      const editBtn = `<button type="button" class="btn-icon device-edit-name" data-id="${dev.id}" data-name="${escapeHtml(customName || '')}" title="编辑设备名">✏️</button>`;
+      // customName 标签显示（如果有）
+      const customNameTag = customName ? `<span class="device-custom-tag">${escapeHtml(customName)}</span>${editBtn}` : editBtn;
       return `
         <div class="device-item" data-id="${dev.id}">
           <div class="device-info">
-            <div class="device-name">${displayName} ${isCurrent ? '(当前设备)' : ''}</div>
+            <div class="device-name">
+              <span class="device-platform">${platformName}</span>
+              ${customNameTag}
+              ${isCurrent ? '<span class="device-current-badge">(当前设备)</span>' : ''}
+            </div>
             <div class="device-meta">设备ID：${dev.id || '-'}</div>
             ${bindingSceneId ? `<div class="device-meta">绑定场景：${safeSceneName}</div>` : ''}
             ${timedLine}
@@ -2479,8 +2622,52 @@ async function loadDevices() {
         return;
       });
     });
+    
+    // 绑定编辑设备名按钮事件
+    deviceList.querySelectorAll('.device-edit-name').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.id;
+        const name = btn.dataset.name;
+        editDeviceName(id, name, false);
+      });
+    });
   } catch (error) {
     showMessage('加载设备失败: ' + error.message, 'error');
+  }
+}
+
+/**
+ * 编辑设备名
+ * @param {string} deviceId - 设备ID
+ * @param {string} currentCustomName - 当前自定义名称（不含平台/架构）
+ * @param {boolean} isCurrentDevice - 是否为当前设备
+ */
+async function editDeviceName(deviceId, currentCustomName, isCurrentDevice) {
+  const newCustomName = prompt('请输入设备自定义名称（例如：家-Edge）：', currentCustomName);
+  if (newCustomName === null) return; // 用户取消
+  
+  const trimmedName = newCustomName.trim();
+  if (!trimmedName) {
+    showMessage('设备名称不能为空', 'error');
+    return;
+  }
+  
+  try {
+    const result = await sendWithRetry(
+      { action: 'updateDeviceName', deviceId, deviceName: trimmedName },
+      { retries: 2, delay: 300 }
+    );
+    
+    if (!result?.success) {
+      throw new Error(result?.error || '更新失败');
+    }
+    
+    showMessage('设备名称已更新', 'success');
+    
+    // 重新加载设备列表
+    await loadDevices();
+  } catch (error) {
+    showMessage('更新设备名称失败: ' + error.message, 'error');
   }
 }
 
@@ -2520,11 +2707,17 @@ async function updateCurrentDeviceRow() {
       ? `<div class="device-meta">浏览器最后同步：${browserTimedLastSync ? new Date(browserTimedLastSync).toLocaleString() : '-'}</div>`
       : '';
 
-    const displayName = escapeHtml(dev.name || '未命名设备');
+    const displayName = escapeHtml(formatDeviceName(dev)); // 使用格式化函数
+    // 添加编辑设备名按钮，传递customName作为当前值
+    const editBtn = `<button type="button" class="btn-icon device-edit-name" data-id="${dev.id}" data-name="${escapeHtml(dev.customName || '')}" title="编辑设备名">✏️</button>`;
     const rowHtml = `
       <div class="device-item" data-id="${dev.id}">
         <div class="device-info">
-          <div class="device-name">${displayName} (当前设备)</div>
+          <div class="device-name" style="display: flex; align-items: center; gap: 8px;">
+            <span class="device-name-text">${displayName}</span>
+            ${editBtn}
+            <span style="color: #4a90e2; font-size: 12px;">(当前设备)</span>
+          </div>
           <div class="device-meta">设备ID：${dev.id || '-'}</div>
           ${bindingSceneId ? `<div class="device-meta">绑定场景：${safeSceneName}</div>` : ''}
           ${timedLine}
@@ -2568,6 +2761,16 @@ async function updateCurrentDeviceRow() {
         showMessage('已移除设备', 'success');
         await loadDevices();
         return;
+      });
+    }
+    
+    // 绑定编辑设备名按钮事件
+    const newEditBtn = deviceList.querySelector(`.device-item[data-id="${deviceInfo.id}"] .device-edit-name`);
+    if (newEditBtn) {
+      newEditBtn.addEventListener('click', () => {
+        const id = newEditBtn.dataset.id;
+        const name = newEditBtn.dataset.name;
+        editDeviceName(id, name, true);
       });
     }
   } catch (e) {

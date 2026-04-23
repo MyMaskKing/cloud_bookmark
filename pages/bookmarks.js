@@ -4,6 +4,27 @@
 
 const storage = new StorageManager();
 
+// 开发者日志开关：默认关闭，仅在设置中开启后才输出 console.log。
+const originalConsoleLog = console.log.bind(console);
+let enableDeveloperConsoleLogging = false;
+console.log = (...args) => {
+  if (enableDeveloperConsoleLogging) {
+    originalConsoleLog(...args);
+  }
+};
+
+// 初始化书签管理页的开发者日志开关，并保持和本地 settings 一致。
+async function initDeveloperConsoleLogging() {
+  try {
+    const settings = await storage.getSettings();
+    enableDeveloperConsoleLogging = !!settings?.developerSettings?.enableConsoleLogging;
+  } catch (_) {
+    enableDeveloperConsoleLogging = false;
+  }
+}
+
+initDeveloperConsoleLogging().catch(() => { });
+
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
 const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function (message, callback) {
   const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
@@ -866,6 +887,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
     if (storageAPI && storageAPI.onChanged) {
       storageAPI.onChanged.addListener((changes, areaName) => {
+        if (areaName === 'local' && changes.settings) {
+          // 开发者日志开关变化时即时生效，不需要刷新页面。
+          const nextSettings = changes.settings.newValue || {};
+          enableDeveloperConsoleLogging = !!nextSettings?.developerSettings?.enableConsoleLogging;
+        }
         if (areaName === 'local' && (changes.syncStatus || changes.browserSyncStatus)) {
           updateSyncErrorBanner();
         }

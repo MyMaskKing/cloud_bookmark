@@ -269,25 +269,49 @@
         </div>
         <div class="form-group checkbox-row">
           <label>
-            <input type="checkbox" id="enableSyncErrorNotification">
-            开启同步失败通知
-          </label>
-          <small>开启后，同步失败时会弹出提示框（2秒自动消失）。相同错误5分钟内只提示一次，避免通知过于频繁。</small>
-        </div>
-        <div class="form-group checkbox-row">
-          <label>
             <input type="checkbox" id="stickySyncErrorToast">
             调试：同步失败提示不自动消失
           </label>
           <small>仅用于调试：开启后 toast 不会自动消失（直到下次提示覆盖）。不建议长期开启。</small>
         </div>
       </section>
-
+      <section class="section">
+            <h2>开发者设置</h2>
+            <div class="ui-settings-block">
+                <h3 class="section-subtitle">调试选项</h3>
+                <div class="section-grid-2">
+                    <div class="form-group checkbox-row">
+                        <label>
+                            <input type="checkbox" id="enableConsoleLogging">
+                            开启控制台日志输出
+                        </label>
+                        <small>开启后，会在控制台打印详细的操作日志（包括同步、设备管理等）。仅用于开发调试，建议日常使用关闭。</small>
+                    </div>
+                    <div class="form-group checkbox-row">
+                        <label>
+                            <input type="checkbox" id="enableSyncErrorNotification">
+                            开启同步失败通知
+                        </label>
+                        <small>开启后，同步失败时会弹出提示框（2秒自动消失）。相同错误5分钟内只提示一次，避免通知过于频繁。</small>
+                    </div>
+                    <div class="form-group checkbox-row">
+                        <label>
+                            <input type="checkbox" id="stickySyncErrorToast">
+                            调试：同步失败提示不自动消失
+                        </label>
+                        <small>仅用于调试：开启后 toast 不会自动消失（直到下次提示覆盖）。不建议长期开启。</small>
+                    </div>
+                </div>
+            </div>
+      </section>
       <section class="section">
         <h2>存储设备管理</h2>
         <div class="device-header">
           <div>
-            <div>当前设备：<span id="currentDeviceName">-</span></div>
+            <div style="font-size: 12px; color: #666; margin-bottom: 4px;">当前设备：</div>
+            <div class="device-name">
+              <button type="button" id="editCurrentDeviceNameBtn" class="btn-icon" title="编辑设备名" style="display: none;">✏️</button>
+            </div>
             <div style="margin-top: 4px; font-size: 12px; color: #666;">设备ID：<span id="currentDeviceId">-</span></div>
           </div>
           <div class="device-actions">

@@ -8,6 +8,26 @@
   
   // 兼容的 API 对象
   const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
+
+  // 开发者日志开关：默认关闭，仅在设置中开启后才输出 console.log。
+  const originalConsoleLog = console.log.bind(console);
+  let enableDeveloperConsoleLogging = false;
+  console.log = (...args) => {
+    if (enableDeveloperConsoleLogging) {
+      originalConsoleLog(...args);
+    }
+  };
+
+  // 初始化内容脚本里的开发者日志开关，并保持和本地 settings 一致。
+  function initDeveloperConsoleLogging() {
+    return getSettings().then((settings) => {
+      enableDeveloperConsoleLogging = !!settings?.developerSettings?.enableConsoleLogging;
+    }).catch(() => {
+      enableDeveloperConsoleLogging = false;
+    });
+  }
+
+  initDeveloperConsoleLogging().catch(() => { });
   
   // 兼容的消息发送函数（避免与全局 sendMessage 冲突）
   function sendMessageCompat(message, callback) {
@@ -1222,6 +1242,9 @@
   // 监听设置变化
   storageAPI.onChanged.addListener((changes, areaName) => {
     if (areaName === 'local' && changes.settings) {
+      // 开发者日志开关变化时即时生效，不需要重新注入脚本。
+      const nextSettings = changes.settings.newValue || {};
+      enableDeveloperConsoleLogging = !!nextSettings?.developerSettings?.enableConsoleLogging;
       initFloatingBall();
     }
   });

@@ -266,6 +266,70 @@ body {
   cursor: not-allowed;
 }
 
+/* 图标按钮（用于编辑设备名） */
+.btn-icon {
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  font-size: 16px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  line-height: 1;
+}
+
+.btn-icon:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+.btn-icon:active {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+/* 设备名标签样式 */
+.device-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+/* 编辑按钮紧跟在标签后面，间距更小 */
+.device-custom-tag + .btn-icon,
+.device-platform + .btn-icon {
+  margin-left: -5px;
+}
+
+.device-platform {
+  font-weight: 500;
+  color: #333;
+  font-size: 14px;
+}
+
+.device-custom-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  background: transparent;
+  color: #4a90e2;
+  border: 1px solid #4a90e2;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.device-custom-tag:hover {
+  background: rgba(74, 144, 226, 0.08);
+}
+
+.device-current-badge {
+  color: #4a90e2;
+  font-size: 12px;
+  font-weight: 500;
+}
+
 /* 浏览器书签定时同步场景：让下拉框和标题同一行 */
 .browser-bookmark-sync-scene-row {
   display: flex;

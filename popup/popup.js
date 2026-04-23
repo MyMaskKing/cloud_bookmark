@@ -4,6 +4,27 @@
 
 const storage = new StorageManager();
 
+// 开发者日志开关：默认关闭，仅在设置中开启后才输出 console.log。
+const originalConsoleLog = console.log.bind(console);
+let enableDeveloperConsoleLogging = false;
+console.log = (...args) => {
+  if (enableDeveloperConsoleLogging) {
+    originalConsoleLog(...args);
+  }
+};
+
+// 初始化弹窗页的开发者日志开关，并保持和本地 settings 一致。
+async function initDeveloperConsoleLogging() {
+  try {
+    const settings = await storage.getSettings();
+    enableDeveloperConsoleLogging = !!settings?.developerSettings?.enableConsoleLogging;
+  } catch (_) {
+    enableDeveloperConsoleLogging = false;
+  }
+}
+
+initDeveloperConsoleLogging().catch(() => { });
+
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
 const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function (message, callback) {
   const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
@@ -50,6 +71,19 @@ const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : fun
 // 兼容的 API 对象
 const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
 const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
+
+// 监听 settings 变化，确保弹窗里的日志开关即时生效。
+try {
+  const storageAPI = typeof browser !== 'undefined' ? browser.storage : chrome.storage;
+  if (storageAPI && storageAPI.onChanged) {
+    storageAPI.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local' && changes.settings) {
+        const nextSettings = changes.settings.newValue || {};
+        enableDeveloperConsoleLogging = !!nextSettings?.developerSettings?.enableConsoleLogging;
+      }
+    });
+  }
+} catch (_) { }
 
 // 工具函数（从utils.js导入的函数需要在这里定义或确保全局可用）
 function escapeHtml(text) {
