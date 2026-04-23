@@ -2496,7 +2496,9 @@ async function loadDevices() {
     
     if (deviceNameContainer && deviceInfo) {
       const platformName = deviceInfo.name || '未知设备';
-      const customName = deviceInfo.customName;
+      // 从 devices 列表中查找当前设备的 customName
+      const currentDeviceInList = devices?.find(d => d.id === deviceInfo.id);
+      const customName = currentDeviceInList?.customName;
       
       // 保存编辑按钮
       const editBtn = document.getElementById('editCurrentDeviceNameBtn');
@@ -2530,8 +2532,10 @@ async function loadDevices() {
     const editCurrentBtn = document.getElementById('editCurrentDeviceNameBtn');
     if (editCurrentBtn && deviceInfo) {
       editCurrentBtn.style.display = 'inline-block';
+      // 从 devices 列表中查找当前设备的 customName
+      const currentDeviceInList = devices?.find(d => d.id === deviceInfo.id);
       // 传递customName作为当前值，如果没有则传空字符串
-      editCurrentBtn.onclick = () => editDeviceName(deviceInfo.id, deviceInfo.customName || '', true);
+      editCurrentBtn.onclick = () => editDeviceName(deviceInfo.id, currentDeviceInList?.customName || '', true);
     }
 
     if (!devices.length) {
@@ -2707,16 +2711,20 @@ async function updateCurrentDeviceRow() {
       ? `<div class="device-meta">浏览器最后同步：${browserTimedLastSync ? new Date(browserTimedLastSync).toLocaleString() : '-'}</div>`
       : '';
 
-    const displayName = escapeHtml(formatDeviceName(dev)); // 使用格式化函数
+    const platformName = escapeHtml(dev.name || '未知设备'); // 平台/架构
+    const customName = dev.customName; // 自定义名称
     // 添加编辑设备名按钮，传递customName作为当前值
-    const editBtn = `<button type="button" class="btn-icon device-edit-name" data-id="${dev.id}" data-name="${escapeHtml(dev.customName || '')}" title="编辑设备名">✏️</button>`;
+    const editBtn = `<button type="button" class="btn-icon device-edit-name" data-id="${dev.id}" data-name="${escapeHtml(customName || '')}" title="编辑设备名">✏️</button>`;
+    // customName 标签显示（如果有）
+    const customNameTag = customName ? `<span class="device-custom-tag">${escapeHtml(customName)}</span>${editBtn}` : editBtn;
+    
     const rowHtml = `
       <div class="device-item" data-id="${dev.id}">
         <div class="device-info">
-          <div class="device-name" style="display: flex; align-items: center; gap: 8px;">
-            <span class="device-name-text">${displayName}</span>
-            ${editBtn}
-            <span style="color: #4a90e2; font-size: 12px;">(当前设备)</span>
+          <div class="device-name">
+            <span class="device-platform">${platformName}</span>
+            ${customNameTag}
+            <span class="device-current-badge">(当前设备)</span>
           </div>
           <div class="device-meta">设备ID：${dev.id || '-'}</div>
           ${bindingSceneId ? `<div class="device-meta">绑定场景：${safeSceneName}</div>` : ''}

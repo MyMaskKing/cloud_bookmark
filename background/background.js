@@ -53,13 +53,15 @@ async function ensureDeviceInCloud() {
       lastSeen: now
     });
   } else {
-    // 当前设备已在列表中，仅刷新 lastSeen、name 和 customName
+    // 当前设备已在列表中，只刷新 lastSeen，保留云端的 customName 和其他信息
     console.log('[设备注册] 当前设备已在列表中，更新 lastSeen:', currentDevice.id);
-    devices[idx] = { ...devices[idx], lastSeen: now, name: currentDevice.name, customName: currentDevice.customName };
+    devices[idx] = { ...devices[idx], lastSeen: now };
   }
 
   // 更新本地设备信息（仅更新 lastSeen）
-  await storage.saveDeviceInfo({ ...currentDevice, lastSeen: now });
+  // 清理 customName，customName 只在 devices 列表中维护
+  const { customName, ...deviceInfoWithoutCustomName } = currentDevice;
+  await storage.saveDeviceInfo({ ...deviceInfoWithoutCustomName, lastSeen: now });
 
   // 保存更新后的设备列表到本地
   console.log('[设备注册] 保存设备列表到本地，数量:', devices.length);
@@ -826,11 +828,17 @@ async function syncSettingsToCloud(devicesOverride = null, latestCloudSettings =
   console.log('[设置同步] 同步设置到云端，设备列表数量:', devices?.length || 0, devicesOverride !== null ? '(使用传入列表)' : '(从存储读取)');
 
   // 注意：currentScene 不同步到云端，每个设备独立维护当前场景
+  // 注意：deviceInfo 不应该包含 customName，同步前清理
+  const cleanDeviceInfo = deviceInfo ? { ...deviceInfo } : null;
+  if (cleanDeviceInfo) {
+    delete cleanDeviceInfo.customName; // 移除 customName，customName 只在 devices 列表中维护
+  }
+  
   await webdav.writeSettings({
     ...(cloudSettings && typeof cloudSettings === 'object' ? cloudSettings : {}),
     settings: settings || {},
     devices: devices || [],
-    deviceInfo: deviceInfo || null,
+    deviceInfo: cleanDeviceInfo,
     scenes: scenes || []
   });
 
@@ -2603,11 +2611,8 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
         return updated;
       });
       
-      // 同时更新当前设备的customName（如果是当前设备）
-      const currentInfo = await storage.getDeviceInfo();
-      if (currentInfo && currentInfo.id === deviceId) {
-        await storage.saveDeviceInfo({ ...currentInfo, customName: deviceName });
-      }
+      // deviceInfo不存储customName，显示时从devices中查找
+      // 移除了之前更新deviceInfo.customName的代码
       
       return { success: true };
     }).then((result) => {
@@ -3596,23 +3601,25 @@ async function ensureDeviceRegistered() {
 async function touchCurrentDevice() {
   if (!currentDevice) return;
   currentDevice.lastSeen = Date.now();
-  await storage.saveDeviceInfo(currentDevice);
+  // 保存时清理 customName，customName 只在 devices 列表中维护
+  const { customName, ...deviceInfoWithoutCustomName } = currentDevice;
+  await storage.saveDeviceInfo(deviceInfoWithoutCustomName);
   const localDevices = await storage.getDevices();
   await updateDevicesWithLatest((devices) => {
     const idx = devices.findIndex(d => d.id === currentDevice.id);
     if (idx !== -1) {
-      devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen, name: currentDevice.name, customName: currentDevice.customName };
+      // 只更新lastSeen时间，保留云端的customName和其他信息
+      devices[idx] = { ...devices[idx], lastSeen: currentDevice.lastSeen };
     } else {
       // 云端刚写入当前设备后，短时间内再次读取可能还是旧设备列表，这里补回本地当前设备，避免被旧值覆盖。
       const localCurrentDevice = Array.isArray(localDevices)
         ? localDevices.find(d => d && d.id === currentDevice.id)
         : null;
       if (localCurrentDevice) {
+        // 只使用本地设备的lastSeen，其他字段使用本地数据
         devices.push({
           ...localCurrentDevice,
-          lastSeen: currentDevice.lastSeen,
-          name: currentDevice.name,
-          customName: currentDevice.customName
+          lastSeen: currentDevice.lastSeen
         });
       }
     }
