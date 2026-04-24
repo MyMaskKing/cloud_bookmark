@@ -104,109 +104,117 @@
   width: 100%;
   height: 100%;
   line-height: 1;
-  opacity: 0.62; /* idle: 主体更明显，但仍克制 */
-  filter: saturate(0.9) brightness(0.98);
-  transition: opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1),
-    filter 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
+  opacity: 0.68;
+  transition: opacity 220ms cubic-bezier(0.2, 0.9, 0.2, 1);
 }
 
-/* 云端书签：纯 CSS 矢量（细线云 + 书签标签），更“产品化” */
-#cloud-bookmark-floating-ball .cb-fb-icon::before,
-#cloud-bookmark-floating-ball .cb-fb-icon::after {
+/* 圆环背景 */
+#cloud-bookmark-floating-ball .cb-fb-icon::before {
   content: '';
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(74, 144, 226, 0.65);
+  background: transparent;
+  box-shadow: 0 0 12px rgba(74, 144, 226, 0.12);
   pointer-events: none;
 }
 
 /* 云朵：描边 + 轻微内发光 */
-#cloud-bookmark-floating-ball .cb-fb-icon::before {
-  width: 24px;
-  height: 15px;
-  transform: translate(-50%, -50%) translateY(-1px);
+#cloud-bookmark-floating-ball .cb-fb-icon .cloud-shape {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) translateY(-2px);
+  width: 22px;
+  height: 13px;
   border-radius: 999px;
   background:
-    radial-gradient(circle at 30% 55%, rgba(255, 255, 255, 0.22) 0 55%, rgba(255, 255, 255, 0) 56%),
-    radial-gradient(circle at 52% 35%, rgba(255, 255, 255, 0.20) 0 58%, rgba(255, 255, 255, 0) 59%),
-    radial-gradient(circle at 72% 58%, rgba(255, 255, 255, 0.18) 0 55%, rgba(255, 255, 255, 0) 56%);
+    radial-gradient(circle at 30% 55%, rgba(255, 255, 255, 0.20) 0 55%, rgba(255, 255, 255, 0) 56%),
+    radial-gradient(circle at 52% 35%, rgba(255, 255, 255, 0.18) 0 58%, rgba(255, 255, 255, 0) 59%),
+    radial-gradient(circle at 72% 58%, rgba(255, 255, 255, 0.16) 0 55%, rgba(255, 255, 255, 0) 56%);
   box-shadow:
-    0 0 0 1.8px rgba(167, 139, 250, 0.78),
-    0 0 14px rgba(99, 102, 241, 0.22);
-  opacity: 1;
-  filter: drop-shadow(0 3px 6px rgba(15, 23, 42, 0.16));
+    0 0 0 1.5px rgba(74, 144, 226, 0.72),
+    0 0 10px rgba(74, 144, 226, 0.18);
+  filter: drop-shadow(0 2px 4px rgba(15, 23, 42, 0.14));
+  pointer-events: none;
 }
 
 /* 书签：细线标签 + 缺口 */
-#cloud-bookmark-floating-ball .cb-fb-icon::after {
-  width: 13px;
-  height: 18px;
-  transform: translate(-50%, -50%) translateX(7px) translateY(5px) rotate(7deg);
-  border-radius: 4px;
+#cloud-bookmark-floating-ball .cb-fb-icon .bookmark-tag {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) translateX(6px) translateY(4px) rotate(7deg);
+  width: 12px;
+  height: 16px;
+  border-radius: 3px;
   background:
-    linear-gradient(180deg, rgba(99, 102, 241, 0.95), rgba(168, 85, 247, 0.92));
+    linear-gradient(180deg, rgba(74, 144, 226, 0.92), rgba(108, 174, 239, 0.88));
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.30) inset,
-    0 8px 18px rgba(15, 23, 42, 0.20);
+    0 0 0 1px rgba(255, 255, 255, 0.28) inset,
+    0 6px 14px rgba(15, 23, 42, 0.18);
   clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 82%, 0 100%);
-  opacity: 0.98;
+  pointer-events: none;
 }
 
 /* 状态下的微调：hover 更亮，docked 更克制 */
 #cloud-bookmark-floating-ball[data-state='hover'] .cb-fb-icon::before {
-  box-shadow:
-    0 0 0 1.5px rgba(129, 140, 248, 0.85),
-    0 0 14px rgba(99, 102, 241, 0.26);
+  border-color: rgba(74, 144, 226, 0.92);
+  box-shadow: 0 0 12px rgba(74, 144, 226, 0.18);
+}
+#cloud-bookmark-floating-ball[data-state='docked'] .cb-fb-icon::before {
+  border-color: rgba(74, 144, 226, 0.45);
 }
 #cloud-bookmark-floating-ball[data-state='docked'] .cb-fb-icon::after {
-  opacity: 0.92;
+  opacity: 0.85;
 }
 
-/* idle: 背景几乎完全透明，只保留轮廓和图标，尽量不遮挡页面内容 */
+/* idle: 背景完全透明，只保留圆环和图标 */
 #cloud-bookmark-floating-ball[data-state='idle'] {
   background: transparent;
-  border: 1px solid rgba(129, 140, 248, 0.35);
+  border: none;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   transform: translateZ(0);
 }
 
-/* hover: 轻微高亮，仍然保持半透明，不大块遮挡内容 */
+/* hover: 轻微高亮，圆环更明显 */
 #cloud-bookmark-floating-ball[data-state='hover'] {
-  background: rgba(99, 102, 241, 0.10);
-  border: 1px solid rgba(129, 140, 248, 0.55);
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.18),
-    0 0 0 1px rgba(99, 102, 241, 0.18);
+  background: rgba(74, 144, 226, 0.08);
+  border: none;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.15),
+    0 0 0 1px rgba(74, 144, 226, 0.15);
 }
 #cloud-bookmark-floating-ball[data-state='hover'] .cb-fb-icon {
   opacity: 1;
-  filter: saturate(1.25) brightness(1.05);
 }
 
-/* dragging: 更清晰 + 取消多余动效（略有填充，但用户正在操作时优先可见性） */
+/* dragging: 更清晰，圆环更亮 */
 #cloud-bookmark-floating-ball[data-state='dragging'] {
-  background: rgba(99, 102, 241, 0.20);
-  border: 1px solid rgba(129, 140, 248, 0.55);
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.22);
+  background: rgba(74, 144, 226, 0.12);
+  border: none;
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.20);
 }
 #cloud-bookmark-floating-ball[data-state='dragging'] .cb-fb-icon {
   opacity: 1;
-  filter: saturate(1.25) brightness(1.05);
 }
 
-/* docked: 贴边后基本只有轮廓+图标，不填充背景，避免挡住内容 */
+/* docked: 贴边后更低调，圆环更淡 */
 #cloud-bookmark-floating-ball[data-state='docked'] {
   background: transparent;
-  border: 1px solid rgba(99, 102, 241, 0.30);
+  border: none;
   box-shadow: none;
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 #cloud-bookmark-floating-ball[data-state='docked'] .cb-fb-icon {
-  opacity: 0.48; /* docked: 仍然看得清主体 */
-  filter: saturate(0.85) brightness(0.95);
+  opacity: 0.45;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -591,7 +599,7 @@
     floatingBall.id = 'cloud-bookmark-floating-ball';
     ensureFloatingBallStyle();
     floatingBall.dataset.state = 'idle';
-    floatingBall.innerHTML = '<span class="cb-fb-icon" aria-hidden="true"></span>';
+    floatingBall.innerHTML = '<span class="cb-fb-icon" aria-hidden="true"><span class="cloud-shape"></span><span class="bookmark-tag"></span></span>';
     floatingBall.style.cssText = `
       position: fixed;
       width: 40px;
