@@ -115,8 +115,8 @@
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  width: 34px;
-  height: 34px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   border: 1.5px solid rgba(74, 144, 226, 0.65);
   background: transparent;
@@ -124,19 +124,16 @@
   pointer-events: none;
 }
 
-/* 云朵：描边 + 轻微内发光 */
+/* 云朵：描边 + 半透明白色（不遮挡文字） */
 #cloud-bookmark-floating-ball .cb-fb-icon .cloud-shape {
   position: absolute;
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%) translateY(-2px);
-  width: 22px;
-  height: 13px;
+  width: 26px;
+  height: 15px;
   border-radius: 999px;
-  background:
-    radial-gradient(circle at 30% 55%, rgba(255, 255, 255, 0.20) 0 55%, rgba(255, 255, 255, 0) 56%),
-    radial-gradient(circle at 52% 35%, rgba(255, 255, 255, 0.18) 0 58%, rgba(255, 255, 255, 0) 59%),
-    radial-gradient(circle at 72% 58%, rgba(255, 255, 255, 0.16) 0 55%, rgba(255, 255, 255, 0) 56%);
+  background: rgba(255, 255, 255, 0.78);
   box-shadow:
     0 0 0 1.5px rgba(74, 144, 226, 0.72),
     0 0 10px rgba(74, 144, 226, 0.18);
@@ -149,12 +146,11 @@
   position: absolute;
   left: 50%;
   top: 50%;
-  transform: translate(-50%, -50%) translateX(6px) translateY(4px) rotate(7deg);
-  width: 12px;
-  height: 16px;
+  transform: translate(-50%, -50%) translateX(7px) translateY(5px) rotate(7deg);
+  width: 14px;
+  height: 18px;
   border-radius: 3px;
-  background:
-    linear-gradient(180deg, rgba(74, 144, 226, 0.92), rgba(108, 174, 239, 0.88));
+  background: #4a90e2;
   box-shadow:
     0 0 0 1px rgba(255, 255, 255, 0.28) inset,
     0 6px 14px rgba(15, 23, 42, 0.18);
@@ -602,8 +598,8 @@
     floatingBall.innerHTML = '<span class="cb-fb-icon" aria-hidden="true"><span class="cloud-shape"></span><span class="bookmark-tag"></span></span>';
     floatingBall.style.cssText = `
       position: fixed;
-      width: 40px;
-      height: 40px;
+      width: 48px;
+      height: 48px;
       cursor: pointer;
       z-index: 999999;
       display: flex;
