@@ -3247,7 +3247,7 @@ function showSuccessInModal(message = '添加成功') {
         color: #198754;
         margin-bottom: 20px;
       ">${escapeHtml(message)}</div>
-      <button type="button" id="successCloseBtn" class="btn btn-primary" style="min-width: 100px;">
+      <button type="button" id="successCloseBtn" class="btn btn-primary-blue" style="min-width: 132px;">
         关闭
       </button>
     </div>

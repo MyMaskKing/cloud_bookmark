@@ -1260,6 +1260,25 @@ body.cb-add-flow-lock {
   background: #e2e8f0;
 }
 
+/* 共通：蓝色渐变主按钮（用于添加书签流程等） */
+.btn-primary-blue {
+  background: linear-gradient(135deg, #4a90e2, #3573c5);
+  color: #ffffff;
+  border: 1px solid rgba(53, 115, 197, 0.18);
+  box-shadow: 0 8px 18px rgba(53, 115, 197, 0.20);
+}
+
+.btn-primary-blue:hover {
+  background: linear-gradient(135deg, #4286d7, #2f68b6);
+  transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(53, 115, 197, 0.24);
+}
+
+.btn-primary-blue:active {
+  transform: translateY(0);
+  box-shadow: 0 5px 12px rgba(53, 115, 197, 0.18);
+}
+
 #createFolderBtn {
   min-width: 92px;
   white-space: nowrap;
@@ -1273,6 +1292,7 @@ body.cb-add-flow-lock {
 
 /* 添加书签弹窗：仅收口底部保存按钮，避免影响页面其他主按钮 */
 .form-actions .btn-primary {
+  /* 使用共通蓝色渐变样式 */
   background: linear-gradient(135deg, #4a90e2, #3573c5);
   color: #ffffff;
   border: 1px solid rgba(53, 115, 197, 0.18);
