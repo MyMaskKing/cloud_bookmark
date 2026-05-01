@@ -68,17 +68,19 @@ body.cb-add-flow-lock {
   width: 32px;
   height: 32px;
   border: none;
-  background: #4a90e2;
+  background: linear-gradient(135deg, #4a90e2, #3573c5);
   color: white;
   border-radius: 50%;
   font-size: 20px;
   cursor: pointer;
   transition: all 0.2s;
+  box-shadow: 0 4px 10px rgba(53, 115, 197, 0.30);
 }
 
 .btn-add:hover {
-  background: #357abd;
+  background: linear-gradient(135deg, #4286d7, #2f68b6);
   transform: scale(1.1);
+  box-shadow: 0 6px 14px rgba(53, 115, 197, 0.35);
 }
 
 .sidebar-nav {
@@ -905,6 +907,17 @@ body.cb-add-flow-lock {
   font-size: 18px;
   color: #999;
   margin-bottom: 24px;
+}
+
+/* 空状态按钮：使用蓝色渐变与保存按钮保持一致 */
+.empty-state .btn-primary {
+  background: linear-gradient(135deg, #4a90e2, #3573c5);
+  box-shadow: 0 8px 18px rgba(53, 115, 197, 0.20);
+}
+
+.empty-state .btn-primary:hover {
+  background: linear-gradient(135deg, #4286d7, #2f68b6);
+  box-shadow: 0 10px 22px rgba(53, 115, 197, 0.24);
 }
 
 /* 管理画面：主区域加载遮罩 */
