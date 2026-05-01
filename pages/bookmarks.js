@@ -4191,6 +4191,226 @@ batchMoveBtn.addEventListener('click', batchMoveBookmarks);
 batchDeleteBtn.addEventListener('click', batchDeleteBookmarks);
 selectAllBtn.addEventListener('click', toggleSelectAll);
 
+// ==================== 目录导航功能 ====================
+
+// 目录导航相关元素
+let folderNavDrawer = null;
+let folderNavMask = null;
+let folderNavClose = null;
+let folderNavContent = null;
+let folderNavBtn = null;
+let currentNavFolder = ''; // 记录当前选中的文件夹路径
+
+/**
+ * 初始化目录导航功能
+ */
+function initFolderNav() {
+  folderNavDrawer = document.getElementById('folderNavDrawer');
+  folderNavMask = folderNavDrawer?.querySelector('.folder-nav-mask');
+  folderNavClose = document.getElementById('folderNavClose');
+  folderNavContent = document.getElementById('folderNavContent');
+  folderNavBtn = document.getElementById('folderNavBtn');
+
+  if (!folderNavDrawer || !folderNavBtn) return;
+
+  // 绑定事件
+  folderNavBtn.addEventListener('click', openFolderNav);
+  folderNavClose?.addEventListener('click', closeFolderNav);
+  folderNavMask?.addEventListener('click', closeFolderNav);
+
+  // ESC 键关闭
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && folderNavDrawer?.classList.contains('active')) {
+      closeFolderNav();
+    }
+  });
+}
+
+/**
+ * 打开目录导航抽屉
+ */
+function openFolderNav() {
+  if (!folderNavDrawer || !folderNavContent) return;
+
+  // 渲染文件夹列表
+  renderFolderNav();
+
+  // 显示抽屉
+  folderNavDrawer.style.display = 'flex';
+  // 强制重绘以确保动画生效
+  folderNavDrawer.offsetHeight;
+  folderNavDrawer.classList.add('active');
+
+  // 禁止背景滚动
+  document.body.style.overflow = 'hidden';
+}
+
+/**
+ * 关闭目录导航抽屉
+ */
+function closeFolderNav() {
+  if (!folderNavDrawer) return;
+
+  folderNavDrawer.classList.remove('active');
+
+  // 等待动画结束后隐藏
+  setTimeout(() => {
+    folderNavDrawer.style.display = 'none';
+    document.body.style.overflow = '';
+  }, 300);
+}
+
+/**
+ * 渲染文件夹导航列表
+ */
+function renderFolderNav() {
+  if (!folderNavContent) return;
+
+  // 获取所有文件夹路径
+  const folders = new Set();
+  currentBookmarks.forEach(bm => {
+    if (bm.folder) {
+      folders.add(bm.folder);
+      // 添加所有父级路径
+      const parts = bm.folder.split('/').filter(Boolean);
+      for (let i = 1; i < parts.length; i++) {
+        folders.add(parts.slice(0, i).join('/'));
+      }
+    }
+  });
+
+  // 转换为数组并排序
+  const folderArray = Array.from(folders).sort();
+
+  if (folderArray.length === 0) {
+    folderNavContent.innerHTML = '<div class="folder-nav-empty">暂无文件夹</div>';
+    return;
+  }
+
+  // 构建文件夹树
+  const tree = buildFolderTreeForNav(folderArray);
+
+  // 统计每个文件夹的书签数量
+  const folderCounts = {};
+  currentBookmarks.forEach(bm => {
+    if (bm.folder) {
+      folderCounts[bm.folder] = (folderCounts[bm.folder] || 0) + 1;
+    }
+  });
+
+  // 渲染 HTML（传入当前选中的文件夹路径）
+  const html = renderFolderTreeNodes(tree, 0, folderCounts, currentNavFolder);
+  folderNavContent.innerHTML = `<ul class="folder-nav-list">${html}</ul>`;
+
+  // 绑定点击事件
+  folderNavContent.querySelectorAll('.folder-nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const path = item.dataset.path;
+      if (path) {
+        // 记录当前选中的文件夹
+        currentNavFolder = path;
+        scrollToFolder(path);
+        closeFolderNav();
+      }
+    });
+  });
+}
+
+/**
+ * 为导航构建文件夹树
+ */
+function buildFolderTreeForNav(paths) {
+  const root = {};
+
+  paths.forEach(path => {
+    const parts = path.split('/').filter(Boolean);
+    let current = root;
+
+    parts.forEach((part, index) => {
+      if (!current[part]) {
+        current[part] = {
+          name: part,
+          path: parts.slice(0, index + 1).join('/'),
+          children: {}
+        };
+      }
+      current = current[part].children;
+    });
+  });
+
+  return root;
+}
+
+/**
+ * 递归渲染文件夹树节点
+ * @param {Object} tree - 文件夹树
+ * @param {number} depth - 当前深度
+ * @param {Object} counts - 文件夹数量统计
+ * @param {string} selectedPath - 当前选中的文件夹路径
+ */
+function renderFolderTreeNodes(tree, depth, counts, selectedPath = '') {
+  const folders = Object.values(tree).sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+
+  return folders.map(folder => {
+    const count = counts[folder.path] || 0;
+    const hasChildren = Object.keys(folder.children).length > 0;
+    const isActive = folder.path === selectedPath ? 'active' : '';
+
+    let html = `
+      <li class="folder-nav-item ${isActive}" data-path="${escapeHtml(folder.path)}" data-depth="${depth}">
+        <span class="folder-nav-icon">📁</span>
+        <span class="folder-nav-name">${escapeHtml(folder.name)}</span>
+        <span class="folder-nav-count">${count}</span>
+      </li>
+    `;
+
+    // 递归渲染子文件夹
+    if (hasChildren) {
+      html += renderFolderTreeNodes(folder.children, depth + 1, counts, selectedPath);
+    }
+
+    return html;
+  }).join('');
+}
+
+/**
+ * 跳转到指定文件夹并筛选显示其书签
+ */
+function scrollToFolder(path) {
+  // 清除搜索
+  if (searchInput.value) {
+    searchInput.value = '';
+    handleSearch();
+  }
+
+  // 设置文件夹筛选
+  currentFilter = 'folder:' + normalizeFolderPath(path);
+
+  // 清除导航项激活状态
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.classList.remove('active');
+  });
+
+  // 更新侧边栏文件夹激活状态
+  const normalizedPath = normalizeFolderPath(path);
+  foldersList.querySelectorAll('.folder-label').forEach(label => {
+    label.classList.remove('active');
+  });
+  const folderRow = foldersList.querySelector(`[data-folder="${CSS.escape(path)}"]`);
+  if (folderRow) {
+    const label = folderRow.querySelector('.folder-label');
+    if (label) {
+      label.classList.add('active');
+    }
+  }
+
+  // 渲染书签列表（只显示该文件夹的书签）
+  renderBookmarks();
+}
+
+// 初始化目录导航
+document.addEventListener('DOMContentLoaded', initFolderNav);
+
 // 全局函数供HTML调用
 window.showAddForm = showAddForm;
 

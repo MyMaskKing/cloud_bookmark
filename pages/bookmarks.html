@@ -92,6 +92,7 @@
             <button id="viewOptionsBtn" class="btn-icon" title="显示选项">👁️</button>
             <button id="exportBtn" class="btn-icon" title="导出">💾</button>
             <button id="syncBtn" class="btn-icon" title="同步">🔄</button>
+            <button id="folderNavBtn" class="btn-icon" title="目录导航">📁</button>
           </div>
         </div>
       </header>
@@ -179,6 +180,20 @@
           <button type="submit" class="btn btn-primary">保存</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- 目录导航抽屉 -->
+  <div id="folderNavDrawer" class="folder-nav-drawer" style="display: none;">
+    <div class="folder-nav-mask"></div>
+    <div class="folder-nav-panel">
+      <div class="folder-nav-header">
+        <span class="folder-nav-title">📁 目录导航</span>
+        <button id="folderNavClose" class="folder-nav-close" title="关闭">✕</button>
+      </div>
+      <div id="folderNavContent" class="folder-nav-content">
+        <!-- 文件夹树内容将动态渲染 -->
+      </div>
     </div>
   </div>
 
