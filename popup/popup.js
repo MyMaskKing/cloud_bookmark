@@ -2047,7 +2047,7 @@ function renderDetailPanel(bookmark) {
   const descriptionElement = document.getElementById('detailDescription');
   if (bookmark.description && bookmark.description.trim()) {
     descriptionField.style.display = 'block';
-    descriptionElement.textContent = bookmark.description;
+    descriptionElement.value = bookmark.description;
   } else {
     descriptionField.style.display = 'none';
   }
@@ -2132,7 +2132,7 @@ function toggleEditField(field) {
       saveField(field, fieldElement);
     });
     input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && field !== 'notes') {
+      if (e.key === 'Enter' && field !== 'notes' && field !== 'description') {
         input.blur();
       } else if (e.key === 'Escape') {
         cancelEdit(field, fieldElement);
@@ -2285,7 +2285,7 @@ async function updateDetailPanelAfterSave(field, newValue) {
     const descField = document.getElementById('detailDescriptionField');
     if (descElement && descField) {
       if (newValue && newValue.trim()) {
-        descElement.textContent = newValue;
+        descElement.value = newValue;
         descField.style.display = 'block';
       } else {
         descField.style.display = 'none';
@@ -2372,6 +2372,35 @@ async function copyNotes() {
 }
 
 /**
+ * 复制描述
+ */
+async function copyDescription() {
+  const descElement = document.getElementById('detailDescription');
+  const desc = descElement.value;
+
+  if (!desc) {
+    showErrorToast('描述为空');
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(desc);
+    showSuccessToast('描述已复制');
+  } catch (error) {
+    console.error('复制失败:', error);
+
+    // 回退方案
+    try {
+      descElement.select();
+      document.execCommand('copy');
+      showSuccessToast('描述已复制');
+    } catch (e) {
+      showErrorToast('复制失败');
+    }
+  }
+}
+
+/**
  * 关闭详情画面
  */
 function closeDetailModal() {
@@ -2432,10 +2461,16 @@ document.addEventListener('DOMContentLoaded', () => {
     overlay.addEventListener('click', closeDetailModal);
   }
 
-  // 复制备注按钮
+// 复制备注按钮
   const copyBtn = document.getElementById('detailCopyBtn');
   if (copyBtn) {
     copyBtn.addEventListener('click', copyNotes);
+  }
+
+  // 复制描述按钮
+  const descCopyBtn = document.getElementById('detailDescCopyBtn');
+  if (descCopyBtn) {
+    descCopyBtn.addEventListener('click', copyDescription);
   }
 
 // 编辑按钮事件委托

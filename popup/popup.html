@@ -177,10 +177,11 @@
         <div class="detail-field" id="detailDescriptionField" style="display: none;">
           <label class="detail-label">描述</label>
           <div class="detail-content">
-            <div class="detail-text" id="detailDescription"></div>
+            <textarea class="detail-textarea desc-textarea" id="detailDescription" rows="3" readonly></textarea>
+            <button class="detail-copy-btn" id="detailDescCopyBtn" title="复制描述">📋</button>
             <button class="detail-edit-btn" data-field="description" title="编辑">✏️</button>
             <div class="detail-edit-wrapper">
-              <input type="text" class="detail-edit-input" id="detailDescInput" style="display: none;">
+              <textarea class="detail-edit-textarea" id="detailDescInput" rows="3" style="display: none;"></textarea>
             </div>
           </div>
         </div>

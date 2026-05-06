@@ -1205,6 +1205,11 @@ body {
   font-family: inherit;
 }
 
+/* 描述文本域样式（更小的高度） */
+.detail-textarea.desc-textarea {
+  min-height: 60px;
+}
+
 .detail-textarea:focus {
   background: #fff;
 }

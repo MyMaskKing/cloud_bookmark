@@ -2047,6 +2047,11 @@ body.cb-add-flow-lock {
   background: #fff;
 }
 
+/* 描述文本域样式（更小的高度） */
+.detail-textarea.desc-textarea {
+  min-height: 60px;
+}
+
 /* 编辑模式下的输入框 */
 .detail-content.editing .detail-text,
 .detail-content.editing .detail-link,
