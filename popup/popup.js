@@ -228,8 +228,12 @@ document.addEventListener('click', (e) => {
       return; // 场景菜单项点击由专门的处理器处理
     }
 
-    // 检查是否点击了按钮容器，如果是则忽略（按钮点击已在上面的处理中处理）
+// 检查是否点击了按钮容器，如果是则忽略（按钮点击已在上面的处理中处理）
     if (e.target.closest('.bookmark-item-actions')) {
+      return;
+    }
+    // 检查是否点击了详情按钮，如果是则忽略
+    if (e.target.closest('.bookmark-detail-btn')) {
       return;
     }
 
@@ -885,19 +889,22 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
       const actionBtnHtml = useFavorite
         ? `<button class="bookmark-fav-btn" data-id="${id}" data-starred="${bookmark.starred ? 'true' : 'false'}" title="${bookmark.starred ? '取消收藏' : '添加到收藏'}">${bookmark.starred ? '★' : '☆'}</button>`
         : `<button class="bookmark-delete-btn" data-id="${id}" title="删除">🗑️</button>`;
-      return `
-      <div class="bookmark-item" data-url="${escapeHtml(bookmark.url)}" data-id="${id}">
-        <div class="bookmark-item-content">
-          <div class="bookmark-item-title">${escapeHtml(bookmark.title || '无标题')}</div>
-          <div class="bookmark-item-url">${escapeHtml(bookmark.url)}</div>
-          ${folderHtml}
+    return `
+    <div class="bookmark-item" data-url="${escapeHtml(bookmark.url)}" data-id="${id}">
+      <div class="bookmark-item-content">
+        <div class="bookmark-item-title">
+          <span class="bookmark-title-text">${escapeHtml(bookmark.title || '无标题')}</span>
+          <button class="bookmark-detail-btn" data-id="${id}" title="查看详情">ℹ️</button>
         </div>
-        <div class="bookmark-item-actions">
-          ${updateBtnHtml}
-          ${actionBtnHtml}
-        </div>
+        <div class="bookmark-item-url">${escapeHtml(bookmark.url)}</div>
+        ${folderHtml}
       </div>
-    `;
+      <div class="bookmark-item-actions">
+        ${updateBtnHtml}
+        ${actionBtnHtml}
+      </div>
+    </div>
+  `;
     }).join('');
 
     // 搜索模式中的点击事件由全局事件委托处理，不需要单独绑定
@@ -1195,13 +1202,17 @@ function renderFolderTreeHtml(node, indentPath) {
       ? `<div class="bookmark-item-folder">所在：${escapeHtml(b.folder)}</div>`
       : '';
     const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
+    const detailBtnHtml = `<button class="bookmark-detail-btn" data-id="${id}" title="查看详情">ℹ️</button>`;
     const actionBtnHtml = useFavorite
       ? `<button class="bookmark-fav-btn" data-id="${id}" data-starred="${b.starred ? 'true' : 'false'}" title="${b.starred ? '取消收藏' : '添加到收藏'}">${b.starred ? '★' : '☆'}</button>`
       : `<button class="bookmark-delete-btn" data-id="${id}" title="删除">🗑️</button>`;
     return `
     <div class="bookmark-item" data-url="${escapeHtml(b.url)}" data-id="${id}">
       <div class="bookmark-item-content">
-        <div class="bookmark-item-title">${escapeHtml(b.title || '无标题')}</div>
+        <div class="bookmark-item-title">
+          <span class="bookmark-title-text">${escapeHtml(b.title || '无标题')}</span>
+          ${detailBtnHtml}
+        </div>
         <div class="bookmark-item-url">${escapeHtml(b.url)}</div>
         ${folderHtml}
       </div>
@@ -1991,3 +2002,460 @@ async function restoreScrollPosition() {
     return true;
   }
 }
+
+// ========== 书签详情功能 ==========
+
+let currentDetailBookmarkId = null;
+let currentDetailBookmark = null;
+
+/**
+ * 显示书签详情画面
+ */
+async function showBookmarkDetail(bookmarkId) {
+  try {
+    const bookmarks = await storage.getBookmarks();
+    const bookmark = bookmarks.bookmarks.find(b => b.id === bookmarkId);
+
+    if (!bookmark) {
+      showErrorToast('书签未找到');
+      return;
+    }
+
+    currentDetailBookmarkId = bookmarkId;
+    currentDetailBookmark = bookmark;
+    renderDetailPanel(bookmark);
+
+    const modal = document.getElementById('bookmarkDetailModal');
+    modal.style.display = 'flex';
+  } catch (error) {
+    console.error('显示书签详情失败:', error);
+    showErrorToast('加载书签详情失败');
+  }
+}
+
+/**
+ * 渲染详情面板内容
+ */
+function renderDetailPanel(bookmark) {
+  // 设置书签名（可点击跳转）
+  const titleElement = document.getElementById('detailTitle');
+  titleElement.textContent = bookmark.title || '无标题';
+  titleElement.href = bookmark.url || '#';
+
+  // 设置描述（为空时不展示）
+  const descriptionField = document.getElementById('detailDescriptionField');
+  const descriptionElement = document.getElementById('detailDescription');
+  if (bookmark.description && bookmark.description.trim()) {
+    descriptionField.style.display = 'block';
+    descriptionElement.textContent = bookmark.description;
+  } else {
+    descriptionField.style.display = 'none';
+  }
+
+  // 设置备注
+  const notesElement = document.getElementById('detailNotes');
+  notesElement.value = bookmark.notes || '';
+
+  // 重置所有字段的编辑状态
+  resetAllEditFields();
+}
+
+/**
+ * 重置所有字段的编辑状态
+ */
+function resetAllEditFields() {
+  document.querySelectorAll('.detail-content').forEach(content => {
+    content.classList.remove('editing');
+  });
+
+  // 隐藏编辑输入框（而不是删除，因为现在是预置元素）
+  document.querySelectorAll('.detail-edit-input, .detail-edit-textarea').forEach(input => {
+    input.style.display = 'none';
+  });
+
+  // 恢复所有编辑按钮状态
+  document.querySelectorAll('.detail-content').forEach(content => {
+    updateEditButtonState(content, false);
+  });
+}
+
+/**
+ * 切换字段的编辑状态
+ */
+function toggleEditField(field) {
+  const editBtn = document.querySelector(`[data-field="${field}"].detail-edit-btn`);
+  if (!editBtn) return;
+  const fieldElement = editBtn.closest('.detail-content');
+  if (!fieldElement) return;
+
+  // 如果已经处于编辑状态，不做任何操作（保存通过 blur 或 Enter 触发）
+  if (fieldElement.classList.contains('editing')) {
+    return;
+  }
+
+  // 进入编辑状态
+  fieldElement.classList.add('editing');
+
+  const bookmark = getBookmarkData();
+  if (!bookmark) return;
+
+  // 获取预置的输入框元素
+  const wrapper = fieldElement.querySelector('.detail-edit-wrapper');
+  if (!wrapper) return;
+
+  let input;
+  if (field === 'title') {
+    input = document.getElementById('detailTitleInput');
+    input.value = bookmark.title || '';
+    input.dataset.original = bookmark.title || '';
+  } else if (field === 'description') {
+    input = document.getElementById('detailDescInput');
+    input.value = bookmark.description || '';
+    input.dataset.original = bookmark.description || '';
+  } else if (field === 'notes') {
+    input = document.getElementById('detailNotesInput');
+    input.value = bookmark.notes || '';
+    input.dataset.original = bookmark.notes || '';
+  }
+
+  if (!input) return;
+
+  // 显示输入框
+  input.style.display = 'block';
+  input.focus();
+
+  // 绑定事件（只绑定一次，使用标志位）
+  if (!input.dataset.bound) {
+    input.dataset.bound = 'true';
+    input.addEventListener('blur', () => {
+      // 失去焦点时自动保存
+      saveField(field, fieldElement);
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && field !== 'notes') {
+        input.blur();
+      } else if (e.key === 'Escape') {
+        cancelEdit(field, fieldElement);
+      }
+    });
+  }
+
+  updateEditButtonState(fieldElement, true);
+}
+
+/**
+ * 执行保存操作（核心保存逻辑）
+ */
+async function performSave(field, fieldElement) {
+  const input = fieldElement.querySelector('.detail-edit-input, .detail-edit-textarea');
+  if (!input) return;
+
+  const newValue = input.value.trim();
+  const originalValue = input.dataset.original;
+
+  // 如果值没有变化，直接退出编辑模式
+  if (newValue === originalValue) {
+    cancelEdit(field, fieldElement);
+    return;
+  }
+
+  // 验证
+  if (field === 'title' && !newValue) {
+    showErrorToast('书签名不能为空');
+    input.focus();
+    return;
+  }
+
+  if (field === 'title' && newValue.length > 200) {
+    showErrorToast('书签名不能超过200字符');
+    input.focus();
+    return;
+  }
+
+  if (field === 'description' && newValue.length > 500) {
+    showErrorToast('描述不能超过500字符');
+    input.focus();
+    return;
+  }
+
+  if (field === 'notes' && newValue.length > 2000) {
+    showErrorToast('备注不能超过2000字符');
+    input.focus();
+    return;
+  }
+
+// 保存数据
+  try {
+    await saveDetailField(currentDetailBookmarkId, field, newValue);
+
+    // 更新当前详情书签数据
+    if (currentDetailBookmark) {
+      currentDetailBookmark[field] = newValue;
+      currentDetailBookmark.updatedAt = Date.now();
+    }
+
+    showSuccessToast('保存成功');
+    cancelEdit(field, fieldElement); // 退出编辑模式
+    await updateDetailPanelAfterSave(field, newValue); // 更新详情显示
+
+    // 刷新书签列表（使用轻量级刷新，不显示 loading 遮罩）
+    await loadBookmarksForPopup({ lightLoading: true });
+  } catch (error) {
+    console.error('保存失败:', error);
+    showErrorToast('保存失败: ' + (error.message || '未知错误'));
+  }
+}
+
+/**
+ * 保存字段（由 blur 事件触发）
+ */
+async function saveField(field, fieldElement) {
+  if (!fieldElement.classList.contains('editing')) return;
+  await performSave(field, fieldElement);
+}
+
+/**
+ * 更新编辑按钮状态（编辑时隐藏编辑按钮，退出编辑时显示编辑按钮）
+ */
+function updateEditButtonState(fieldElement, isEditing) {
+  const editBtn = fieldElement.querySelector('.detail-edit-btn');
+  if (!editBtn) return;
+
+  // 获取复制按钮（只在备注字段的父容器中）
+  const copyBtn = document.getElementById('detailCopyBtn');
+
+  if (isEditing) {
+    // 编辑模式下隐藏编辑按钮（保存通过 blur 或 Enter 触发）
+    editBtn.style.display = 'none';
+    // 隐藏复制按钮
+    if (copyBtn) {
+      copyBtn.style.display = 'none';
+    }
+  } else {
+    // 退出编辑模式，显示编辑按钮
+    editBtn.style.display = 'flex';
+    editBtn.textContent = '✏️';
+    editBtn.title = '编辑';
+    // 恢复复制按钮
+    if (copyBtn) {
+      copyBtn.style.display = '';
+    }
+  }
+}
+
+/**
+ * 取消编辑
+ */
+function cancelEdit(field, fieldElement) {
+  fieldElement.classList.remove('editing');
+
+  // 隐藏输入框（而不是删除）
+  const wrapper = fieldElement.querySelector('.detail-edit-wrapper');
+  if (wrapper) {
+    const input = wrapper.querySelector('.detail-edit-input, .detail-edit-textarea');
+    if (input) {
+      input.style.display = 'none';
+    }
+  }
+
+  // 恢复按钮状态
+  updateEditButtonState(fieldElement, false);
+}
+
+/**
+ * 保存字段（由 blur 事件触发）
+ */
+async function saveField(field, fieldElement) {
+  if (!fieldElement.classList.contains('editing')) return;
+  await performSave(field, fieldElement);
+}
+
+/**
+ * 更新详情面板显示（保存后调用）
+ */
+async function updateDetailPanelAfterSave(field, newValue) {
+  // 更新显示的文本
+  if (field === 'title') {
+    const titleElement = document.getElementById('detailTitle');
+    if (titleElement) {
+      titleElement.textContent = newValue || '无标题';
+    }
+  } else if (field === 'description') {
+    const descElement = document.getElementById('detailDescription');
+    const descField = document.getElementById('detailDescriptionField');
+    if (descElement && descField) {
+      if (newValue && newValue.trim()) {
+        descElement.textContent = newValue;
+        descField.style.display = 'block';
+      } else {
+        descField.style.display = 'none';
+      }
+    }
+  } else if (field === 'notes') {
+    const notesElement = document.getElementById('detailNotes');
+    if (notesElement) {
+      notesElement.value = newValue || '';
+    }
+  }
+}
+
+/**
+ * 保存字段到本地和云端
+ */
+async function saveDetailField(bookmarkId, field, value) {
+  const bookmarks = await storage.getBookmarks(currentSceneId);
+  const bookmarkIndex = bookmarks.bookmarks.findIndex(b => b.id === bookmarkId);
+
+  if (bookmarkIndex === -1) {
+    throw new Error('书签未找到');
+  }
+
+  // 更新本地数据
+  bookmarks.bookmarks[bookmarkIndex][field] = value;
+  bookmarks.bookmarks[bookmarkIndex].updatedAt = Date.now();
+
+  // 保存到本地存储
+  await storage.saveBookmarks(bookmarks.bookmarks, bookmarks.folders, currentSceneId);
+
+  // 同步到云端
+  sendMessageCompat({
+    action: 'syncToCloud',
+    bookmarks: bookmarks.bookmarks,
+    folders: bookmarks.folders,
+    sceneId: currentSceneId,
+    patch: { bookmarkUpserts: [bookmarkId] }
+  }).catch(err => console.error('保存后同步云端失败:', err));
+}
+
+/**
+ * 获取当前书签数据
+ */
+function getBookmarkData() {
+  // 优先使用当前详情书签数据
+  if (currentDetailBookmark && currentDetailBookmark.id === currentDetailBookmarkId) {
+    return currentDetailBookmark;
+  }
+  // 备选：从已渲染书签列表中查找
+  if (lastRenderedBookmarks && lastRenderedBookmarks.length > 0) {
+    return lastRenderedBookmarks.find(b => b.id === currentDetailBookmarkId);
+  }
+  return null;
+}
+
+/**
+ * 复制备注
+ */
+async function copyNotes() {
+  const notesElement = document.getElementById('detailNotes');
+  const notes = notesElement.value;
+
+  if (!notes) {
+    showErrorToast('备注为空');
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(notes);
+    showSuccessToast('备注已复制');
+  } catch (error) {
+    console.error('复制失败:', error);
+
+    // 回退方案
+    try {
+      notesElement.select();
+      document.execCommand('copy');
+      showSuccessToast('备注已复制');
+    } catch (e) {
+      showErrorToast('复制失败');
+    }
+  }
+}
+
+/**
+ * 关闭详情画面
+ */
+function closeDetailModal() {
+  const modal = document.getElementById('bookmarkDetailModal');
+  modal.style.display = 'none';
+  resetAllEditFields();
+  currentDetailBookmarkId = null;
+  currentDetailBookmark = null;
+}
+
+/**
+ * 显示成功提示
+ */
+function showSuccessToast(message) {
+  showDetailToast(message, 'success');
+}
+
+/**
+ * 显示错误提示
+ */
+function showErrorToast(message) {
+  showDetailToast(message, 'error');
+}
+
+/**
+ * 显示提示消息
+ */
+function showDetailToast(message, type = 'success') {
+  // 移除已存在的提示
+  const existingToast = document.querySelector('.detail-toast');
+  if (existingToast) {
+    existingToast.remove();
+  }
+
+  const toast = document.createElement('div');
+  toast.className = `detail-toast ${type}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(-20px)';
+    setTimeout(() => toast.remove(), 300);
+  }, 2000);
+}
+
+// 详情画面事件监听
+document.addEventListener('DOMContentLoaded', () => {
+  // 关闭按钮
+  const closeBtn = document.getElementById('detailCloseBtn');
+  if (closeBtn) {
+    closeBtn.addEventListener('click', closeDetailModal);
+  }
+
+  // 点击遮罩关闭
+  const overlay = document.querySelector('.bookmark-detail-overlay');
+  if (overlay) {
+    overlay.addEventListener('click', closeDetailModal);
+  }
+
+  // 复制备注按钮
+  const copyBtn = document.getElementById('detailCopyBtn');
+  if (copyBtn) {
+    copyBtn.addEventListener('click', copyNotes);
+  }
+
+// 编辑按钮事件委托
+  document.getElementById('bookmarkDetailModal').addEventListener('click', (e) => {
+    if (e.target.classList.contains('detail-edit-btn')) {
+      const field = e.target.dataset.field;
+      const fieldElement = document.querySelector(`.detail-edit-btn[data-field="${field}"]`).closest('.detail-content');
+      // 只在非编辑模式下进入编辑模式（保存通过 blur 或 Enter 触发）
+      if (!fieldElement.classList.contains('editing')) {
+        toggleEditField(field);
+      }
+    }
+  });
+
+  // 详情按钮事件委托（书签列表）
+  document.getElementById('bookmarkList').addEventListener('click', async (e) => {
+    if (e.target.classList.contains('bookmark-detail-btn')) {
+      e.stopPropagation();
+      const bookmarkId = e.target.dataset.id;
+      await showBookmarkDetail(bookmarkId);
+    }
+  });
+});

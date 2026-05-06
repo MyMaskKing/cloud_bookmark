@@ -152,6 +152,55 @@
     </div>
   </div>
 
+  <!-- 书签详情模态框 -->
+  <div id="bookmarkDetailModal" class="bookmark-detail-modal" style="display: none;">
+    <div class="bookmark-detail-overlay"></div>
+    <div class="bookmark-detail-panel">
+      <div class="detail-header">
+        <h3>书签详情</h3>
+        <button class="detail-close-btn" id="detailCloseBtn">&times;</button>
+      </div>
+      <div class="detail-body">
+        <!-- 书签名 -->
+        <div class="detail-field">
+          <label class="detail-label">书签名</label>
+          <div class="detail-content">
+            <a class="detail-link" id="detailTitle" href="" target="_blank"></a>
+            <button class="detail-edit-btn" data-field="title" title="编辑">✏️</button>
+            <div class="detail-edit-wrapper">
+              <input type="text" class="detail-edit-input" id="detailTitleInput" style="display: none;">
+            </div>
+          </div>
+        </div>
+
+        <!-- 描述 -->
+        <div class="detail-field" id="detailDescriptionField" style="display: none;">
+          <label class="detail-label">描述</label>
+          <div class="detail-content">
+            <div class="detail-text" id="detailDescription"></div>
+            <button class="detail-edit-btn" data-field="description" title="编辑">✏️</button>
+            <div class="detail-edit-wrapper">
+              <input type="text" class="detail-edit-input" id="detailDescInput" style="display: none;">
+            </div>
+          </div>
+        </div>
+
+        <!-- 备注 -->
+        <div class="detail-field">
+          <label class="detail-label">备注</label>
+          <div class="detail-content">
+            <textarea class="detail-textarea notes-textarea" id="detailNotes" rows="6" readonly></textarea>
+            <button class="detail-copy-btn" id="detailCopyBtn" title="复制备注">📋</button>
+            <button class="detail-edit-btn" data-field="notes" title="编辑">✏️</button>
+            <div class="detail-edit-wrapper">
+              <textarea class="detail-edit-textarea" id="detailNotesInput" rows="6" style="display: none;"></textarea>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script src="../utils/storage.js"></script>
   <script src="../utils/utils.js"></script>
   <script src="popup.js"></script>
