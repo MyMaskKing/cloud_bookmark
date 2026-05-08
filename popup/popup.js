@@ -762,6 +762,18 @@ async function loadBookmarksForPopup(options = {}) {
       showPopupLoading();
     }
 
+    // 检查搜索框是否有内容，如果有则执行搜索
+    const savedQuery = searchInput ? searchInput.value.trim() : '';
+    if (savedQuery) {
+      // 搜索模式：从存储中获取书签并过滤
+      const data = await storage.getBookmarks(currentSceneId);
+      const bookmarks = data.bookmarks || [];
+      const filtered = searchBookmarks(bookmarks, savedQuery);
+      renderBookmarks(filtered.slice(0, 50), { searchMode: true });
+      if (!lightLoading) hidePopupLoading();
+      return;
+    }
+
     // 按当前场景过滤书签（与主页面使用相同的逻辑）
     const data = await storage.getBookmarks(currentSceneId);
     const rawBookmarks = data.bookmarks || [];
