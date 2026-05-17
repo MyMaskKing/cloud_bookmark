@@ -25,6 +25,25 @@ async function initDeveloperConsoleLogging() {
 
 initDeveloperConsoleLogging().catch(() => { });
 
+// 全局加载遮罩控制函数
+function showGlobalLoading(message = '正在执行…') {
+  const overlay = document.getElementById('globalLoadingOverlay');
+  const textEl = overlay?.querySelector('.global-loading-text');
+  if (textEl) {
+    textEl.textContent = message;
+  }
+  if (overlay) {
+    overlay.style.display = 'flex';
+  }
+}
+
+function hideGlobalLoading() {
+  const overlay = document.getElementById('globalLoadingOverlay');
+  if (overlay) {
+    overlay.style.display = 'none';
+  }
+}
+
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
 const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function (message, callback) {
   const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
@@ -1018,6 +1037,8 @@ async function ensureSceneFreshFromCloudBeforeWritePopup() {
  * 切换当前场景下某个书签的收藏状态（弹窗内使用）
  */
 async function handleToggleFavorite(bookmarkId) {
+  showGlobalLoading('正在更新收藏状态…');
+
   try {
     await ensureSceneFreshFromCloudBeforeWritePopup();
     const data = await storage.getBookmarks(currentSceneId);
@@ -1044,6 +1065,8 @@ async function handleToggleFavorite(bookmarkId) {
     }).catch(err => console.error('[弹窗] 收藏状态后台同步失败:', err));
   } catch (e) {
     console.error('[弹窗] 切换收藏状态失败:', e);
+  } finally {
+    hideGlobalLoading();
   }
 }
 
@@ -1856,6 +1879,8 @@ async function handleDeleteBookmark(bookmarkId) {
     return;
   }
 
+  showGlobalLoading('正在删除…');
+
   try {
     await ensureSceneFreshFromCloudBeforeWritePopup();
     // 获取当前场景的所有书签（已与云端对齐）
@@ -1915,6 +1940,8 @@ async function handleDeleteBookmark(bookmarkId) {
     alert('删除失败: ' + error.message);
     // 错误时重新加载以恢复 UI 状态
     await loadBookmarksForPopup();
+  } finally {
+    hideGlobalLoading();
   }
 }
 
@@ -2315,28 +2342,46 @@ async function updateDetailPanelAfterSave(field, newValue) {
  * 保存字段到本地和云端
  */
 async function saveDetailField(bookmarkId, field, value) {
-  const bookmarks = await storage.getBookmarks(currentSceneId);
-  const bookmarkIndex = bookmarks.bookmarks.findIndex(b => b.id === bookmarkId);
-
-  if (bookmarkIndex === -1) {
-    throw new Error('书签未找到');
+  const overlay = document.getElementById('globalLoadingOverlay');
+  const originalZIndex = overlay?.style.zIndex;
+  if (overlay) {
+    overlay.style.zIndex = '10001';
   }
+  showGlobalLoading('正在保存…');
 
-  // 更新本地数据
-  bookmarks.bookmarks[bookmarkIndex][field] = value;
-  bookmarks.bookmarks[bookmarkIndex].updatedAt = Date.now();
+  try {
+    const bookmarks = await storage.getBookmarks(currentSceneId);
+    const bookmarkIndex = bookmarks.bookmarks.findIndex(b => b.id === bookmarkId);
 
-  // 保存到本地存储
-  await storage.saveBookmarks(bookmarks.bookmarks, bookmarks.folders, currentSceneId);
+    if (bookmarkIndex === -1) {
+      throw new Error('书签未找到');
+    }
 
-  // 同步到云端
-  sendMessageCompat({
-    action: 'syncToCloud',
-    bookmarks: bookmarks.bookmarks,
-    folders: bookmarks.folders,
-    sceneId: currentSceneId,
-    patch: { bookmarkUpserts: [bookmarkId] }
-  }).catch(err => console.error('保存后同步云端失败:', err));
+    // 更新本地数据
+    bookmarks.bookmarks[bookmarkIndex][field] = value;
+    bookmarks.bookmarks[bookmarkIndex].updatedAt = Date.now();
+
+    // 保存到本地存储
+    await storage.saveBookmarks(bookmarks.bookmarks, bookmarks.folders, currentSceneId);
+
+    // 同步到云端
+    sendMessageCompat({
+      action: 'syncToCloud',
+      bookmarks: bookmarks.bookmarks,
+      folders: bookmarks.folders,
+      sceneId: currentSceneId,
+      patch: { bookmarkUpserts: [bookmarkId] }
+    }).catch(err => console.error('保存后同步云端失败:', err));
+  } catch (error) {
+    console.error('保存详情字段失败:', error);
+    alert('保存失败: ' + error.message);
+    throw error;
+  } finally {
+    if (overlay) {
+      overlay.style.zIndex = originalZIndex || '';
+    }
+    hideGlobalLoading();
+  }
 }
 
 /**
