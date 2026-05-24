@@ -1007,6 +1007,23 @@ async function checkUrlParams() {
       // 延迟执行，确保书签已加载
       setTimeout(tryShowEditForm, 200);
     }
+  } else if (action === 'locate') {
+    const bookmarkId = params.get('id');
+    const folderPath = params.get('folder');
+    if (bookmarkId) {
+      // 等待书签加载完成后再定位
+      const tryLocateBookmark = async () => {
+        const bookmark = currentBookmarks.find(b => b.id === bookmarkId);
+        if (bookmark) {
+          locateBookmarkInPage(bookmarkId, folderPath || bookmark.folder);
+        } else {
+          // 如果还没加载完成，等待一下再试
+          setTimeout(tryLocateBookmark, 100);
+        }
+      };
+      // 延迟执行，确保书签已加载
+      setTimeout(tryLocateBookmark, 200);
+    }
   }
 }
 
@@ -4470,6 +4487,104 @@ function renderFolderTreeNodes(tree, depth, counts, selectedPath = '') {
 
     return html;
   }).join('');
+}
+
+/**
+ * 在页面中定位书签：展开文件夹、滚动到书签、高亮显示
+ */
+function locateBookmarkInPage(bookmarkId, folderPath) {
+  try {
+    // 清除搜索和筛选
+    if (searchInput.value) {
+      searchInput.value = '';
+      handleSearch();
+    }
+    currentFilter = '';
+
+    // 确定要选中的文件夹
+    let targetFolder = '';
+    if (folderPath && folderPath.trim()) {
+      // 有文件夹的书签，选中该文件夹
+      targetFolder = normalizeFolderPath(folderPath);
+
+      // 展开该文件夹及所有父文件夹
+      expandedFolders.add(targetFolder);
+
+      // 展开所有父文件夹
+      const parts = targetFolder.split('/');
+      for (let i = 1; i < parts.length; i++) {
+        const parentPath = parts.slice(0, i).join('/');
+        expandedFolders.add(parentPath);
+      }
+    } else {
+      // 没有文件夹的书签，选中"未分类"（空字符串表示根目录）
+      targetFolder = '';
+      expandedFolders.add('');
+    }
+    saveFolderState();
+
+    // 设置文件夹筛选，自动选中对应文件夹
+    if (targetFolder) {
+      currentFilter = 'folder:' + targetFolder;
+    } else {
+      // 未分类：显示所有没有文件夹的书签
+      currentFilter = 'folder:';
+    }
+
+    // 重新加载左侧文件夹列表（这会根据expandedFolders展开文件夹）
+    loadFolders();
+
+    // 重新渲染书签
+    renderBookmarks();
+
+    // 等待DOM更新后再定位和高亮
+    const tryLocate = () => {
+      // 更新侧边栏文件夹激活状态
+      document.querySelectorAll('.folder-label').forEach(label => {
+        label.classList.remove('active');
+      });
+      if (targetFolder) {
+        const folderRow = foldersList.querySelector(`[data-folder="${CSS.escape(targetFolder)}"]`);
+        if (folderRow) {
+          const label = folderRow.querySelector('.folder-label');
+          if (label) {
+            label.classList.add('active');
+          }
+          // 滚动到文件夹位置
+          folderRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      } else {
+        // 未分类：高亮根目录
+        const rootLabel = foldersList.querySelector('[data-folder=""]')?.querySelector('.folder-label');
+        if (rootLabel) {
+          rootLabel.classList.add('active');
+        }
+      }
+
+      // 然后滚动到书签位置
+      const bookmarkCard = document.querySelector(`[data-id="${CSS.escape(bookmarkId)}"]`);
+      if (bookmarkCard && bookmarkCard.classList.contains('bookmark-card')) {
+        // 滚动到书签位置
+        bookmarkCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // 添加高亮类
+        bookmarkCard.classList.add('highlight');
+
+        // 2秒后移除高亮
+        setTimeout(() => {
+          bookmarkCard.classList.remove('highlight');
+        }, 2000);
+      } else {
+        // 如果还没找到，再等待一下
+        setTimeout(tryLocate, 100);
+      }
+    };
+
+    // 延迟执行，确保DOM已更新
+    setTimeout(tryLocate, 200);
+  } catch (error) {
+    console.error('定位书签失败:', error);
+  }
 }
 
 /**

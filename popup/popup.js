@@ -203,6 +203,19 @@ document.addEventListener('click', (e) => {
       return;
     }
 
+    // 先检查是否点击了定位按钮
+    const locateBtn = e.target.closest('.bookmark-locate-btn');
+    if (locateBtn) {
+      e.preventDefault();
+      e.stopPropagation();
+      const bookmarkId = locateBtn.dataset.id;
+      const folderPath = locateBtn.dataset.folder;
+      if (bookmarkId) {
+        locateBookmarkInFullPage(bookmarkId, folderPath);
+      }
+      return;
+    }
+
     // 先检查是否点击了更新按钮
     const updateBtn = e.target.closest('.bookmark-update-btn');
     if (updateBtn) {
@@ -911,10 +924,14 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
 
   if (searchMode) {
     const useFavorite = popupSettings && popupSettings.favoriteAsDelete;
+    const showLocateButton = popupSettings && popupSettings.showLocateButton !== false; // 默认显示
     bookmarkList.innerHTML = bookmarks.map(bookmark => {
       const id = escapeHtml(bookmark.id);
       const folderHtml = bookmark.folder
         ? `<div class="bookmark-item-folder">所在：${escapeHtml(bookmark.folder)}</div>`
+        : '';
+      const locateBtn = showLocateButton
+        ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(bookmark.folder || '')}" title="在管理页面中定位">📍</button>`
         : '';
       const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
       const actionBtnHtml = useFavorite
@@ -927,7 +944,10 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
           <span class="bookmark-title-text">${escapeHtml(bookmark.title || '无标题')}</span>
           <button class="bookmark-detail-btn" data-id="${id}" title="查看详情">ℹ️</button>
         </div>
-        <div class="bookmark-item-url">${escapeHtml(bookmark.url)}</div>
+        <div class="bookmark-item-url">
+          ${locateBtn}
+          ${escapeHtml(bookmark.url)}
+        </div>
         ${folderHtml}
       </div>
       <div class="bookmark-item-actions">
@@ -985,7 +1005,8 @@ async function loadPopupSettings() {
       expandFirstLevel: !!(settings && settings.popup && settings.popup.expandFirstLevel),
       rememberScrollPosition: settings && settings.popup && settings.popup.rememberScrollPosition !== false, // 默认true
       showUpdateButton: !!(settings && settings.popup && settings.popup.showUpdateButton), // 默认false
-      favoriteAsDelete: !!(settings && settings.popup && settings.popup.favoriteAsDelete) // 默认false
+      favoriteAsDelete: !!(settings && settings.popup && settings.popup.favoriteAsDelete), // 默认false
+      showLocateButton: settings && settings.popup && settings.popup.showLocateButton !== false // 默认true
     };
     // 应用设置到UI
     applyPopupSettings();
@@ -995,7 +1016,8 @@ async function loadPopupSettings() {
       expandFirstLevel: false,
       rememberScrollPosition: true,
       showUpdateButton: false,
-      favoriteAsDelete: false
+      favoriteAsDelete: false,
+      showLocateButton: true
     };
     applyPopupSettings();
   }
@@ -1016,6 +1038,18 @@ function applyPopupSettings() {
     }
   });
   console.log('[弹窗设置] 应用设置，showUpdateButton:', shouldShow, '找到按钮数量:', updateButtons.length);
+
+  // 定位按钮的显示/隐藏
+  const locateButtons = document.querySelectorAll('.bookmark-locate-btn');
+  const showLocateButton = popupSettings && popupSettings.showLocateButton !== false;
+  locateButtons.forEach(btn => {
+    if (showLocateButton) {
+      btn.style.display = 'inline-flex';
+    } else {
+      btn.style.display = 'none';
+    }
+  });
+  console.log('[弹窗设置] 应用设置，showLocateButton:', showLocateButton, '找到按钮数量:', locateButtons.length);
 }
 
 /**
@@ -1231,10 +1265,14 @@ function renderFolderTreeHtml(node, indentPath) {
   }).join('');
 
   const useFavorite = popupSettings && popupSettings.favoriteAsDelete;
+  const showLocateButton = popupSettings && popupSettings.showLocateButton !== false; // 默认显示
   const itemHtml = items.map(b => {
     const id = escapeHtml(b.id);
     const folderHtml = b.folder
       ? `<div class="bookmark-item-folder">所在：${escapeHtml(b.folder)}</div>`
+      : '';
+    const locateBtn = showLocateButton
+      ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(b.folder || '')}" title="在管理页面中定位">📍</button>`
       : '';
     const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
     const detailBtnHtml = `<button class="bookmark-detail-btn" data-id="${id}" title="查看详情">ℹ️</button>`;
@@ -1248,7 +1286,10 @@ function renderFolderTreeHtml(node, indentPath) {
           <span class="bookmark-title-text">${escapeHtml(b.title || '无标题')}</span>
           ${detailBtnHtml}
         </div>
-        <div class="bookmark-item-url">${escapeHtml(b.url)}</div>
+        <div class="bookmark-item-url">
+          ${locateBtn}
+          ${escapeHtml(b.url)}
+        </div>
         ${folderHtml}
       </div>
       <div class="bookmark-item-actions">
@@ -1801,6 +1842,26 @@ function serializeLogToText(log) {
   });
   push('');
   return lines.join('\n');
+}
+
+/**
+ * 在完整管理页面中定位书签
+ */
+function locateBookmarkInFullPage(bookmarkId, folderPath) {
+  try {
+    const params = new URLSearchParams({
+      action: 'locate',
+      id: bookmarkId,
+      folder: folderPath || ''
+    });
+    tabsAPI.create({
+      url: runtimeAPI.getURL(`pages/bookmarks.html?${params.toString()}`)
+    });
+    window.close();
+  } catch (error) {
+    console.error('打开管理页面失败:', error);
+    alert('打开管理页面失败: ' + error.message);
+  }
 }
 
 /**

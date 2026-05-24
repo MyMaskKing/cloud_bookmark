@@ -193,6 +193,7 @@ const browserBookmarkSyncSceneSection = document.getElementById('browserBookmark
 const browserBookmarkSyncSceneSelect = document.getElementById('browserBookmarkSyncSceneSelect');
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const showUpdateButtonCheckbox = document.getElementById('showUpdateButton');
+const showLocateButtonCheckbox = document.getElementById('showLocateButton');
 const popupUseFavoriteInPopup = document.getElementById('popupUseFavoriteInPopup');
 const enableFloatingBall = document.getElementById('enableFloatingBall');
 const floatingBallPositionGroup = document.getElementById('floatingBallPositionGroup');
@@ -1634,6 +1635,11 @@ async function loadUiSettings() {
     showUpdateButtonCheckbox.checked = !!popup.showUpdateButton; // 默认false
   }
 
+  // 加载显示定位按钮设置（默认显示）
+  if (showLocateButtonCheckbox) {
+    showLocateButtonCheckbox.checked = popup.showLocateButton !== false; // 默认true
+  }
+
   // 加载弹窗收藏按钮模式（默认关闭）
   if (popupUseFavoriteInPopup) {
     popupUseFavoriteInPopup.checked = !!popup.favoriteAsDelete;
@@ -1769,7 +1775,43 @@ if (showUpdateButtonCheckbox) {
   });
 }
 
-// 弹窗“删除按钮替换为收藏按钮”设置
+// 显示定位按钮设置
+if (showLocateButtonCheckbox) {
+  showLocateButtonCheckbox.addEventListener('change', async () => {
+    try {
+      const settings = await storage.getSettings();
+      const popup = (settings && settings.popup) || {};
+      popup.showLocateButton = showLocateButtonCheckbox.checked;
+      const newSettings = { ...(settings || {}), popup };
+      await storage.saveSettings(newSettings);
+      showMessage('弹窗定位按钮显示设置已保存（后台同步中）', 'success');
+      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          // Firefox: 使用 Promise
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => {
+            // 忽略错误，可能没有打开的弹窗
+          });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          // Chrome/Edge: 使用回调包装成Promise
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            // 忽略错误，可能没有打开的弹窗
+            if (chrome.runtime.lastError) {
+              // 静默处理错误
+            }
+          });
+        }
+      } catch (e) {
+        // 忽略错误
+      }
+    } catch (e) {
+      showMessage('保存失败: ' + e.message, 'error');
+    }
+  });
+}
+
+// 弹窗”删除按钮替换为收藏按钮”设置
 if (popupUseFavoriteInPopup) {
   popupUseFavoriteInPopup.addEventListener('change', async () => {
     try {
