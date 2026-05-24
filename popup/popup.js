@@ -931,7 +931,42 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
         ? `<div class="bookmark-item-folder">所在：${escapeHtml(bookmark.folder)}</div>`
         : '';
       const locateBtn = showLocateButton
-        ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(bookmark.folder || '')}" title="在管理页面中定位">📍</button>`
+        ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(b.folder || '')}" title="在管理页面中定位" style="background:none;border:none;padding:0;margin:0;cursor:pointer;">
+  <span style="
+    display:inline-flex;
+    width:12px;
+    height:12px;
+    border:1px solid #3b82f6;
+    border-radius:50%;
+    position:relative;
+    box-sizing:border-box;
+    vertical-align:middle;
+    flex-shrink:0;
+  ">
+    <span style="
+      position:absolute;
+      top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:3px;height:3px;
+      border:0.8px solid #3b82f6;
+      border-radius:50%;
+    "></span>
+    <span style="
+      position:absolute;
+      top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:5px;height:0.8px;
+      background:#3b82f6;
+    "></span>
+    <span style="
+      position:absolute;
+      top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:0.8px;height:5px;
+      background:#3b82f6;
+    "></span>
+  </span>
+</button>`
         : '';
       const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
       const actionBtnHtml = useFavorite
@@ -1272,7 +1307,42 @@ function renderFolderTreeHtml(node, indentPath) {
       ? `<div class="bookmark-item-folder">所在：${escapeHtml(b.folder)}</div>`
       : '';
     const locateBtn = showLocateButton
-      ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(b.folder || '')}" title="在管理页面中定位">📍</button>`
+      ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(b.folder || '')}" title="在管理页面中定位" style="background:none;border:none;padding:0;margin:0;cursor:pointer;">
+  <span style="
+    display:inline-flex;
+    width:12px;
+    height:12px;
+    border:1px solid #3b82f6;
+    border-radius:50%;
+    position:relative;
+    box-sizing:border-box;
+    vertical-align:middle;
+    flex-shrink:0;
+  ">
+    <span style="
+      position:absolute;
+      top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:3px;height:3px;
+      border:0.8px solid #3b82f6;
+      border-radius:50%;
+    "></span>
+    <span style="
+      position:absolute;
+      top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:5px;height:0.8px;
+      background:#3b82f6;
+    "></span>
+    <span style="
+      position:absolute;
+      top:50%;left:50%;
+      transform:translate(-50%,-50%);
+      width:0.8px;height:5px;
+      background:#3b82f6;
+    "></span>
+  </span>
+</button>`
       : '';
     const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
     const detailBtnHtml = `<button class="bookmark-detail-btn" data-id="${id}" title="查看详情">ℹ️</button>`;
