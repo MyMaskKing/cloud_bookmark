@@ -26,6 +26,25 @@ async function initDeveloperConsoleLogging() {
 
 initDeveloperConsoleLogging().catch(() => { });
 
+// 全局加载遮罩控制函数
+function showGlobalLoading(message = '正在保存配置...') {
+  const overlay = document.getElementById('globalLoadingOverlay');
+  const textEl = document.getElementById('globalLoadingText');
+  if (textEl) {
+    textEl.textContent = message;
+  }
+  if (overlay) {
+    overlay.style.display = 'flex';
+  }
+}
+
+function hideGlobalLoading() {
+  const overlay = document.getElementById('globalLoadingOverlay');
+  if (overlay) {
+    overlay.style.display = 'none';
+  }
+}
+
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
 const sendMessageCompat = typeof sendMessage !== 'undefined' ? sendMessage : function (message, callback) {
   const runtime = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
@@ -419,14 +438,19 @@ configForm.addEventListener('submit', async (e) => {
     syncInterval: parseInt(syncIntervalInput.value) || 5
   };
 
+  showGlobalLoading('正在测试连接...');
+
   try {
     // 先测试连接，失败则中断保存
     const tester = new WebDAVClient(config);
     const result = await tester.testConnection();
     if (!result.success) {
+      hideGlobalLoading();
       showMessage('连接失败: ' + result.message, 'error');
       return;
     }
+
+    showGlobalLoading('正在保存配置...');
 
     // 判断是否是首次保存webdav配置
     const oldConfig = await storage.getConfig();
@@ -437,8 +461,10 @@ configForm.addEventListener('submit', async (e) => {
     await storage.clearSyncedScenes();
 
     if (isFirstTime) {
+      showGlobalLoading('正在归档本地书签并同步到云端...');
       showMessage('配置已保存，正在归档本地书签并同步到云端…', 'success');
     } else {
+      showGlobalLoading('正在清空本地数据并从云端重新同步...');
       showMessage('配置已保存，正在清空本地数据并从云端重新同步…', 'success');
     }
 
@@ -554,8 +580,11 @@ configForm.addEventListener('submit', async (e) => {
     } catch (error) {
       console.error('同步过程出错:', error);
       showMessage('配置已保存，但同步过程出现错误: ' + error.message, 'error');
+    } finally {
+      hideGlobalLoading();
     }
   } catch (error) {
+    hideGlobalLoading();
     showMessage('保存失败: ' + error.message, 'error');
   }
 });

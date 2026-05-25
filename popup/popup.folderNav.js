@@ -709,6 +709,9 @@
             <div class="bookmark-item-url">${escapeHtml(b.url || '')}</div>
             ${folderHtml}
           </div>
+          <div class="bookmark-item-actions">
+            <button class="bookmark-fav-btn" data-id="${id}" data-starred="true" title="取消收藏">★</button>
+          </div>
         </div>
       `;
       })
@@ -859,5 +862,8 @@
     setupScrollListener();
     setupBookmarkObserver();
   });
+
+  // 暴露 renderFavoriteDrawer 到全局，以便 popup.js 可以调用
+  window.renderFavoriteDrawer = renderFavoriteDrawer;
 })();
 

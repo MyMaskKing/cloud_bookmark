@@ -1124,6 +1124,11 @@ async function handleToggleFavorite(bookmarkId) {
     // 重新加载弹窗列表以反映最新收藏状态
     await loadBookmarksForPopup();
 
+    // 如果收藏抽屉是打开的，也刷新收藏抽屉
+    if (window.__favoriteDrawerOpen && typeof window.renderFavoriteDrawer === 'function') {
+      window.renderFavoriteDrawer();
+    }
+
     // 异步触发云端同步，确保收藏状态写入 WebDAV
     sendMessageCompat({
       action: 'syncToCloud',
