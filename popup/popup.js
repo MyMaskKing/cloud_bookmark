@@ -931,7 +931,7 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
         ? `<div class="bookmark-item-folder">所在：${escapeHtml(bookmark.folder)}</div>`
         : '';
       const locateBtn = showLocateButton
-        ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(b.folder || '')}" title="在管理页面中定位" style="background:none;border:none;padding:0;margin:0;cursor:pointer;">
+        ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(bookmark.folder || '')}" title="在管理页面中定位" style="background:none;border:none;padding:0;margin:0;cursor:pointer;">
   <span style="
     display:inline-flex;
     width:12px;
