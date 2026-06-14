@@ -1160,3 +1160,77 @@ body {
   cursor: not-allowed;
 }
 
+/* ========== 安全设置（本地密码锁） ========== */
+.lock-password-form {
+  background: #f8f9fb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 16px 12px;
+  margin-top: 12px;
+}
+
+.lock-password-form .form-group {
+  margin-bottom: 10px;
+}
+
+.lock-password-form .form-group:last-child {
+  margin-bottom: 0;
+}
+
+.lock-password-form .form-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.lock-password-error {
+  min-height: 18px;
+  font-size: 12px;
+  color: #dc2626;
+  margin-top: 4px;
+}
+
+.lock-enabled-actions {
+  margin-top: 12px;
+}
+
+.lock-enabled-actions .form-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lock-reset-btn {
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+.lock-reset-btn:hover {
+  background: #fef2f2;
+}
+
+.lock-notice {
+  margin-top: 14px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #78350f;
+  line-height: 1.6;
+}
+
+.lock-notice p {
+  margin: 0 0 6px;
+}
+
+.lock-notice ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.lock-notice li {
+  margin-bottom: 2px;
+}
+

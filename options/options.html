@@ -282,6 +282,63 @@
           <small>仅用于调试：开启后 toast 不会自动消失（直到下次提示覆盖）。不建议长期开启。</small>
         </div>
       </section>
+      <section class="section" id="securitySection">
+        <h2>安全设置</h2>
+        <div class="ui-settings-block">
+          <h3 class="section-subtitle">本地密码锁</h3>
+          <p class="section-desc">
+            开启后，<strong>每次浏览器关闭再打开本插件时</strong>都会要求输入密码。
+            只在本浏览器内生效，<strong>不会上传到云端</strong>，也不会随设置同步到其他设备。
+          </p>
+          <div class="form-group checkbox-row">
+            <label>
+              <input type="checkbox" id="enableLocalPasswordLock">
+              开启本地密码锁
+            </label>
+            <small>开启后，弹窗、书签管理页、设置页都会要求先解锁。</small>
+          </div>
+
+          <!-- 设置 / 修改密码表单 -->
+          <div id="lockPasswordForm" class="lock-password-form" style="display: none;">
+            <div class="form-group" id="lockOldPasswordRow" style="display: none;">
+              <label for="lockOldPassword">当前密码</label>
+              <input type="password" id="lockOldPassword" placeholder="请输入当前密码" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+              <label for="lockNewPassword">新密码</label>
+              <input type="password" id="lockNewPassword" placeholder="至少 4 位" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+              <label for="lockNewPasswordConfirm">确认新密码</label>
+              <input type="password" id="lockNewPasswordConfirm" placeholder="再次输入" autocomplete="new-password">
+            </div>
+            <div class="lock-password-error" id="lockPasswordError" aria-live="polite"></div>
+            <div class="form-actions">
+              <button type="button" id="lockPasswordCancelBtn" class="btn btn-secondary">取消</button>
+              <button type="button" id="lockPasswordSaveBtn" class="btn btn-primary">保存密码</button>
+            </div>
+          </div>
+
+          <!-- 已启用时的操作区 -->
+          <div id="lockEnabledActions" class="lock-enabled-actions" style="display: none;">
+            <div class="form-actions">
+              <button type="button" id="lockChangePasswordBtn" class="btn btn-secondary">修改密码</button>
+              <button type="button" id="lockResetBtn" class="btn btn-secondary lock-reset-btn">忘记密码？重置</button>
+            </div>
+          </div>
+
+          <div class="lock-notice" role="note">
+            <p><strong>关于此密码：</strong></p>
+            <ul>
+              <li>密码仅以哈希形式保存在<strong>当前浏览器本地</strong>，<strong>不会上传到 WebDAV 云端</strong>，也不会随设置同步到其他设备。</li>
+              <li>它只是「打开此扩展 UI」的访问开关，<strong>不会加密 WebDAV 服务器上的书签</strong>。</li>
+              <li>密码只对查看 / 管理 UI 生效，<strong>后台同步流程不受影响</strong>。</li>
+              <li>解锁有效期为「整个浏览器会话」——浏览器关闭后下次再打开需要重新输入。</li>
+              <li>若忘记密码，可点击「重置」清除本地密码与本地书签缓存（不影响云端数据），重新登录 WebDAV 即可拉回书签。</li>
+            </ul>
+          </div>
+        </div>
+      </section>
       <section class="section">
             <h2>开发者设置</h2>
             <div class="ui-settings-block">
@@ -406,6 +463,8 @@
   <script src="../utils/webdav.js"></script>
   <script src="../utils/utils.js"></script>
   <script src="../utils/bookmarkParser.js"></script>
+  <script src="../utils/lockManager.js"></script>
+  <script src="../utils/lockScreen.js"></script>
   <script src="options.js"></script>
   <script src="options.popupNavSettings.js"></script>
 </body>

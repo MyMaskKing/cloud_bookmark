@@ -843,6 +843,12 @@ function initSidebarResizer() {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+  // 本地密码锁：未解锁前阻塞主体渲染
+  if (typeof LockScreen !== 'undefined') {
+    try { await LockScreen.guard({ title: '云端书签', subtitle: '已启用本地密码锁，请输入密码后查看书签' }); }
+    catch (_) { /* 不阻塞 */ }
+  }
+
   await loadSettings(); // 先加载显示设置
   await loadCurrentScene();
   await loadScenes();

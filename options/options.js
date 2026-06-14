@@ -264,6 +264,25 @@ const browserBookmarkTimedSyncStartBtn = document.getElementById('browserBookmar
 
 // 页面加载时初始化
 document.addEventListener('DOMContentLoaded', async () => {
+  // 设置页锁屏：豁免安全设置区，避免用户被永久锁死无法重置
+  if (typeof LockScreen !== 'undefined' && typeof LockManager !== 'undefined') {
+    try {
+      await LockScreen.guard({
+        title: '云端书签 · 设置',
+        subtitle: '请先解锁后再修改设置；忘记密码可在锁屏上点击「重置」',
+        onForgotPassword: () => {
+          // 直接销毁锁屏，让用户在「安全设置」里点重置
+          LockScreen.destroy();
+          // 滚到「安全设置」section
+          const sec = document.getElementById('securitySection');
+          if (sec && sec.scrollIntoView) {
+            sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }
+      });
+    } catch (_) { /* 不阻塞主流程 */ }
+  }
+
   await loadConfig();
   await updateSyncStatus();
   await loadDevices();
@@ -275,6 +294,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadBrowserBookmarkSyncSceneSetting();
   await updateBrowserSyncInlineStatus();
   await loadDeveloperSettings();
+  await loadSecuritySettings();
 
   // 定时更新同步状态
   setInterval(() => {
@@ -3443,4 +3463,158 @@ try {
   });
 } catch (e) {
   // 忽略：部分环境可能不允许在此处注册
+}
+
+// ============================================================
+// 安全设置（本地密码锁）
+// ============================================================
+async function loadSecuritySettings() {
+  if (typeof LockManager === 'undefined') return;
+  const enableEl = document.getElementById('enableLocalPasswordLock');
+  if (!enableEl) return;
+
+  const refresh = async () => {
+    const enabled = await LockManager.isEnabled();
+    enableEl.checked = !!enabled;
+    document.getElementById('lockEnabledActions').style.display = enabled ? '' : 'none';
+    // 表单默认隐藏（每次操作时再展开）
+    closeLockPasswordForm();
+  };
+
+  // toggle 逻辑
+  enableEl.addEventListener('change', async () => {
+    const enabled = await LockManager.isEnabled();
+    if (enableEl.checked && !enabled) {
+      // 想要开启 → 弹出「设置新密码」表单
+      openLockPasswordForm({ mode: 'create' });
+      enableEl.checked = false; // 等保存成功后才真正打开
+    } else if (!enableEl.checked && enabled) {
+      // 想要关闭 → 要求当前密码
+      enableEl.checked = true; // 等校验后再变更
+      await disableLockFlow();
+    }
+  });
+
+  // 修改密码
+  const changeBtn = document.getElementById('lockChangePasswordBtn');
+  if (changeBtn) {
+    changeBtn.addEventListener('click', () => openLockPasswordForm({ mode: 'change' }));
+  }
+
+  // 重置
+  const resetBtn = document.getElementById('lockResetBtn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => resetLockFlow());
+  }
+
+  // 表单按钮
+  const cancelBtn = document.getElementById('lockPasswordCancelBtn');
+  if (cancelBtn) cancelBtn.addEventListener('click', () => closeLockPasswordForm());
+  const saveBtn = document.getElementById('lockPasswordSaveBtn');
+  if (saveBtn) saveBtn.addEventListener('click', () => submitLockPasswordForm(refresh));
+
+  await refresh();
+}
+
+let _lockFormMode = null; // 'create' | 'change'
+
+function openLockPasswordForm(opts) {
+  _lockFormMode = (opts && opts.mode) || 'create';
+  const form = document.getElementById('lockPasswordForm');
+  const oldRow = document.getElementById('lockOldPasswordRow');
+  const oldInput = document.getElementById('lockOldPassword');
+  const newInput = document.getElementById('lockNewPassword');
+  const confirmInput = document.getElementById('lockNewPasswordConfirm');
+  const errEl = document.getElementById('lockPasswordError');
+  if (!form) return;
+  oldRow.style.display = _lockFormMode === 'change' ? '' : 'none';
+  oldInput.value = '';
+  newInput.value = '';
+  confirmInput.value = '';
+  if (errEl) errEl.textContent = '';
+  form.style.display = '';
+  setTimeout(() => {
+    if (_lockFormMode === 'change') oldInput.focus();
+    else newInput.focus();
+  }, 0);
+}
+
+function closeLockPasswordForm() {
+  const form = document.getElementById('lockPasswordForm');
+  if (form) form.style.display = 'none';
+  _lockFormMode = null;
+  const errEl = document.getElementById('lockPasswordError');
+  if (errEl) errEl.textContent = '';
+}
+
+async function submitLockPasswordForm(refresh) {
+  const oldPwd = document.getElementById('lockOldPassword').value;
+  const newPwd = document.getElementById('lockNewPassword').value;
+  const confirmPwd = document.getElementById('lockNewPasswordConfirm').value;
+  const errEl = document.getElementById('lockPasswordError');
+  const setErr = (m) => { if (errEl) errEl.textContent = m || ''; };
+
+  setErr('');
+  const v = LockManager.validatePasswordStrength(newPwd);
+  if (!v.ok) { setErr(v.message); return; }
+  if (newPwd !== confirmPwd) { setErr('两次输入的密码不一致'); return; }
+
+  try {
+    if (_lockFormMode === 'create') {
+      await LockManager.setPassword(newPwd);
+      showMessage('已开启本地密码锁', 'success');
+    } else if (_lockFormMode === 'change') {
+      if (!oldPwd) { setErr('请输入当前密码'); return; }
+      await LockManager.changePassword(oldPwd, newPwd);
+      showMessage('密码已更新', 'success');
+    }
+    closeLockPasswordForm();
+    if (typeof refresh === 'function') await refresh();
+  } catch (e) {
+    setErr((e && e.message) || '操作失败');
+  }
+}
+
+async function disableLockFlow() {
+  const enableEl = document.getElementById('enableLocalPasswordLock');
+  const pwd = window.prompt('关闭本地密码锁需要验证当前密码，请输入：');
+  if (pwd === null) {
+    // 用户取消 → toggle 维持开启
+    if (enableEl) enableEl.checked = true;
+    return;
+  }
+  try {
+    await LockManager.disableWithPassword(pwd || '');
+    showMessage('已关闭本地密码锁', 'success');
+    if (enableEl) enableEl.checked = false;
+    document.getElementById('lockEnabledActions').style.display = 'none';
+  } catch (e) {
+    showMessage((e && e.message) || '关闭失败', 'error');
+    if (enableEl) enableEl.checked = true;
+  }
+}
+
+async function resetLockFlow() {
+  const ok = window.confirm(
+    '确定要重置本地密码吗？\n\n' +
+    '将会执行：\n' +
+    '• 清除本地密码（关闭密码锁）\n' +
+    '• 清除本地书签缓存（不影响 WebDAV 云端数据，重新登录即可拉回）\n' +
+    '• 浏览器原生书签保持不变\n\n' +
+    '此操作不可撤销。'
+  );
+  if (!ok) return;
+  try {
+    await LockManager.forceReset();
+    if (storage && typeof storage.clearLocalBookmarkCache === 'function') {
+      await storage.clearLocalBookmarkCache();
+    }
+    showMessage('已重置：密码与本地书签缓存已清除', 'success');
+    const enableEl = document.getElementById('enableLocalPasswordLock');
+    if (enableEl) enableEl.checked = false;
+    document.getElementById('lockEnabledActions').style.display = 'none';
+    closeLockPasswordForm();
+  } catch (e) {
+    showMessage((e && e.message) || '重置失败', 'error');
+  }
 }

@@ -371,6 +371,12 @@ window.addEventListener('unhandledrejection', (event) => {
 document.addEventListener('DOMContentLoaded', async () => {
   console.log('[弹窗] DOMContentLoaded 触发');
 
+  // 本地密码锁：未解锁前阻塞主体渲染，避免书签内容闪现
+  if (typeof LockScreen !== 'undefined') {
+    try { await LockScreen.guard({ title: '云端书签', subtitle: '已启用本地密码锁，请输入密码后查看书签' }); }
+    catch (_) { /* 不阻塞 */ }
+  }
+
   // 书签列表：文件夹行点击委托（单次绑定，与 innerHTML 刷新无关）
   if (bookmarkList) {
     bookmarkList.addEventListener('click', handlePopupFolderListClick);
