@@ -112,6 +112,39 @@ async function sendWithRetry(message, { retries = 2, delay = 300 } = {}) {
   }
 }
 
+// 云端同步必须遮罩并等待后台完成，避免本地保存后误报上传完成。
+async function runWithGlobalLoading(message, task) {
+  showGlobalLoading(message);
+  try {
+    return await task();
+  } finally {
+    hideGlobalLoading();
+  }
+}
+
+// 统一设置同步的响应校验，确保云端失败时不会被静默吞掉。
+async function syncSettingsToCloudWithLoading(message = '正在同步设置到云端...') {
+  const response = await runWithGlobalLoading(message, () => sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }));
+  if (!response || response.success === false) {
+    throw new Error(response?.error || '同步设置到云端失败');
+  }
+  return response;
+}
+
+// 设置页内的主动云端同步统一走遮罩，等待后台返回后再恢复操作。
+async function sendCloudActionWithLoading(message, payload, retryOptions = null) {
+  const response = await runWithGlobalLoading(message, () => {
+    if (retryOptions) {
+      return sendWithRetry(payload, retryOptions);
+    }
+    return sendMessageCompat(payload);
+  });
+  if (!response || response.success === false) {
+    throw new Error(response?.error || '云端同步失败');
+  }
+  return response;
+}
+
 /**
  * 确认当前设备是否已经进入设备列表。
  */
@@ -809,7 +842,8 @@ syncNowBtn.addEventListener('click', async () => {
   syncNowBtn.textContent = '同步中...';
 
   try {
-    const response = await sendMessageCompat({ action: 'sync' });
+    // 立即同步会访问云端，必须显示遮罩并等待后台完成。
+    const response = await sendCloudActionWithLoading('正在从云端同步...', { action: 'sync' });
     if (response && response.success) {
       showMessage('同步成功', 'success');
       setTimeout(updateSyncStatus, 1000);
@@ -831,7 +865,8 @@ syncUploadBtn.addEventListener('click', async () => {
   syncUploadBtn.disabled = true;
   syncUploadBtn.textContent = '上传中...';
   try {
-    const response = await sendMessageCompat({ action: 'syncUpload' });
+    // 立即上传会写入云端，必须显示遮罩直到上传完成。
+    const response = await sendCloudActionWithLoading('正在上传到云端...', { action: 'syncUpload' });
     if (response && response.success) {
       showMessage('上传成功', 'success');
     } else {
@@ -1373,9 +1408,8 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
     if (hasPendingSync) {
       console.log('[失效网站移除] 开始同步到云端');
       try {
-        const response = await sendMessageCompat({
-          action: 'syncSettings'
-        });
+        // 失效网站忽略列表属于设置数据，关闭弹窗前需遮罩等待云端同步完成。
+        const response = await syncSettingsToCloudWithLoading('正在同步失效网站设置到云端...');
         if (response && response.success) {
           console.log('[失效网站移除] 同步到云端成功');
           hasPendingSync = false;
@@ -1597,7 +1631,8 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
 
   confirmBtn.onclick = async () => {
     try {
-      await sendMessageCompat({ action: 'sync', sceneId });
+      // 批量删除前需要先从云端拉取最新数据，必须遮罩等待完成。
+      await sendCloudActionWithLoading('正在从云端同步场景数据...', { action: 'sync', sceneId });
       // 获取当前场景的所有书签（与云端对齐后再批量删除失效项）
       const data = await storage.getBookmarks(sceneId);
       const allBookmarks = data.bookmarks || [];
@@ -1620,7 +1655,8 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       await syncToCloud();
 
       // 同步书签到云端（须传 deletedIds，否则先拉云端合并会把已删失效书签再次并回）
-      await sendMessageCompat({
+      // 批量删除失效网站会写入云端，必须遮罩等待上传完成。
+      await sendCloudActionWithLoading('正在同步失效网站删除结果到云端...', {
         action: 'syncToCloud',
         bookmarks: remainingBookmarks,
         folders: remainingFolders,
@@ -1762,8 +1798,9 @@ expandFirstLevelCheckbox.addEventListener('change', async () => {
         lastExpandFirstLevel: !!popup.expandFirstLevel
       }
     });
-    showMessage('界面设置已保存（后台同步中）', 'success');
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+    // 界面设置会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步界面设置到云端...');
+    showMessage('界面设置已保存（已同步至云端）', 'success');
     // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
     try {
       if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1797,8 +1834,9 @@ if (showUpdateButtonCheckbox) {
       popup.showUpdateButton = showUpdateButtonCheckbox.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('弹窗画面更新按钮显示设置已保存（后台同步中）', 'success');
-      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 弹窗显示设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步弹窗设置到云端...');
+      showMessage('弹窗画面更新按钮显示设置已保存（已同步至云端）', 'success');
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1833,8 +1871,9 @@ if (showLocateButtonCheckbox) {
       popup.showLocateButton = showLocateButtonCheckbox.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('弹窗定位按钮显示设置已保存（后台同步中）', 'success');
-      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 弹窗显示设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步弹窗设置到云端...');
+      showMessage('弹窗定位按钮显示设置已保存（已同步至云端）', 'success');
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1869,8 +1908,9 @@ if (popupUseFavoriteInPopup) {
       popup.favoriteAsDelete = popupUseFavoriteInPopup.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('弹窗画面收藏按钮设置已保存（后台同步中）', 'success');
-      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 弹窗收藏按钮设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步弹窗设置到云端...');
+      showMessage('弹窗画面收藏按钮设置已保存（已同步至云端）', 'success');
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1902,8 +1942,9 @@ if (rememberScrollPosition) {
       popup.rememberScrollPosition = rememberScrollPosition.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('界面设置已保存（后台同步中）', 'success');
-      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 界面设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步界面设置到云端...');
+      showMessage('界面设置已保存（已同步至云端）', 'success');
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1941,8 +1982,9 @@ if (enableConsoleLogging) {
       const developerSettings = { ...(settings?.developerSettings || {}), enableConsoleLogging: enableConsoleLogging.checked };
       const newSettings = { ...(settings || {}), developerSettings };
       await storage.saveSettings(newSettings);
-      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('开发者设置同步失败:', e));
-      showMessage('开发者设置已保存（后台同步中）', 'success');
+      // 开发者设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步开发者设置到云端...');
+      showMessage('开发者设置已保存（已同步至云端）', 'success');
       
       sendMessageCompat({ 
         action: 'updateDeveloperSettings', 
@@ -2025,8 +2067,9 @@ async function syncFloatingBallPopupHeightToCloud() {
     };
     const newSettings = { ...(settings || {}), floatingBallPopup };
     await storage.saveSettings(newSettings);
-    showMessage('高度设置已保存，正在后台同步到云端...', 'success');
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('高度设置同步失败:', err));
+    // 高度设置同步到云端时必须显示遮罩并等待上传完成。
+    await syncSettingsToCloudWithLoading('正在同步高度设置到云端...');
+    showMessage('高度设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('同步失败: ' + e.message, 'error');
   }
@@ -2063,8 +2106,9 @@ async function syncIconPopupHeightToCloud() {
     };
     const newSettings = { ...(settings || {}), iconPopup };
     await storage.saveSettings(newSettings);
-    showMessage('高度设置已保存，正在后台同步到云端...', 'success');
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('高度设置同步失败:', err));
+    // 高度设置同步到云端时必须显示遮罩并等待上传完成。
+    await syncSettingsToCloudWithLoading('正在同步高度设置到云端...');
+    showMessage('高度设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('同步失败: ' + e.message, 'error');
   }
@@ -2105,8 +2149,9 @@ async function syncAddBookmarkPopupHeightToCloud() {
     };
     const newSettings = { ...(settings || {}), addBookmarkPopup };
     await storage.saveSettings(newSettings);
-    showMessage('添加书签弹窗高度已保存，正在后台同步到云端...', 'success');
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('添加书签弹窗高度同步失败:', err));
+    // 添加书签弹窗高度同步到云端时必须显示遮罩并等待上传完成。
+    await syncSettingsToCloudWithLoading('正在同步添加书签弹窗高度到云端...');
+    showMessage('添加书签弹窗高度已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('同步失败: ' + e.message, 'error');
   }
@@ -2903,9 +2948,9 @@ enableDeviceDetection.addEventListener('change', async () => {
     const deviceDetection = { enabled: enableDeviceDetection.checked };
     const newSettings = { ...(settings || {}), deviceDetection };
     await storage.saveSettings(newSettings);
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('设备检测设置同步失败:', e));
-    showMessage('设备检测设置已保存（后台同步中）', 'success');
+    // 设备检测设置会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步设备检测设置到云端...');
+    showMessage('设备检测设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
@@ -2942,8 +2987,8 @@ async function loadFloatingBallSetting() {
       };
       const newSettings = { ...(settings || {}), floatingBall: nextFloatingBall };
       await storage.saveSettings(newSettings);
-      // 通知所有标签页更新悬浮球状态（不阻塞）
-      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(() => {});
+      // 首次写入悬浮球默认设置时也会同步云端，需等待上传完成。
+      await syncSettingsToCloudWithLoading('正在同步悬浮球默认设置到云端...');
       const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
       try {
         const tabs = await tabsAPI.query({});
@@ -2985,8 +3030,8 @@ enableFloatingBall.addEventListener('change', async () => {
     floatingBallPositionGroup.style.display = visible ? 'block' : 'none';
     floatingBallActionGroup.style.display = visible ? 'block' : 'none';
 
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球启用同步失败:', e));
+    // 悬浮球启用状态会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步悬浮球设置到云端...');
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     try {
@@ -3014,8 +3059,8 @@ floatingBallDefaultPosition.addEventListener('change', async () => {
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
 
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球位置同步失败:', e));
+    // 悬浮球默认位置会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步悬浮球位置到云端...');
 
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
@@ -3044,8 +3089,8 @@ floatingBallClickAction.addEventListener('change', async () => {
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
 
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球点击行为同步失败:', e));
+    // 悬浮球点击行为会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步悬浮球点击行为到云端...');
 
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
@@ -3072,9 +3117,9 @@ enableSyncErrorNotification.addEventListener('change', async () => {
     const syncErrorNotification = { ...(settings?.syncErrorNotification || {}), enabled: enableSyncErrorNotification.checked };
     const newSettings = { ...(settings || {}), syncErrorNotification };
     await storage.saveSettings(newSettings);
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('同步失败通知同步失败:', e));
-    showMessage('同步失败通知设置已保存（后台同步中）', 'success');
+    // 同步失败通知设置会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步通知设置到云端...');
+    showMessage('同步失败通知设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
@@ -3088,8 +3133,9 @@ if (stickySyncErrorToast) {
       const syncErrorNotification = { ...(settings?.syncErrorNotification || {}), sticky: !!stickySyncErrorToast.checked };
       const newSettings = { ...(settings || {}), syncErrorNotification };
       await storage.saveSettings(newSettings);
-      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('调试设置同步失败:', e));
-      showMessage('调试设置已保存（后台同步中）', 'success');
+      // 调试设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步调试设置到云端...');
+      showMessage('调试设置已保存（已同步至云端）', 'success');
     } catch (e) {
       showMessage('保存失败: ' + (e?.message || e), 'error');
     }
@@ -3150,7 +3196,8 @@ async function loadScenes() {
           // WebDAV配置有效：每次切换场景都从云端拉取最新，避免本地缓存覆盖浏览器定时同步写云结果
           if (hasValidConfig) {
             try {
-              await sendMessageCompat({ action: 'sync', sceneId });
+              // 切换场景会从云端拉取最新书签，必须遮罩等待同步完成。
+              await sendCloudActionWithLoading('正在从云端同步场景数据...', { action: 'sync', sceneId });
             } catch (e) {
               // 忽略单次同步失败，继续后续逻辑
             }
@@ -3163,10 +3210,9 @@ async function loadScenes() {
               // 1. 立即更新本地并加载
               await storage.updateScene(sceneId, { name: newName.trim() });
               await loadScenes();
-              showMessage('场景已重命名', 'success');
-
-              // 2. 背景同步设置
-              sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('重命名场景同步失败:', err));
+              // 场景名称属于设置数据，必须遮罩等待云端同步完成。
+              await syncSettingsToCloudWithLoading('正在同步场景设置到云端...');
+              showMessage('场景已重命名（已同步至云端）', 'success');
             } catch (e) {
               showMessage('重命名失败: ' + e.message, 'error');
             }
@@ -3209,11 +3255,10 @@ async function loadScenes() {
             // 1. 立即执行本地删除并反馈 UI
             await storage.saveBookmarks(filteredBookmarks, filteredFolders);
             await loadScenes();
-            showMessage('场景已删除', 'success');
-
-            // 2. 后台通知删除云端文件和同步设置
-            sendMessageCompat({ action: 'deleteSceneBookmarks', sceneId }).catch(err => console.error('后台删除场景书签失败:', err));
-            sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('删除场景后同步设置失败:', err));
+            // 删除场景会同时删除云端书签文件并同步设置，必须等待两个云端动作完成。
+            await sendCloudActionWithLoading('正在删除云端场景书签...', { action: 'deleteSceneBookmarks', sceneId });
+            await syncSettingsToCloudWithLoading('正在同步场景设置到云端...');
+            showMessage('场景已删除（已同步至云端）', 'success');
           } catch (e) {
             showMessage('删除失败: ' + e.message, 'error');
           }
@@ -3340,10 +3385,9 @@ addSceneBtn.addEventListener('click', async () => {
       isDefault: false
     });
     await loadScenes();
-    showMessage('场景已添加', 'success');
-
-    // 2. 后台触发设置同步
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('添加场景后台同步失败:', err));
+    // 添加场景属于设置数据，必须遮罩等待云端同步完成。
+    await syncSettingsToCloudWithLoading('正在同步场景设置到云端...');
+    showMessage('场景已添加（已同步至云端）', 'success');
   } catch (e) {
     showMessage('添加失败: ' + e.message, 'error');
   }
