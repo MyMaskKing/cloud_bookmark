@@ -642,6 +642,7 @@ function mergeBrowserImportIntoCloudBookmarks(importedBookmarks, importFolders, 
   });
 
   const finalMerged = [...merged];
+  let addedCount = 0; // 统计新增书签数量
 
   importedUrlGroups.forEach((importedList, u) => {
     let cloudIndices = cloudUrlGroups.get(u) || [];
@@ -688,6 +689,7 @@ function mergeBrowserImportIntoCloudBookmarks(importedBookmarks, importFolders, 
           scene: targetSceneId,
           updatedAt: Date.now()
         });
+        addedCount++;
       }
     });
   });
@@ -703,7 +705,7 @@ function mergeBrowserImportIntoCloudBookmarks(importedBookmarks, importFolders, 
     ...importedFoldersRaw,
     ...bookmarkFoldersRaw
   ]);
-  return { merged: finalMerged, foldersForScene };
+  return { merged: finalMerged, foldersForScene, addedCount };
 }
 
 /**
@@ -3396,7 +3398,7 @@ async function syncBrowserBookmarksToCloud() {
     }));
 
     const cloudData = await webdav.readBookmarks(targetSceneId);
-    const { merged, foldersForScene } = mergeBrowserImportIntoCloudBookmarks(
+    const { merged, foldersForScene, addedCount } = mergeBrowserImportIntoCloudBookmarks(
       importedBookmarks,
       importResult?.folders || [],
       cloudData,
@@ -3407,7 +3409,7 @@ async function syncBrowserBookmarksToCloud() {
     await storage.saveBookmarks(merged, foldersForScene, targetSceneId);
 
     await storage.resetBrowserBookmarkSyncFailureState(signature);
-    return { success: true, targetSceneId, bookmarkCount: merged.length };
+    return { success: true, targetSceneId, bookmarkCount: merged.length, addedCount };
   } catch (error) {
     const msg = error?.message || String(error);
 
@@ -3820,7 +3822,7 @@ async function importBookmarkPayloadToSceneUnified(targetSceneId, importedBookma
     ? await new WebDAVClient(config).readBookmarks(targetSceneId)
     : await storage.getBookmarks(targetSceneId);
 
-  const { merged, foldersForScene } = mergeBrowserImportIntoCloudBookmarks(
+  const { merged, foldersForScene, addedCount } = mergeBrowserImportIntoCloudBookmarks(
     normalizedBookmarks,
     normalizedFolders,
     baseData,
@@ -3832,5 +3834,5 @@ async function importBookmarkPayloadToSceneUnified(targetSceneId, importedBookma
   }
 
   await storage.saveBookmarks(merged, foldersForScene, targetSceneId);
-  return { success: true, targetSceneId, bookmarkCount: merged.length };
+  return { success: true, targetSceneId, bookmarkCount: merged.length, addedCount };
 }

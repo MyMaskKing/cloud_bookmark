@@ -1070,7 +1070,12 @@ importBrowserBtn.addEventListener('click', async () => {
       const scenes = await storage.getScenes();
       const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
       const total = response.result.bookmarkCount || 0;
-      showMessage(`导入完成，已按“浏览器书签定时上传”同规则合并到"${sceneName}"场景，共 ${total} 条`, 'success');
+      const added = response.result.addedCount || 0;
+      if (added > 0) {
+        showMessage(`导入完成，已按“浏览器书签定时上传”同规则合并到"${sceneName}"场景(共 ${total} 条)，其中新增 ${added} 条`, 'success');
+      } else {
+        showMessage(`导入完成，已按“浏览器书签定时上传”同规则合并到"${sceneName}"场景(共 ${total} 条)，无新增书签`, 'success');
+      }
     } else {
       showMessage('浏览器书签导入功能未加载', 'error');
     }

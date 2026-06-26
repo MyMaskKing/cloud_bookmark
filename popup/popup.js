@@ -877,6 +877,10 @@ async function loadBookmarksForPopup(options = {}) {
           } else {
             // 无论恢复成功与否，都刷新一次“回到顶部”按钮显示状态（restoreScrollPosition 不触发 scroll 事件）
             refreshBackToTopVisibility();
+            // 额外最后检查一次：确保布局完全完成后再刷新一次，解决概率性按钮消失问题
+            setTimeout(() => {
+              refreshBackToTopVisibility();
+            }, 200);
           }
         });
       };
