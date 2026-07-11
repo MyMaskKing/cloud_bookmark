@@ -26,21 +26,92 @@ async function initDeveloperConsoleLogging() {
 initDeveloperConsoleLogging().catch(() => { });
 
 // 全局加载遮罩控制函数
-function showGlobalLoading(message = '正在执行…') {
+function ensureGlobalLoadingProgressElements() {
+  const overlay = document.getElementById('globalLoadingOverlay');
+  const textEl = overlay?.querySelector('.global-loading-text');
+  const container = textEl?.parentElement;
+  if (!container) return null;
+
+  let wrap = document.getElementById('globalLoadingProgressWrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'globalLoadingProgressWrap';
+    wrap.style.cssText = 'display: none; width: 220px; margin: 0 auto 15px;';
+    wrap.innerHTML = `
+      <div style="height: 6px; background: #e9ecef; border-radius: 999px; overflow: hidden;">
+        <div id="globalLoadingProgressBar" style="width: 0%; height: 100%; background: #4a90e2; transition: width 0.35s ease;"></div>
+      </div>
+      <div id="globalLoadingProgressText" style="margin-top: 6px; font-size: 12px; color: #666;"></div>
+    `;
+    textEl.insertAdjacentElement('afterend', wrap);
+  }
+  return wrap;
+}
+
+function setGlobalLoadingProgress(progress = null) {
+  const wrap = ensureGlobalLoadingProgressElements();
+  if (!wrap) return;
+
+  if (progress === null || progress === undefined) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  const percent = Math.max(0, Math.min(100, Number(progress) || 0));
+  const bar = document.getElementById('globalLoadingProgressBar');
+  const text = document.getElementById('globalLoadingProgressText');
+  if (bar) bar.style.width = `${percent}%`;
+  if (text) text.textContent = `${percent}%`;
+  wrap.style.display = 'block';
+}
+
+function showGlobalLoading(message = '正在执行…', progress = null) {
   const overlay = document.getElementById('globalLoadingOverlay');
   const textEl = overlay?.querySelector('.global-loading-text');
   if (textEl) {
     textEl.textContent = message;
   }
+  setGlobalLoadingProgress(progress);
   if (overlay) {
     overlay.style.display = 'flex';
   }
+}
+
+function updateGlobalLoading(message, progress = null) {
+  const overlay = document.getElementById('globalLoadingOverlay');
+  const textEl = overlay?.querySelector('.global-loading-text');
+  if (textEl && message) {
+    textEl.textContent = message;
+  }
+  setGlobalLoadingProgress(progress);
 }
 
 function hideGlobalLoading() {
   const overlay = document.getElementById('globalLoadingOverlay');
   if (overlay) {
     overlay.style.display = 'none';
+  }
+  setGlobalLoadingProgress(null);
+}
+
+async function runWithGlobalLoadingSteps(steps, task) {
+  const safeSteps = Array.isArray(steps) && steps.length ? steps : [{ message: '正在执行…' }];
+  const lastIndex = Math.max(safeSteps.length - 1, 1);
+  const setStep = (index) => {
+    const stepIndex = Math.max(0, Math.min(safeSteps.length - 1, index));
+    const step = safeSteps[stepIndex] || safeSteps[0];
+    const progress = Math.round((stepIndex / lastIndex) * 100);
+    updateGlobalLoading(step.message, progress);
+  };
+
+  showGlobalLoading(safeSteps[0].message, 0);
+  try {
+    const result = await task(setStep);
+    setStep(safeSteps.length - 1);
+    await new Promise(resolve => setTimeout(resolve, 450));
+    return result;
+  } finally {
+    hideGlobalLoading();
   }
 }
 
@@ -1116,10 +1187,11 @@ async function ensureSceneFreshFromCloudBeforeWritePopup() {
  * 切换当前场景下某个书签的收藏状态（弹窗内使用）
  */
 async function handleToggleFavorite(bookmarkId) {
-  showGlobalLoading('正在更新收藏状态…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWritePopup();
+    updateGlobalLoading('正在更新收藏状态…', 35);
     const data = await storage.getBookmarks(currentSceneId);
     const allBookmarks = data.bookmarks || [];
     const allFolders = data.folders || [];
@@ -1139,14 +1211,20 @@ async function handleToggleFavorite(bookmarkId) {
       window.renderFavoriteDrawer();
     }
 
-    // 异步触发云端同步，确保收藏状态写入 WebDAV
-    sendMessageCompat({
+    // 同步到云端，确保收藏状态写入 WebDAV
+    updateGlobalLoading('正在同步收藏状态到云端…', 75);
+    const syncResult = await sendMessageCompat({
       action: 'syncToCloud',
       bookmarks: allBookmarks,
       folders: allFolders,
       sceneId: currentSceneId,
       patch: { bookmarkUpserts: [bookmarkId] }
-    }).catch(err => console.error('[弹窗] 收藏状态后台同步失败:', err));
+    });
+    if (syncResult && syncResult.success === false) {
+      throw new Error(syncResult.error || '同步到云端失败');
+    }
+    updateGlobalLoading('更新完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
   } catch (e) {
     console.error('[弹窗] 切换收藏状态失败:', e);
   } finally {
@@ -2025,10 +2103,11 @@ async function handleDeleteBookmark(bookmarkId) {
     return;
   }
 
-  showGlobalLoading('正在删除…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWritePopup();
+    updateGlobalLoading('正在删除本地书签…', 35);
     // 获取当前场景的所有书签（已与云端对齐）
     const data = await storage.getBookmarks(currentSceneId);
     const allBookmarks = data.bookmarks || [];
@@ -2071,15 +2150,21 @@ async function handleDeleteBookmark(bookmarkId) {
     // 立即重新加载弹出页书签列表，展示删除后的结果
     await loadBookmarksForPopup();
 
-    // 2. 异步触发云端同步，不 await（deletedIds 用于从云端移除该书签）
-    sendMessageCompat({
+    // 2. 同步到云端（deletedIds 用于从云端移除该书签）
+    updateGlobalLoading('正在从云端删除书签…', 75);
+    const syncResult = await sendMessageCompat({
       action: 'syncToCloud',
       bookmarks: remainingBookmarks,
       folders: remainingFolders,
       sceneId: currentSceneId,
       deletedIds: [bookmarkId],
       patch: { bookmarkDeletes: [bookmarkId] }
-    }).catch(err => console.error('删除后的后台同步失败:', err));
+    });
+    if (syncResult && syncResult.success === false) {
+      throw new Error(syncResult.error || '同步到云端失败');
+    }
+    updateGlobalLoading('删除完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
 
   } catch (error) {
     console.error('删除书签失败:', error);
@@ -2493,7 +2578,7 @@ async function saveDetailField(bookmarkId, field, value) {
   if (overlay) {
     overlay.style.zIndex = '10001';
   }
-  showGlobalLoading('正在保存…');
+  showGlobalLoading('正在保存本地书签…', 20);
 
   try {
     const bookmarks = await storage.getBookmarks(currentSceneId);
@@ -2511,13 +2596,19 @@ async function saveDetailField(bookmarkId, field, value) {
     await storage.saveBookmarks(bookmarks.bookmarks, bookmarks.folders, currentSceneId);
 
     // 同步到云端
-    sendMessageCompat({
+    updateGlobalLoading('正在同步书签详情到云端…', 75);
+    const syncResult = await sendMessageCompat({
       action: 'syncToCloud',
       bookmarks: bookmarks.bookmarks,
       folders: bookmarks.folders,
       sceneId: currentSceneId,
       patch: { bookmarkUpserts: [bookmarkId] }
-    }).catch(err => console.error('保存后同步云端失败:', err));
+    });
+    if (syncResult && syncResult.success === false) {
+      throw new Error(syncResult.error || '同步到云端失败');
+    }
+    updateGlobalLoading('保存完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
   } catch (error) {
     console.error('保存详情字段失败:', error);
     alert('保存失败: ' + error.message);

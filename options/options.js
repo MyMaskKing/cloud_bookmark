@@ -27,15 +27,62 @@ async function initDeveloperConsoleLogging() {
 initDeveloperConsoleLogging().catch(() => { });
 
 // 全局加载遮罩控制函数
-function showGlobalLoading(message = '正在保存配置...') {
+function ensureGlobalLoadingProgressElements() {
+  const textEl = document.getElementById('globalLoadingText');
+  const container = textEl?.parentElement;
+  if (!container) return null;
+
+  let wrap = document.getElementById('globalLoadingProgressWrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'globalLoadingProgressWrap';
+    wrap.style.cssText = 'display: none; width: 220px; margin: 0 auto 15px;';
+    wrap.innerHTML = `
+      <div style="height: 6px; background: #e9ecef; border-radius: 999px; overflow: hidden;">
+        <div id="globalLoadingProgressBar" style="width: 0%; height: 100%; background: #4a90e2; transition: width 0.35s ease;"></div>
+      </div>
+      <div id="globalLoadingProgressText" style="margin-top: 6px; font-size: 12px; color: #666;"></div>
+    `;
+    textEl.insertAdjacentElement('afterend', wrap);
+  }
+  return wrap;
+}
+
+function setGlobalLoadingProgress(progress = null, detail = '') {
+  const wrap = ensureGlobalLoadingProgressElements();
+  if (!wrap) return;
+
+  if (progress === null || progress === undefined) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  const percent = Math.max(0, Math.min(100, Number(progress) || 0));
+  const bar = document.getElementById('globalLoadingProgressBar');
+  const text = document.getElementById('globalLoadingProgressText');
+  if (bar) bar.style.width = `${percent}%`;
+  if (text) text.textContent = detail || `${percent}%`;
+  wrap.style.display = 'block';
+}
+
+function showGlobalLoading(message = '正在保存配置...', progress = null, detail = '') {
   const overlay = document.getElementById('globalLoadingOverlay');
   const textEl = document.getElementById('globalLoadingText');
   if (textEl) {
     textEl.textContent = message;
   }
+  setGlobalLoadingProgress(progress, detail);
   if (overlay) {
     overlay.style.display = 'flex';
   }
+}
+
+function updateGlobalLoading(message, progress = null, detail = '') {
+  const textEl = document.getElementById('globalLoadingText');
+  if (textEl && message) {
+    textEl.textContent = message;
+  }
+  setGlobalLoadingProgress(progress, detail);
 }
 
 function hideGlobalLoading() {
@@ -43,6 +90,7 @@ function hideGlobalLoading() {
   if (overlay) {
     overlay.style.display = 'none';
   }
+  setGlobalLoadingProgress(null);
 }
 
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
@@ -117,6 +165,28 @@ async function runWithGlobalLoading(message, task) {
   showGlobalLoading(message);
   try {
     return await task();
+  } finally {
+    hideGlobalLoading();
+  }
+}
+
+async function runWithGlobalLoadingSteps(steps, task) {
+  const safeSteps = Array.isArray(steps) && steps.length ? steps : [{ message: '正在执行...' }];
+  const lastIndex = Math.max(safeSteps.length - 1, 1);
+  const setStep = (index) => {
+    const stepIndex = Math.max(0, Math.min(safeSteps.length - 1, index));
+    const step = safeSteps[stepIndex] || safeSteps[0];
+    const progress = Math.round((stepIndex / lastIndex) * 100);
+    const detail = step.detail || `${progress}%`;
+    updateGlobalLoading(step.message, progress, detail);
+  };
+
+  showGlobalLoading(safeSteps[0].message, 0, safeSteps[0].detail || '0%');
+  try {
+    const result = await task(setStep);
+    setStep(safeSteps.length - 1);
+    await new Promise(resolve => setTimeout(resolve, 450));
+    return result;
   } finally {
     hideGlobalLoading();
   }
@@ -414,21 +484,30 @@ async function loadBrowserBookmarkSyncSceneSetting() {
       browserBookmarkSyncSceneSelect.addEventListener('change', async () => {
         try {
           const nextSceneId = browserBookmarkSyncSceneSelect.value;
-          // 绑定场景时走后台统一更新，确保设备列表总是基于云端最新快照修改
-          const result = await sendWithRetry(
-            { action: 'updateBrowserBookmarkSyncBinding', sceneId: nextSceneId || '' },
-            { retries: 2, delay: 300 }
-          );
-          if (!result?.success) {
-            throw new Error(result?.error || '未知错误');
-          }
+          await runWithGlobalLoadingSteps([
+            { message: '正在准备同步定时上传场景...' },
+            { message: '正在写入云端设备设置...' },
+            { message: '正在刷新设备列表...' },
+            { message: '同步完成' }
+          ], async (setStep) => {
+            setStep(1);
+            // 绑定场景时走后台统一更新，确保设备列表总是基于云端最新快照修改
+            const result = await sendWithRetry(
+              { action: 'updateBrowserBookmarkSyncBinding', sceneId: nextSceneId || '' },
+              { retries: 2, delay: 300 }
+            );
+            if (!result?.success) {
+              throw new Error(result?.error || '未知错误');
+            }
 
-          // 更新设备列表展示的绑定信息（不阻塞同步逻辑）
-          loadDevices().catch(() => {});
-          // 用户显式调整同步场景：重置失败计数并重新计算 alarms
-          await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
-          await refreshBrowserTimedSyncStartButton();
-          updateBrowserSyncInlineStatus().catch(() => {});
+            // 用户显式调整同步场景：重置失败计数并重新计算 alarms
+            await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
+            await refreshBrowserTimedSyncStartButton();
+            updateBrowserSyncInlineStatus().catch(() => {});
+            setStep(2);
+            await loadDevices();
+            setStep(3);
+          });
           showMessage('浏览器书签定时上传场景已保存；需点击“开始定时上传”后才会按间隔上传', 'success');
         } catch (e) {
           showMessage('保存失败: ' + (e?.message || e), 'error');
@@ -447,19 +526,33 @@ async function loadBrowserBookmarkSyncSceneSetting() {
           }
 
           // 开始定时上传也交给后台处理，避免本地旧 devices 覆盖云端最新设备列表
-          const result = await sendWithRetry(
-            { action: 'startBrowserBookmarkTimedSync' },
-            { retries: 2, delay: 300 }
-          );
-          if (!result?.success) {
-            throw new Error(result?.error || '未知错误');
-          }
+          await runWithGlobalLoadingSteps([
+            { message: '正在开启浏览器书签定时上传...' },
+            { message: '正在写入云端设备设置...' },
+            { message: '正在执行本次浏览器书签上传...' },
+            { message: '正在刷新设备列表...' },
+            { message: '上传完成' }
+          ], async (setStep) => {
+            setStep(1);
+            const result = await sendWithRetry(
+              { action: 'startBrowserBookmarkTimedSync' },
+              { retries: 2, delay: 300 }
+            );
+            if (!result?.success) {
+              throw new Error(result?.error || '未知错误');
+            }
 
-          loadDevices().catch(() => {});
-          // 开始定时上传后立即执行一次，确保设备列表里的同步时间/错误信息刷新
-          await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
-          await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
-          await loadDevices();
+            // 开始定时上传后立即执行一次，确保设备列表里的同步时间/错误信息刷新
+            await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
+            setStep(2);
+            const syncResult = await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
+            if (!syncResult?.success || syncResult?.result?.success === false) {
+              throw new Error(syncResult?.error || syncResult?.result?.error || '浏览器书签上传失败');
+            }
+            setStep(3);
+            await loadDevices();
+            setStep(4);
+          });
           showMessage('已开始浏览器书签定时上传', 'success');
 
           await refreshBrowserTimedSyncStartButton();
@@ -491,7 +584,7 @@ configForm.addEventListener('submit', async (e) => {
     syncInterval: parseInt(syncIntervalInput.value) || 5
   };
 
-  showGlobalLoading('正在测试连接...');
+  showGlobalLoading('正在测试连接...', 0, '0%');
 
   try {
     // 先测试连接，失败则中断保存
@@ -503,7 +596,7 @@ configForm.addEventListener('submit', async (e) => {
       return;
     }
 
-    showGlobalLoading('正在保存配置...');
+    updateGlobalLoading('正在保存配置...', 15, '15%');
 
     // 判断是否是首次保存webdav配置
     const oldConfig = await storage.getConfig();
@@ -514,15 +607,16 @@ configForm.addEventListener('submit', async (e) => {
     await storage.clearSyncedScenes();
 
     if (isFirstTime) {
-      showGlobalLoading('正在归档本地书签并同步到云端...');
+      updateGlobalLoading('正在归档本地书签并同步到云端...', 30, '30%');
       showMessage('配置已保存，正在归档本地书签并同步到云端…', 'success');
     } else {
-      showGlobalLoading('正在清空本地数据并从云端重新同步...');
+      updateGlobalLoading('正在清空本地数据并从云端重新同步...', 30, '30%');
       showMessage('配置已保存，正在清空本地数据并从云端重新同步…', 'success');
     }
 
     try {
       // 通知后台更新同步任务
+      updateGlobalLoading('正在更新同步任务...', 40, '40%');
       await sendMessageCompat({
         action: 'configUpdated',
         config
@@ -533,6 +627,7 @@ configForm.addEventListener('submit', async (e) => {
 
       // 非首次保存时，先清空本地数据，避免旧数据被同步到新云端
       if (!isFirstTime) {
+        updateGlobalLoading('正在清空本地数据...', 50, '50%');
         console.log('[保存配置] 非首次保存，先清空本地数据');
         try {
           const clearResult = await sendMessageCompat({ action: 'clearLocalDataForReconfig' });
@@ -547,6 +642,7 @@ configForm.addEventListener('submit', async (e) => {
       // 从新云端同步设置（非首次保存时，本地数据已清空，会使用新云端的内容）
       // 非首次保存时，传递 forceClear: true，确保即使云端没有场景列表也清空本地场景列表
       try {
+        updateGlobalLoading('正在从云端同步设置...', 58, '58%');
         const syncSettingsResponse = await sendMessageCompat({
           action: 'syncSettingsFromCloud',
           forceClear: !isFirstTime  // 非首次保存时，强制清空场景列表
@@ -572,6 +668,7 @@ configForm.addEventListener('submit', async (e) => {
       }
 
       // 设备注册必须明确成功并进入设备列表后，才继续后续同步，避免手机 Firefox 首次保存时误继续流程。
+      updateGlobalLoading('正在注册当前设备...', 68, '68%');
       await ensureCurrentDeviceRegistered({
         attempts: 3,
         registerRetries: 3,
@@ -584,6 +681,7 @@ configForm.addEventListener('submit', async (e) => {
 
       const currentSceneId = await storage.getCurrentScene();
       try {
+        updateGlobalLoading('正在同步当前场景数据...', 78, '78%');
         // 保存配置时只注册设备，不进行设备检测（skipDeviceDetection: true）
         // 设备检测只在定时同步时进行
         // skipDeviceListSync: true - 保存配置刚注册完设备后，跳过本次设备列表拉取，避免移动端读到旧云端列表覆盖当前设备。
@@ -609,6 +707,7 @@ configForm.addEventListener('submit', async (e) => {
       }
 
       // 刷新设置页面显示云端同步的最新数据（此时 background 已经处理完注册并保存了 storage）
+      updateGlobalLoading('正在刷新设置画面...', 90, '90%');
       await loadScenes();
       await loadDevices();
       await loadUiSettings();
@@ -627,9 +726,12 @@ configForm.addEventListener('submit', async (e) => {
         rowAfter?.browserBookmarkSyncSceneId &&
         rowAfter.browserBookmarkTimedSyncStarted === true
       ) {
+        updateGlobalLoading('正在执行本次浏览器书签上传...', 96, '96%');
         await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
       }
       await updateBrowserSyncInlineStatus().catch(() => {});
+      updateGlobalLoading('保存完成', 100, '100%');
+      await new Promise(resolve => setTimeout(resolve, 450));
     } catch (error) {
       console.error('同步过程出错:', error);
       showMessage('配置已保存，但同步过程出现错误: ' + error.message, 'error');
@@ -842,8 +944,20 @@ syncNowBtn.addEventListener('click', async () => {
   syncNowBtn.textContent = '同步中...';
 
   try {
-    // 立即同步会访问云端，必须显示遮罩并等待后台完成。
-    const response = await sendCloudActionWithLoading('正在从云端同步...', { action: 'sync' });
+    const response = await runWithGlobalLoadingSteps([
+      { message: '正在准备从云端同步...' },
+      { message: '正在读取云端书签...' },
+      { message: '正在刷新本地数据...' },
+      { message: '同步完成' }
+    ], async (setStep) => {
+      setStep(1);
+      const result = await sendWithRetry({ action: 'sync' }, { retries: 2, delay: 300 });
+      if (!result?.success) {
+        throw new Error(result?.error || '同步失败');
+      }
+      setStep(2);
+      return result;
+    });
     if (response && response.success) {
       showMessage('同步成功', 'success');
       setTimeout(updateSyncStatus, 1000);
@@ -865,8 +979,20 @@ syncUploadBtn.addEventListener('click', async () => {
   syncUploadBtn.disabled = true;
   syncUploadBtn.textContent = '上传中...';
   try {
-    // 立即上传会写入云端，必须显示遮罩直到上传完成。
-    const response = await sendCloudActionWithLoading('正在上传到云端...', { action: 'syncUpload' });
+    const response = await runWithGlobalLoadingSteps([
+      { message: '正在准备上传书签...' },
+      { message: '正在写入云端书签...' },
+      { message: '正在更新同步状态...' },
+      { message: '上传完成' }
+    ], async (setStep) => {
+      setStep(1);
+      const result = await sendWithRetry({ action: 'syncUpload' }, { retries: 2, delay: 300 });
+      if (!result?.success) {
+        throw new Error(result?.error || '上传失败');
+      }
+      setStep(2);
+      return result;
+    });
     if (response && response.success) {
       showMessage('上传成功', 'success');
     } else {
@@ -1059,10 +1185,24 @@ importBrowserBtn.addEventListener('click', async () => {
     }
 
     if (typeof importFromBrowserBookmarks === 'function') {
-      const response = await sendWithRetry(
-        { action: 'importBrowserBookmarksToScene', sceneId: targetSceneId },
-        { retries: 2, delay: 300 }
-      );
+      const response = await runWithGlobalLoadingSteps([
+        { message: '正在准备导入浏览器书签...' },
+        { message: '正在读取并合并浏览器书签...' },
+        { message: '正在写入云端书签...' },
+        { message: '导入完成' }
+      ], async (setStep) => {
+        setStep(1);
+        const result = await sendWithRetry(
+          { action: 'importBrowserBookmarksToScene', sceneId: targetSceneId },
+          { retries: 2, delay: 300 }
+        );
+        setStep(2);
+        if (!result?.success || !result?.result?.success) {
+          throw new Error(result?.error || result?.result?.error || '导入失败');
+        }
+        setStep(3);
+        return result;
+      });
       if (!response?.success || !response?.result?.success) {
         throw new Error(response?.error || response?.result?.error || '导入失败');
       }
@@ -1636,8 +1776,19 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
 
   confirmBtn.onclick = async () => {
     try {
-      // 批量删除前需要先从云端拉取最新数据，必须遮罩等待完成。
-      await sendCloudActionWithLoading('正在从云端同步场景数据...', { action: 'sync', sceneId });
+      await runWithGlobalLoadingSteps([
+        { message: '正在从云端同步最新书签...' },
+        { message: '正在删除本地失效书签...' },
+        { message: '正在同步删除结果到云端...' },
+        { message: '删除完成' }
+      ], async (setStep) => {
+        // 批量删除前需要先从云端拉取最新数据，必须遮罩等待完成。
+        const syncResult = await sendWithRetry({ action: 'sync', sceneId }, { retries: 2, delay: 300 });
+        if (!syncResult?.success) {
+          throw new Error(syncResult?.error || '同步场景数据失败');
+        }
+        setStep(1);
+
       // 获取当前场景的所有书签（与云端对齐后再批量删除失效项）
       const data = await storage.getBookmarks(sceneId);
       const allBookmarks = data.bookmarks || [];
@@ -1660,14 +1811,18 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       await syncToCloud();
 
       // 同步书签到云端（须传 deletedIds，否则先拉云端合并会把已删失效书签再次并回）
-      // 批量删除失效网站会写入云端，必须遮罩等待上传完成。
-      await sendCloudActionWithLoading('正在同步失效网站删除结果到云端...', {
-        action: 'syncToCloud',
-        bookmarks: remainingBookmarks,
-        folders: remainingFolders,
-        sceneId,
-        deletedIds: Array.from(invalidIds),
-        patch: { bookmarkDeletes: Array.from(invalidIds) }
+        setStep(2);
+        const deleteResult = await sendWithRetry({
+          action: 'syncToCloud',
+          bookmarks: remainingBookmarks,
+          folders: remainingFolders,
+          sceneId,
+          deletedIds: Array.from(invalidIds),
+          patch: { bookmarkDeletes: Array.from(invalidIds) }
+        }, { retries: 2, delay: 300 });
+        if (!deleteResult?.success) {
+          throw new Error(deleteResult?.error || '同步删除结果失败');
+        }
       });
 
       cleanup();
@@ -2415,15 +2570,29 @@ importFile.addEventListener('change', async (e) => {
         scene: targetSceneId
       }));
 
-      const response = await sendWithRetry(
-        {
-          action: 'importBookmarkPayloadToScene',
-          sceneId: targetSceneId,
-          bookmarks: importedBookmarks,
-          folders: data.folders || []
-        },
-        { retries: 2, delay: 300 }
-      );
+      const response = await runWithGlobalLoadingSteps([
+        { message: '正在准备导入书签文件...' },
+        { message: '正在合并书签数据...' },
+        { message: '正在写入云端书签...' },
+        { message: '导入完成' }
+      ], async (setStep) => {
+        setStep(1);
+        const result = await sendWithRetry(
+          {
+            action: 'importBookmarkPayloadToScene',
+            sceneId: targetSceneId,
+            bookmarks: importedBookmarks,
+            folders: data.folders || []
+          },
+          { retries: 2, delay: 300 }
+        );
+        setStep(2);
+        if (!result?.success || !result?.result?.success) {
+          throw new Error(result?.error || result?.result?.error || '导入失败');
+        }
+        setStep(3);
+        return result;
+      });
       if (!response?.success || !response?.result?.success) {
         throw new Error(response?.error || response?.result?.error || '导入失败');
       }
@@ -2467,21 +2636,32 @@ async function adoptDeviceAsCurrent(targetId) {
     });
     if (!ok) return;
 
-    // 设备置换改为走后台统一处理，避免本地旧设备列表回写时覆盖云端最新数据
-    const adoptResult = await sendWithRetry(
-      { action: 'adoptDeviceAsCurrent', targetId },
-      { retries: 2, delay: 300 }
-    );
-    if (!adoptResult?.success) {
-      throw new Error(adoptResult?.error || '未知错误');
-    }
+    await runWithGlobalLoadingSteps([
+      { message: '正在准备置换当前设备...' },
+      { message: '正在写入云端设备列表...' },
+      { message: '正在刷新同步任务...' },
+      { message: '正在刷新设备列表...' },
+      { message: '置换完成' }
+    ], async (setStep) => {
+      setStep(1);
+      // 设备置换改为走后台统一处理，避免本地旧设备列表回写时覆盖云端最新数据
+      const adoptResult = await sendWithRetry(
+        { action: 'adoptDeviceAsCurrent', targetId },
+        { retries: 2, delay: 300 }
+      );
+      if (!adoptResult?.success) {
+        throw new Error(adoptResult?.error || '未知错误');
+      }
 
-    await sendWithRetry({ action: 'refreshSyncAlarms' }, { retries: 2, delay: 300 });
-
+      setStep(2);
+      await sendWithRetry({ action: 'refreshSyncAlarms' }, { retries: 2, delay: 300 });
+      setStep(3);
+      await loadDevices();
+      await loadBrowserBookmarkSyncSceneSetting();
+      updateBrowserSyncInlineStatus().catch(() => {});
+      setStep(4);
+    });
     showMessage('已切换为本机设备并同步到云端', 'success');
-    await loadDevices();
-    await loadBrowserBookmarkSyncSceneSetting();
-    updateBrowserSyncInlineStatus().catch(() => {});
   } catch (e) {
     showMessage('切换失败: ' + (e?.message || e), 'error');
   }
@@ -2754,16 +2934,12 @@ async function loadDevices() {
           const doubleCheck = confirm('这是当前设备，移除后本机会在下一次同步清空本地数据并停止同步，确定继续？');
           if (!doubleCheck) return;
         }
-        const removeResult = await sendWithRetry(
-          { action: 'removeDevice', deviceId: id },
-          { retries: 2, delay: 300 }
-        );
-        if (!removeResult?.success) {
-          showMessage('移除失败: ' + (removeResult?.error || '未知错误'), 'error');
-          return;
+        try {
+          await removeDeviceWithProgress(id);
+          showMessage('已移除设备', 'success');
+        } catch (error) {
+          showMessage('移除失败: ' + (error?.message || error), 'error');
         }
-        showMessage('已移除设备', 'success');
-        await loadDevices();
         return;
       });
     });
@@ -2779,6 +2955,28 @@ async function loadDevices() {
   } catch (error) {
     showMessage('加载设备失败: ' + error.message, 'error');
   }
+}
+
+async function removeDeviceWithProgress(deviceId) {
+  return runWithGlobalLoadingSteps([
+    { message: '正在准备移除设备...' },
+    { message: '正在写入云端设备列表...' },
+    { message: '正在刷新设备列表...' },
+    { message: '移除完成' }
+  ], async (setStep) => {
+    setStep(1);
+    const removeResult = await sendWithRetry(
+      { action: 'removeDevice', deviceId },
+      { retries: 2, delay: 300 }
+    );
+    if (!removeResult?.success) {
+      throw new Error(removeResult?.error || '未知错误');
+    }
+    setStep(2);
+    await loadDevices();
+    setStep(3);
+    return removeResult;
+  });
 }
 
 /**
@@ -2798,19 +2996,28 @@ async function editDeviceName(deviceId, currentCustomName, isCurrentDevice) {
   }
   
   try {
-    const result = await sendWithRetry(
-      { action: 'updateDeviceName', deviceId, deviceName: trimmedName },
-      { retries: 2, delay: 300 }
-    );
-    
-    if (!result?.success) {
-      throw new Error(result?.error || '更新失败');
-    }
+    await runWithGlobalLoadingSteps([
+      { message: '正在准备更新设备名称...' },
+      { message: '正在写入云端设备列表...' },
+      { message: '正在刷新设备列表...' },
+      { message: '更新完成' }
+    ], async (setStep) => {
+      setStep(1);
+      const result = await sendWithRetry(
+        { action: 'updateDeviceName', deviceId, deviceName: trimmedName },
+        { retries: 2, delay: 300 }
+      );
+      
+      if (!result?.success) {
+        throw new Error(result?.error || '更新失败');
+      }
+      
+      setStep(2);
+      await loadDevices();
+      setStep(3);
+    });
     
     showMessage('设备名称已更新', 'success');
-    
-    // 重新加载设备列表
-    await loadDevices();
   } catch (error) {
     showMessage('更新设备名称失败: ' + error.message, 'error');
   }
@@ -2899,16 +3106,12 @@ async function updateCurrentDeviceRow() {
           const doubleCheck = confirm('这是当前设备，移除后本机会在下一次同步清空本地数据并停止同步，确定继续？');
           if (!doubleCheck) return;
         }
-        const removeResult = await sendWithRetry(
-          { action: 'removeDevice', deviceId: id },
-          { retries: 2, delay: 300 }
-        );
-        if (!removeResult?.success) {
-          showMessage('移除失败: ' + (removeResult?.error || '未知错误'), 'error');
-          return;
+        try {
+          await removeDeviceWithProgress(id);
+          showMessage('已移除设备', 'success');
+        } catch (error) {
+          showMessage('移除失败: ' + (error?.message || error), 'error');
         }
-        showMessage('已移除设备', 'success');
-        await loadDevices();
         return;
       });
     }
@@ -2927,7 +3130,34 @@ async function updateCurrentDeviceRow() {
   }
 }
 
-refreshDevicesBtn.addEventListener('click', loadDevices);
+refreshDevicesBtn.addEventListener('click', async () => {
+  try {
+    await runWithGlobalLoadingSteps([
+      { message: '正在检查 WebDAV 配置...' },
+      { message: '正在从云端刷新设备列表...' },
+      { message: '正在更新设备列表画面...' },
+      { message: '刷新完成' }
+    ], async (setStep) => {
+      const config = await storage.getConfig();
+      if (config && config.serverUrl) {
+        setStep(1);
+        const response = await sendWithRetry(
+          { action: 'syncSettingsFromCloud' },
+          { retries: 2, delay: 300 }
+        );
+        if (!response || response.success === false) {
+          throw new Error(response?.error || '刷新设备列表失败');
+        }
+      }
+      setStep(2);
+      await loadDevices();
+      setStep(3);
+    });
+    showMessage('设备列表已刷新', 'success');
+  } catch (error) {
+    showMessage('刷新设备列表失败: ' + (error?.message || error), 'error');
+  }
+});
 
 /**
  * 加载设备检测设置
@@ -3201,8 +3431,19 @@ async function loadScenes() {
           // WebDAV配置有效：每次切换场景都从云端拉取最新，避免本地缓存覆盖浏览器定时同步写云结果
           if (hasValidConfig) {
             try {
-              // 切换场景会从云端拉取最新书签，必须遮罩等待同步完成。
-              await sendCloudActionWithLoading('正在从云端同步场景数据...', { action: 'sync', sceneId });
+              await runWithGlobalLoadingSteps([
+                { message: '正在准备切换场景...' },
+                { message: '正在从云端同步场景数据...' },
+                { message: '正在刷新场景列表...' },
+                { message: '切换完成' }
+              ], async (setStep) => {
+                setStep(1);
+                const syncResult = await sendWithRetry({ action: 'sync', sceneId }, { retries: 2, delay: 300 });
+                if (!syncResult?.success) {
+                  throw new Error(syncResult?.error || '同步场景数据失败');
+                }
+                setStep(2);
+              });
             } catch (e) {
               // 忽略单次同步失败，继续后续逻辑
             }
