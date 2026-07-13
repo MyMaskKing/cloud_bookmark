@@ -242,7 +242,9 @@ let popupSettings = {
   expandFirstLevel: false,
   rememberScrollPosition: true, // 默认启用滚动位置记忆
   showUpdateButton: false, // 默认不显示更新按钮，只显示删除按钮
-  favoriteAsDelete: false // 默认仍使用删除按钮
+  favoriteAsDelete: false, // 默认仍使用删除按钮
+  // 新增：收藏抽屉点击「所在文件夹」是否直接定位到具体书签（默认开启）
+  locateBookmarkOnFolderClick: true
 };
 let shouldApplyDefaultExpand = true;
 const runtimeErrors = [];
@@ -258,18 +260,26 @@ document.addEventListener('click', (e) => {
       return;
     }
 
-    // 收藏抽屉中“所属：xxx”点击 -> 目录跳转
+    // 收藏抽屉中“所属：xxx”点击 -> 根据设置决定行为（均作用在弹窗内）
     const favFolderLink = e.target.closest('[data-favorite-folder-link="1"]');
     if (favFolderLink) {
       e.preventDefault();
       e.stopPropagation();
       const folderPath = favFolderLink.dataset.folder || '';
-      if (folderPath && typeof window.scrollToFolderInPopup === 'function') {
-        window.scrollToFolderInPopup(folderPath);
-      }
+      const bookmarkId = favFolderLink.dataset.id || '';
+      // 需求：默认开启 → 定位到该书签在弹窗内的具体位置（滚动 + 高亮）
+      //       关闭 → 保留原逻辑，仅滚动到所属文件夹的位置
+      const shouldLocateBookmark = popupSettings && popupSettings.locateBookmarkOnFolderClick !== false;
       const favDrawer = document.getElementById('favoriteDrawer');
       if (favDrawer) {
         favDrawer.style.display = 'none';
+      }
+      if (shouldLocateBookmark && bookmarkId && typeof window.scrollToBookmarkInPopup === 'function') {
+        window.scrollToBookmarkInPopup(bookmarkId, folderPath);
+        return;
+      }
+      if (folderPath && typeof window.scrollToFolderInPopup === 'function') {
+        window.scrollToFolderInPopup(folderPath);
       }
       return;
     }
@@ -634,12 +644,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 async function loadCurrentScene() {
   try {
     currentSceneId = await storage.getCurrentScene();
+    // 暴露给独立 IIFE 模块（例如 popup.folderNav.js 中的收藏抽屉排序）使用
+    try { window.__currentSceneId = currentSceneId; } catch (_) { /* 忽略 */ }
     const scenes = await storage.getScenes();
     const currentScene = scenes.find(s => s.id === currentSceneId);
     currentSceneNameEl.textContent = currentScene ? currentScene.name : '未知';
   } catch (error) {
     console.error('加载当前场景失败:', error);
     currentSceneId = 'home';
+    try { window.__currentSceneId = currentSceneId; } catch (_) { /* 忽略 */ }
     currentSceneNameEl.textContent = '家庭';
   }
 }
@@ -692,6 +705,7 @@ async function loadScenes() {
 
             await storage.saveCurrentScene(sceneId);
             currentSceneId = sceneId; // 立即更新本地状态，避免后续逻辑读取旧值
+            try { window.__currentSceneId = currentSceneId; } catch (_) { /* 忽略 */ }
 
             // 检查 WebDAV 配置是否有效
             const config = await storage.getConfig();
@@ -1122,8 +1136,28 @@ async function loadPopupSettings() {
       rememberScrollPosition: settings && settings.popup && settings.popup.rememberScrollPosition !== false, // 默认true
       showUpdateButton: !!(settings && settings.popup && settings.popup.showUpdateButton), // 默认false
       favoriteAsDelete: !!(settings && settings.popup && settings.popup.favoriteAsDelete), // 默认false
-      showLocateButton: settings && settings.popup && settings.popup.showLocateButton !== false // 默认true
+      showLocateButton: settings && settings.popup && settings.popup.showLocateButton !== false, // 默认true
+      // 新增：读取「收藏抽屉点击所在文件夹是否定位到具体书签」，默认true
+      locateBookmarkOnFolderClick: !(settings && settings.popup && settings.popup.locateBookmarkOnFolderClick === false)
     };
+    // 新增：把 favoriteOrder（按场景分组的对象）暴露给 popup.folderNav.js 使用
+    // 结构：{ [sceneId]: string[] }；若历史数据为数组则一次性迁移到当前场景
+    try {
+      const raw = settings && settings.favoriteOrder;
+      if (Array.isArray(raw)) {
+        // 历史遗留数组格式：把它挂到当前场景（尽力而为）
+        const sid = currentSceneId || (await storage.getCurrentScene().catch(() => 'home')) || 'home';
+        const migrated = { [sid]: raw.slice() };
+        const migratedSettings = { ...(settings || {}), favoriteOrder: migrated };
+        try { await storage.saveSettings(migratedSettings); } catch (_) { /* 忽略回写失败 */ }
+        window.__favoriteOrderMap = migrated;
+        console.log('[弹窗] 已把旧的 favoriteOrder 数组迁移到当前场景:', sid);
+      } else if (raw && typeof raw === 'object') {
+        window.__favoriteOrderMap = raw;
+      } else {
+        window.__favoriteOrderMap = {};
+      }
+    } catch (_) { window.__favoriteOrderMap = {}; }
     // 应用设置到UI
     applyPopupSettings();
   } catch (e) {
@@ -1133,8 +1167,10 @@ async function loadPopupSettings() {
       rememberScrollPosition: true,
       showUpdateButton: false,
       favoriteAsDelete: false,
-      showLocateButton: true
+      showLocateButton: true,
+      locateBookmarkOnFolderClick: true
     };
+    window.__favoriteOrderMap = {};
     applyPopupSettings();
   }
 }

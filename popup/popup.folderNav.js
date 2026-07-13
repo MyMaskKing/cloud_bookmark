@@ -253,6 +253,70 @@
   // 暴露给其他脚本使用（例如收藏抽屉中“所属目录”跳转）
   window.scrollToFolderInPopup = scrollToFolder;
 
+  /**
+   * 需求：收藏抽屉中点击「所在：xxx」时定位到该书签在弹窗内的具体位置。
+   * 步骤：确保完整列表 → 展开目标文件夹（若有）→ 按 data-id 查找 .bookmark-item → 滚动到可视区并短暂高亮。
+   */
+  function scrollToBookmarkById(bookmarkId, folderPath) {
+    if (!bookmarkId) return;
+    const container = getScrollContainer();
+    if (!container) return;
+
+    const list = document.getElementById('bookmarkList');
+    const maxRetries = 3;
+
+    function highlightBookmarkItem(el) {
+      if (!el) return;
+      // 使用与文件夹展开一致的过渡节奏：短暂高亮 1.6s，随后自动移除
+      el.classList.add('bookmark-item-highlight');
+      setTimeout(() => {
+        el.classList.remove('bookmark-item-highlight');
+      }, 1600);
+    }
+
+    function locate() {
+      const targetEl = list && list.querySelector(
+        `.bookmark-item[data-id="${window.CSS && CSS.escape ? CSS.escape(bookmarkId) : bookmarkId}"]`
+      );
+      if (!targetEl) return null;
+      const containerRect = container.getBoundingClientRect();
+      const itemRect = targetEl.getBoundingClientRect();
+      const offset = itemRect.top - containerRect.top;
+      // 让书签接近容器上边偏中，视觉更居中
+      const targetTop = container.scrollTop + offset - (container.clientHeight / 3);
+      container.scrollTo({ top: Math.max(targetTop, 0), behavior: 'smooth' });
+      highlightBookmarkItem(targetEl);
+      return targetEl;
+    }
+
+    function attempt(tryIndex) {
+      ensureFullListBeforeScroll().then(() => {
+        // 有 folderPath：先展开父文件夹链，再查找书签
+        const doFind = () => {
+          const found = locate();
+          if (found) return;
+          if (tryIndex < maxRetries) {
+            const delay = 150 * (tryIndex + 1);
+            setTimeout(() => attempt(tryIndex + 1), delay);
+          } else {
+            console.warn('[弹窗导航] 多次重试后仍未定位到书签:', bookmarkId);
+          }
+        };
+        const normalized = safeNormalizePath(folderPath || '');
+        if (normalized) {
+          expandFolderIfNeeded(normalized).then(() => doFind());
+        } else {
+          // 未分类书签：无需展开
+          doFind();
+        }
+      });
+    }
+
+    attempt(0);
+  }
+
+  window.scrollToBookmarkInPopup = scrollToBookmarkById;
+
   function updateCurrentFolderSticky() {
     const sticky = document.getElementById('currentFolderSticky');
     const pathTextEl = document.getElementById('currentFolderPathText');
@@ -678,7 +742,27 @@
     if (!listEl) return;
 
     const source = Array.isArray(lastRenderedBookmarks) ? lastRenderedBookmarks : [];
-    const favorites = source.filter((b) => b && b.starred);
+    let favorites = source.filter((b) => b && b.starred);
+
+    // 需求：收藏抽屉按用户在「收藏排序」中保存的顺序显示；顺序按场景分组存储
+    // window.__favoriteOrderMap 结构：{ [sceneId]: string[] }
+    // 当前场景取不到时回退到默认 'home'，仍取不到则按原始顺序显示
+    try {
+      const map = (window.__favoriteOrderMap && typeof window.__favoriteOrderMap === 'object')
+        ? window.__favoriteOrderMap
+        : {};
+      const sceneId = window.__currentSceneId || 'home';
+      const order = Array.isArray(map[sceneId]) ? map[sceneId] : [];
+      if (order.length && favorites.length) {
+        const idIndex = new Map();
+        order.forEach((id, idx) => { idIndex.set(String(id), idx); });
+        favorites = favorites.slice().sort((a, b) => {
+          const ai = idIndex.has(String(a.id)) ? idIndex.get(String(a.id)) : Number.MAX_SAFE_INTEGER;
+          const bi = idIndex.has(String(b.id)) ? idIndex.get(String(b.id)) : Number.MAX_SAFE_INTEGER;
+          return ai - bi;
+        });
+      }
+    } catch (_) { /* 忽略排序异常，回退默认顺序 */ }
 
     if (!favorites.length) {
       listEl.innerHTML =
@@ -693,8 +777,9 @@
           typeof b.folder === 'string' && b.folder.trim()
             ? b.folder.trim()
             : '';
+        // 需求：为「所在：xxx」元素补充 data-id，供设置为「点击定位到具体书签」时使用
         const folderHtml = folder
-          ? `<div class="bookmark-item-folder" data-favorite-folder-link="1" data-folder="${escapeHtml(
+          ? `<div class="bookmark-item-folder" data-favorite-folder-link="1" data-id="${id}" data-folder="${escapeHtml(
               folder
             )}">所在：${escapeHtml(folder)}</div>`
           : '';

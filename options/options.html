@@ -150,6 +150,26 @@
               </label>
               <small>开启后，弹窗列表中的删除按钮会变为「★ 收藏」开关；删除请在完整书签管理页面中进行。</small>
             </div>
+            <!-- 需求：收藏抽屉中点击「所在：xxx」默认定位到该书签在弹窗内的具体位置 -->
+            <div class="form-group checkbox-row">
+              <label>
+                <input type="checkbox" id="locateBookmarkOnFolderClick">
+                收藏抽屉点击「所在文件夹」定位到该书签
+              </label>
+              <small>开启后（默认开启），点击收藏抽屉中的「所在：xxx」会在弹窗内滚动并高亮到该书签本身；关闭时按原逻辑，仅滚动到所属文件夹的位置。</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- 需求：收藏书签自定义排序入口（弹出对话框在页内排序） -->
+        <div class="ui-settings-block">
+          <h3 class="section-subtitle">收藏(排序)</h3>
+          <p class="section-desc">调整弹窗右侧「收藏抽屉」中书签的排列顺序；不影响书签本身的自定义排序。</p>
+          <div class="section-grid-2">
+            <div class="form-group">
+              <button type="button" id="openFavoriteSortBtn" class="btn btn-primary">打开收藏排序</button>
+              <small>点击后在当前页弹出对话框，通过拖拽或上下按钮调整「收藏抽屉」中书签的显示顺序；顺序按场景独立保存，保存后同步至云端。</small>
+            </div>
           </div>
         </div>
 
@@ -440,6 +460,31 @@
       <div class="scene-select-footer">
         <button id="sceneSelectCancel" class="btn btn-secondary">取消</button>
         <button id="sceneSelectConfirm" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 需求：收藏排序对话框（复用 scene-select-modal 样式风格） -->
+  <div id="favoriteSortModal" class="scene-select-modal" style="display: none;">
+    <div class="scene-select-dialog favorite-sort-dialog">
+      <div class="scene-select-header">
+        <h3>收藏书签排序</h3>
+        <button class="scene-select-close" id="favoriteSortClose" title="关闭">&times;</button>
+      </div>
+      <div class="scene-select-body">
+        <p class="scene-select-hint">
+          拖拽书签或点击右侧上下按钮调整顺序，保存后收藏抽屉将按此顺序显示。<br>
+          <span style="color:#6b7280;">收藏顺序按场景独立存储，此处调整仅影响下方标记的场景。</span><span id="favoriteSortSceneName" class="scene-tag"></span>
+        </p>
+        <ul id="favoriteSortList" class="favorite-sort-list" aria-label="收藏书签列表"></ul>
+        <div id="favoriteSortEmpty" class="favorite-sort-empty" style="display:none">
+          暂无收藏书签。请先在弹窗中将删除按钮切换为「★ 收藏」按钮，然后给常用书签加星。
+        </div>
+      </div>
+      <div class="scene-select-footer">
+        <button id="favoriteSortResetBtn" class="btn btn-secondary" title="清空自定义顺序，恢复默认">重置</button>
+        <button id="favoriteSortCancel" class="btn btn-secondary">取消</button>
+        <button id="favoriteSortSave" class="btn btn-primary">保存</button>
       </div>
     </div>
   </div>

@@ -317,6 +317,10 @@ const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const showUpdateButtonCheckbox = document.getElementById('showUpdateButton');
 const showLocateButtonCheckbox = document.getElementById('showLocateButton');
 const popupUseFavoriteInPopup = document.getElementById('popupUseFavoriteInPopup');
+// 新增：收藏抽屉点击「所在文件夹」定位到具体书签的开关
+const locateBookmarkOnFolderClickCheckbox = document.getElementById('locateBookmarkOnFolderClick');
+// 新增：进入收藏排序页按钮
+const openFavoriteSortBtn = document.getElementById('openFavoriteSortBtn');
 const enableFloatingBall = document.getElementById('enableFloatingBall');
 const floatingBallPositionGroup = document.getElementById('floatingBallPositionGroup');
 const floatingBallDefaultPosition = document.getElementById('floatingBallDefaultPosition');
@@ -1890,6 +1894,11 @@ async function loadUiSettings() {
     popupUseFavoriteInPopup.checked = !!popup.favoriteAsDelete;
   }
 
+  // 加载「收藏抽屉点击所在文件夹是否定位到具体书签」（默认开启）
+  if (locateBookmarkOnFolderClickCheckbox) {
+    locateBookmarkOnFolderClickCheckbox.checked = popup.locateBookmarkOnFolderClick !== false;
+  }
+
   // 加载同步失败通知开关（默认开启）
   const syncErrorNotification = settings?.syncErrorNotification || {};
   enableSyncErrorNotification.checked = syncErrorNotification.enabled !== false;
@@ -2091,6 +2100,333 @@ if (popupUseFavoriteInPopup) {
       showMessage('保存失败: ' + e.message, 'error');
     }
   });
+}
+
+// 新增：收藏抽屉点击「所在文件夹」是否定位到具体书签
+if (locateBookmarkOnFolderClickCheckbox) {
+  locateBookmarkOnFolderClickCheckbox.addEventListener('change', async () => {
+    try {
+      const settings = await storage.getSettings();
+      const popup = (settings && settings.popup) || {};
+      popup.locateBookmarkOnFolderClick = locateBookmarkOnFolderClickCheckbox.checked;
+      const newSettings = { ...(settings || {}), popup };
+      await storage.saveSettings(newSettings);
+      // 该设置随其他弹窗设置一起同步到云端
+      await syncSettingsToCloudWithLoading('正在同步弹窗设置到云端...');
+      showMessage('收藏抽屉定位方式设置已保存（已同步至云端）', 'success');
+      // 通知所有打开的弹窗更新设置
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => { });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            if (chrome.runtime.lastError) {
+              // 静默处理
+            }
+          });
+        }
+      } catch (e) {
+        // 忽略
+      }
+    } catch (e) {
+      showMessage('保存失败: ' + e.message, 'error');
+    }
+  });
+}
+
+// 新增：点击「打开收藏排序」按钮 → 弹出对话框在页内排序
+// 与场景选择对话框保持相同的模态样式；保存/重置走全局 loading 遮罩
+if (openFavoriteSortBtn) {
+  // 对话框内部状态（作用域仅限本模块）
+  let __favSortList = [];        // 当前对话框中的书签有序数组
+  let __favSortOriginalIds = []; // 打开对话框时的初始 id 顺序（用于「取消」时判断是否有未保存改动）
+  let __favSortDirty = false;
+  let __favSortDragFromIndex = -1;
+  let __favSortLastDropTarget = null;
+  // 需求：收藏顺序按场景独立存储；对话框打开时冻结当前场景，保存/重置只影响该场景
+  let __favSortSceneId = 'home';
+
+  const modalEl = document.getElementById('favoriteSortModal');
+  const listEl = document.getElementById('favoriteSortList');
+  const emptyEl = document.getElementById('favoriteSortEmpty');
+  const sceneNameEl = document.getElementById('favoriteSortSceneName');
+  const closeBtn = document.getElementById('favoriteSortClose');
+  const cancelBtn = document.getElementById('favoriteSortCancel');
+  const saveBtn = document.getElementById('favoriteSortSave');
+  const resetBtn = document.getElementById('favoriteSortResetBtn');
+
+  function favSortRender() {
+    if (!listEl) return;
+    if (!__favSortList.length) {
+      listEl.innerHTML = '';
+      if (emptyEl) emptyEl.style.display = 'block';
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+    listEl.innerHTML = __favSortList.map((b, idx) => {
+      const id = escapeHtmlSafe(b.id || '');
+      const folder = (b.folder && String(b.folder).trim()) ? String(b.folder).trim() : '';
+      const folderHtml = folder
+        ? `<span class="fs-folder" title="${escapeHtmlSafe(folder)}">${escapeHtmlSafe(folder)}</span>`
+        : '';
+      return `
+        <li class="favorite-sort-item" draggable="true" data-id="${id}" data-index="${idx}">
+          <span class="fs-handle" aria-hidden="true">☰</span>
+          <span class="fs-index">${idx + 1}</span>
+          <div class="fs-main">
+            <div class="fs-title" title="${escapeHtmlSafe(b.title || '')}">${escapeHtmlSafe(b.title || '无标题')}</div>
+            <div class="fs-url" title="${escapeHtmlSafe(b.url || '')}">${escapeHtmlSafe(b.url || '')}</div>
+          </div>
+          ${folderHtml}
+          <div class="fs-actions">
+            <button type="button" class="fs-move-btn" data-move="up" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+            <button type="button" class="fs-move-btn" data-move="down" title="下移" ${idx === __favSortList.length - 1 ? 'disabled' : ''}>↓</button>
+          </div>
+        </li>
+      `;
+    }).join('');
+  }
+
+  // 简易 HTML 转义（避免依赖 popup 的 escapeHtml；options.js 无同名函数）
+  function escapeHtmlSafe(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+  }
+
+  function favSortMoveItem(fromIndex, toIndex) {
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || fromIndex >= __favSortList.length) return;
+    if (toIndex < 0 || toIndex >= __favSortList.length) return;
+    const [it] = __favSortList.splice(fromIndex, 1);
+    __favSortList.splice(toIndex, 0, it);
+    __favSortDirty = true;
+    favSortRender();
+  }
+
+  function favSortIsDirty() {
+    if (__favSortDirty) return true;
+    const cur = __favSortList.map(b => String(b.id));
+    if (cur.length !== __favSortOriginalIds.length) return true;
+    for (let i = 0; i < cur.length; i++) {
+      if (cur[i] !== __favSortOriginalIds[i]) return true;
+    }
+    return false;
+  }
+
+  // 拖拽 & 上下移动 事件（对话框首次创建时绑定一次）
+  if (listEl && !listEl.dataset.bound) {
+    listEl.dataset.bound = '1';
+    listEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.fs-move-btn');
+      if (!btn) return;
+      const item = btn.closest('.favorite-sort-item');
+      if (!item) return;
+      const idx = parseInt(item.dataset.index, 10);
+      if (!Number.isFinite(idx)) return;
+      const dir = btn.dataset.move;
+      if (dir === 'up') favSortMoveItem(idx, idx - 1);
+      else if (dir === 'down') favSortMoveItem(idx, idx + 1);
+    });
+    listEl.addEventListener('dragstart', (e) => {
+      const item = e.target && e.target.closest ? e.target.closest('.favorite-sort-item') : null;
+      if (!item) return;
+      __favSortDragFromIndex = parseInt(item.dataset.index, 10);
+      item.classList.add('dragging');
+      try {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(__favSortDragFromIndex));
+      } catch (_) { /* Firefox 兼容 */ }
+    });
+    listEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const target = e.target && e.target.closest ? e.target.closest('.favorite-sort-item') : null;
+      if (!target) return;
+      if (__favSortLastDropTarget && __favSortLastDropTarget !== target) {
+        __favSortLastDropTarget.classList.remove('drop-target');
+      }
+      target.classList.add('drop-target');
+      __favSortLastDropTarget = target;
+      try { e.dataTransfer.dropEffect = 'move'; } catch (_) { /* 忽略 */ }
+    });
+    listEl.addEventListener('dragleave', (e) => {
+      const target = e.target && e.target.closest ? e.target.closest('.favorite-sort-item') : null;
+      if (target) target.classList.remove('drop-target');
+    });
+    listEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const target = e.target && e.target.closest ? e.target.closest('.favorite-sort-item') : null;
+      if (__favSortLastDropTarget) __favSortLastDropTarget.classList.remove('drop-target');
+      __favSortLastDropTarget = null;
+      if (!target || __favSortDragFromIndex < 0) return;
+      const toIndex = parseInt(target.dataset.index, 10);
+      if (!Number.isFinite(toIndex)) return;
+      favSortMoveItem(__favSortDragFromIndex, toIndex);
+      __favSortDragFromIndex = -1;
+    });
+    listEl.addEventListener('dragend', () => {
+      listEl.querySelectorAll('.favorite-sort-item.dragging').forEach(el => el.classList.remove('dragging'));
+      if (__favSortLastDropTarget) __favSortLastDropTarget.classList.remove('drop-target');
+      __favSortLastDropTarget = null;
+      __favSortDragFromIndex = -1;
+    });
+  }
+
+  function favSortHide() {
+    if (modalEl) modalEl.style.display = 'none';
+  }
+
+  async function favSortOpen() {
+    // 打开时展示 loading，从本地读取数据
+    showGlobalLoading('正在加载收藏书签...');
+    try {
+      let sceneId = 'home';
+      try { sceneId = await storage.getCurrentScene() || 'home'; } catch (_) { /* 忽略 */ }
+      __favSortSceneId = sceneId;
+      const data = await storage.getBookmarks(sceneId);
+      const bookmarks = (data && data.bookmarks) || [];
+      const settings = await storage.getSettings();
+      // 需求：favoriteOrder 按场景分组存储；结构 { [sceneId]: string[] }
+      // 一次性迁移：若历史数据为数组，则把它挂到当前场景并回写
+      const rawMap = settings && settings.favoriteOrder;
+      let orderMap;
+      if (Array.isArray(rawMap)) {
+        orderMap = { [sceneId]: rawMap.slice() };
+        try {
+          const migratedSettings = { ...(settings || {}), favoriteOrder: orderMap };
+          await storage.saveSettings(migratedSettings);
+          // 迁移后同步一次到云端，避免下次同步又拉回旧格式
+          try { await syncSettingsToCloudWithLoading('正在迁移旧的收藏顺序...'); } catch (_) { /* 忽略 */ }
+        } catch (_) { /* 忽略迁移失败 */ }
+      } else if (rawMap && typeof rawMap === 'object') {
+        orderMap = rawMap;
+      } else {
+        orderMap = {};
+      }
+      const savedOrder = Array.isArray(orderMap[sceneId]) ? orderMap[sceneId].slice() : [];
+      const favorites = bookmarks.filter(b => b && b.starred);
+
+      // 按 savedOrder 重排：order 内的排前，其余追加末尾
+      const idIndex = new Map();
+      savedOrder.forEach((id, idx) => { idIndex.set(String(id), idx); });
+      __favSortList = favorites.slice().sort((a, b) => {
+        const ai = idIndex.has(String(a.id)) ? idIndex.get(String(a.id)) : Number.MAX_SAFE_INTEGER;
+        const bi = idIndex.has(String(b.id)) ? idIndex.get(String(b.id)) : Number.MAX_SAFE_INTEGER;
+        return ai - bi;
+      });
+      __favSortOriginalIds = __favSortList.map(b => String(b.id));
+      __favSortDirty = false;
+
+      if (sceneNameEl) {
+        // 展示场景名，尽量显示可读名称
+        let displayName = sceneId;
+        try {
+          const scenes = await storage.getScenes();
+          const s = (scenes || []).find(x => x && x.id === sceneId);
+          if (s && s.name) displayName = s.name;
+        } catch (_) { /* 忽略 */ }
+        sceneNameEl.textContent = displayName ? '场景：' + displayName : '';
+      }
+      favSortRender();
+    } catch (e) {
+      showMessage('加载收藏书签失败：' + (e && e.message ? e.message : e), 'error');
+      hideGlobalLoading();
+      return;
+    }
+    hideGlobalLoading();
+    if (modalEl) modalEl.style.display = 'flex';
+  }
+
+  async function favSortSave() {
+    // 保存 + 同步到云端；全程 loading 遮罩
+    showGlobalLoading('正在保存收藏顺序...');
+    try {
+      const settings = await storage.getSettings();
+      const nextOrder = __favSortList.map(b => String(b.id)).filter(Boolean);
+      // 需求：按场景分组存储；结构 { [sceneId]: string[] }
+      const rawMap = settings && settings.favoriteOrder;
+      const currentMap = (rawMap && typeof rawMap === 'object' && !Array.isArray(rawMap)) ? rawMap : {};
+      const nextMap = { ...currentMap, [__favSortSceneId]: nextOrder };
+      const newSettings = { ...(settings || {}), favoriteOrder: nextMap };
+      await storage.saveSettings(newSettings);
+      // 顺序会随其他弹窗设置一起同步至云端
+      await syncSettingsToCloudWithLoading('正在同步收藏顺序到云端...');
+      __favSortOriginalIds = nextOrder.slice();
+      __favSortDirty = false;
+      // 通知打开的弹窗刷新设置（下次打开收藏抽屉即按新顺序显示）
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => { });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            if (chrome.runtime.lastError) { /* 静默 */ }
+          });
+        }
+      } catch (_) { /* 忽略 */ }
+      showMessage('收藏顺序已保存（已同步至云端）', 'success');
+      favSortHide();
+    } catch (e) {
+      showMessage('保存失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      hideGlobalLoading();
+    }
+  }
+
+  async function favSortReset() {
+    if (!confirm('确认重置当前场景的收藏顺序？将清空该场景的自定义顺序，其他场景不受影响。')) return;
+    showGlobalLoading('正在重置收藏顺序...');
+    try {
+      const settings = await storage.getSettings();
+      // 仅移除当前场景 key；其他场景保留
+      const rawMap = settings && settings.favoriteOrder;
+      const currentMap = (rawMap && typeof rawMap === 'object' && !Array.isArray(rawMap)) ? rawMap : {};
+      const nextMap = { ...currentMap };
+      delete nextMap[__favSortSceneId];
+      const next = { ...(settings || {}) };
+      if (Object.keys(nextMap).length === 0) {
+        // 整对象为空则一并删除 favoriteOrder 字段
+        delete next.favoriteOrder;
+      } else {
+        next.favoriteOrder = nextMap;
+      }
+      await storage.saveSettings(next);
+      await syncSettingsToCloudWithLoading('正在同步收藏顺序到云端...');
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => { });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            if (chrome.runtime.lastError) { /* 静默 */ }
+          });
+        }
+      } catch (_) { /* 忽略 */ }
+      showMessage('已重置当前场景的收藏顺序（已同步至云端）', 'success');
+      favSortHide();
+    } catch (e) {
+      showMessage('重置失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      hideGlobalLoading();
+    }
+  }
+
+  function favSortCancel() {
+    if (favSortIsDirty()) {
+      if (!confirm('有未保存的顺序改动，确认放弃并关闭？')) return;
+    }
+    favSortHide();
+  }
+
+  openFavoriteSortBtn.addEventListener('click', () => { favSortOpen(); });
+  if (closeBtn) closeBtn.addEventListener('click', favSortCancel);
+  if (cancelBtn) cancelBtn.addEventListener('click', favSortCancel);
+  if (saveBtn) saveBtn.addEventListener('click', favSortSave);
+  if (resetBtn) resetBtn.addEventListener('click', favSortReset);
+  // 点击遮罩背景关闭
+  if (modalEl) {
+    modalEl.addEventListener('click', (e) => {
+      if (e.target === modalEl) favSortCancel();
+    });
+  }
 }
 
 // 滚动条位置记忆设置
