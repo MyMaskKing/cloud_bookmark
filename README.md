@@ -6,7 +6,9 @@
 **详细图文说明**：[使用文档](https://www.10023456.xyz/%E6%B6%A8%E7%9F%A5%E8%AF%86/%E4%BA%91%E7%AB%AF%E4%B9%A6%E7%AD%BE%EF%BC%8C%E8%B6%85%E5%85%A8%E7%9A%84%E4%BD%BF%E7%94%A8%E6%96%87%E6%A1%A3/)
 
 ---
-
+# 下载
+[Edge](https://microsoftedge.microsoft.com/addons/detail/%E4%BA%91%E7%AB%AF%E4%B9%A6%E7%AD%BE/akkbjpdjmheaccanfaglnjgceollimjo)/[谷歌](https://chromewebstore.google.com/detail/%E4%BA%91%E7%AB%AF%E4%B9%A6%E7%AD%BE/eolpcloboppnedlbegfekflamiccnbaf)/[火狐](https://addons.mozilla.org/zh-CN/firefox/addon/%E4%BA%91%E7%AB%AF%E4%B9%A6%E7%AD%BE/)
+---
 ## ✨ 产品简介
 
 - **同步方式**：WebDAV 双向同步；可配置同步间隔，支持手动同步。
