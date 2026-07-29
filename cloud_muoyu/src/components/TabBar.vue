@@ -5,6 +5,7 @@ const store = useTabsStore();
 const emit = defineEmits<{
   (e: "switch", id: string): void;
   (e: "close", id: string): void;
+  (e: "contextmenu", ev: MouseEvent, id: string): void;
 }>();
 
 function onSwitch(id: string) {
@@ -14,6 +15,11 @@ function onClose(e: MouseEvent, id: string) {
   e.stopPropagation();
   emit("close", id);
 }
+function onCtx(e: MouseEvent, id: string) {
+  e.preventDefault();
+  e.stopPropagation();
+  emit("contextmenu", e, id);
+}
 </script>
 
 <template>
@@ -22,13 +28,17 @@ function onClose(e: MouseEvent, id: string) {
       v-for="t in store.tabs"
       :key="t.id"
       class="tab"
-      :class="{ active: store.activeId === t.id, pip: t.mode === 'pip' }"
+      :class="{ active: store.activeId === t.id, pip: t.mode !== 'inline' }"
       :title="t.url"
       @click="onSwitch(t.id)"
+      @contextmenu="onCtx($event, t.id)"
     >
       <span v-if="t.icon" class="ic">{{ t.icon }}</span>
       <span class="ti">{{ t.title }}</span>
-      <span v-if="t.mode === 'pip'" class="badge" title="正在画中画">⛶</span>
+      <span v-if="t.mode !== 'inline'" class="badge" :title="t.mode">
+        {{ t.mode === 'pip' ? '⛶' : t.mode === 'popout' ? '⧉' : '⛶' }}
+      </span>
+      <span class="more" @click="(e) => { e.stopPropagation(); onCtx(e, t.id); }" title="更多操作(菜单)">⋯</span>
       <span class="x" @click="(e) => onClose(e, t.id)" title="关闭">×</span>
     </button>
   </nav>
@@ -92,16 +102,23 @@ function onClose(e: MouseEvent, id: string) {
   color: #58a6ff;
   flex-shrink: 0;
 }
-.x {
+.more, .x {
   width: 16px;
   height: 16px;
   line-height: 14px;
   text-align: center;
   border-radius: 50%;
-  font-size: 13px;
+  font-size: 12px;
   color: #6e7681;
   flex-shrink: 0;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s, opacity 0.15s;
+  opacity: 0.55;
+}
+.tab:hover .more, .tab:hover .x, .tab.active .more, .tab.active .x { opacity: 1; }
+.more { font-size: 14px; letter-spacing: -1px; }
+.more:hover {
+  background: rgba(88, 166, 255, 0.2);
+  color: #58a6ff;
 }
 .x:hover {
   background: rgba(255, 100, 100, 0.25);

@@ -3,7 +3,8 @@ import { computed, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 
 export type PipRatio = "16:9" | "4:3" | "free";
-export type TabMode = "inline" | "pip";
+/** inline=嵌在主窗口；pip=画中画小窗；popout=独立可缩放窗口；fullscreen=应用内全屏 */
+export type TabMode = "inline" | "pip" | "popout" | "fullscreen";
 
 export interface Tab {
   id: string;

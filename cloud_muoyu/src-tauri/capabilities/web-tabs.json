@@ -1,15 +1,15 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "web-tabs",
-  "description": "网页承载子窗口最小权限:允许 opener 打开任意 http/https 外链(B站等站点内跳转必需)",
+  "description": "网页承载子窗口:允许 opener 打开任意外链;实际站内点击靠 init_script 改写为当前页跳转",
   "windows": ["web-tab-*", "web-tab"],
   "webviews": ["web-tab-*", "web-tab"],
   "permissions": [
     {
       "identifier": "opener:allow-open-url",
       "allow": [
-        { "url": "http://*" },
-        { "url": "https://*" }
+        { "url": "https://**" },
+        { "url": "http://**" }
       ]
     }
   ]

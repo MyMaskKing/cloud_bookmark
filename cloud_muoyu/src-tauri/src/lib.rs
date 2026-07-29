@@ -1,6 +1,7 @@
 // M1-M3: 单标签 WebView + 老板键 + 自动隐藏
 // M2:    多标签 + 画中画 PiP + 视频横屏一体化
 // M2 修复: capabilities 覆盖到 web-tab-* + opener scope 放开 http/https
+// M2 交互: popout 用系统标题栏可拖可关, close 事件切回 inline
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Mutex,
@@ -60,19 +61,16 @@ async fn open_web_tab(
     let main = app.get_webview_window("main").ok_or("main window missing")?;
     let parsed = WebviewUrl::External(url.parse().map_err(|e: url::ParseError| e.to_string())?);
 
-    // 关键:重写 window.open,让点击"新标签"跳转在当前 tab 内进行,而不是系统浏览器
-    // 这解决 B站/YouTube 等站点点击视频时 opener.open_url 被拒的问题
+    // 关键:重写 window.open,让点击"新标签"跳转在当前 tab 内进行
+    // 视频检测/自动横屏在下一轮通过 title 信号通道单独接入
     let init_script = r#"
         (function() {
           const nativeOpen = window.open;
           window.open = function(url, target, features) {
-            // target=_blank / _self / 空 / 命名窗口——一律当前页跳转
-            // 极少数场景(如 OAuth 弹窗)可能因此失效,后续按站点例外
             if (url) {
               try {
                 window.location.href = new URL(url, window.location.href).href;
               } catch (e) {
-                // URL 解析失败退回原生实现
                 return nativeOpen.call(window, url, target, features);
               }
               return window;
@@ -80,7 +78,6 @@ async fn open_web_tab(
             return nativeOpen.call(window, url, target, features);
           };
 
-          // 拦截 <a target="_blank"> 点击
           document.addEventListener('click', function(e) {
             const a = e.target && e.target.closest && e.target.closest('a[href]');
             if (a && a.target === '_blank' && a.href) {
@@ -103,6 +100,23 @@ async fn open_web_tab(
         .initialization_script(init_script)
         .build()
         .map_err(|e| e.to_string())?;
+
+    // popout 模式下用户按系统 ✕ 时,不销毁 tab 而是通知前端"回到摸鱼窗口"
+    let id_for_event = id.clone();
+    let app_for_event = app.clone();
+    let label_for_event = label.clone();
+    win.on_window_event(move |ev| {
+        if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+            // 判断当前是否 popout 状态:decorations 为 true = popout
+            // 简化:直接询问 label 有没有 decoration —— 无法直接查,退而求其次:
+            // 广播 close-requested 事件给主窗口,由主窗口决定"切回 inline"还是"真关"
+            api.prevent_close();
+            let _ = app_for_event.emit(
+                "web-tab-close-requested",
+                serde_json::json!({ "id": id_for_event.clone(), "label": label_for_event.clone() }),
+            );
+        }
+    });
 
     let _ = win.show();
     remember_tab(label);
@@ -140,6 +154,122 @@ async fn set_web_tab_visible(app: AppHandle, id: String, visible: bool) -> Resul
     if let Some(win) = app.get_webview_window(&tab_label(&id)) {
         if visible { win.show().map_err(|e| e.to_string())?; }
         else { win.hide().map_err(|e| e.to_string())?; }
+    }
+    Ok(())
+}
+
+// ────── 导航:后退 / 前进 / 刷新 ──────
+
+#[tauri::command]
+async fn web_tab_go_back(app: AppHandle, id: String) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(&tab_label(&id)) {
+        win.eval("window.history.back()").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn web_tab_go_forward(app: AppHandle, id: String) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(&tab_label(&id)) {
+        win.eval("window.history.forward()").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+async fn web_tab_reload(app: AppHandle, id: String) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(&tab_label(&id)) {
+        win.eval("window.location.reload()").map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 运行时切换 tab 是否可 resize(popout 独立窗口用)
+#[tauri::command]
+async fn set_web_tab_resizable(app: AppHandle, id: String, resizable: bool) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(&tab_label(&id)) {
+        win.set_resizable(resizable).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 切 popout 的窗口外观:是否显示系统标题栏、任务栏、置顶
+/// popout 需要:decorations=true + skip_taskbar=false → 可拖可关可任务栏切换
+/// inline 需要:decorations=false + skip_taskbar=true → 完全无边框贴在主窗口里
+#[tauri::command]
+async fn set_web_tab_chrome(
+    app: AppHandle,
+    id: String,
+    decorations: bool,
+    skip_taskbar: bool,
+    always_on_top: bool,
+    title: Option<String>,
+) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(&tab_label(&id)) {
+        win.set_decorations(decorations).map_err(|e| e.to_string())?;
+        win.set_skip_taskbar(skip_taskbar).map_err(|e| e.to_string())?;
+        win.set_always_on_top(always_on_top).map_err(|e| e.to_string())?;
+        if let Some(t) = title {
+            win.set_title(&t).map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+// ────── 右键菜单:独立 always_on_top 窗口,能盖住 web-tab ──────
+
+const CTX_MENU_LABEL: &str = "ctx-menu";
+
+/// 弹出独立右键菜单窗口
+/// - `data`:URL-encoded JSON 的菜单项数组
+/// - 尺寸由前端预算好传入
+#[tauri::command]
+async fn show_context_menu(
+    app: AppHandle,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    data: String,
+) -> Result<(), String> {
+    // 已存在的先关掉,避免重复
+    if let Some(old) = app.get_webview_window(CTX_MENU_LABEL) {
+        let _ = old.close();
+    }
+
+    // 用 query string 把菜单数据传给新窗口的前端
+    let url = format!("index.html?view=ctxmenu&data={data}");
+    let parsed = WebviewUrl::App(url.into());
+
+    let win = WebviewWindowBuilder::new(&app, CTX_MENU_LABEL, parsed)
+        .decorations(false)
+        .transparent(true)
+        .resizable(false)
+        .skip_taskbar(true)
+        .always_on_top(true)
+        .focused(true)
+        .inner_size(width, height)
+        .position(x, y)
+        .shadow(false)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    // 失焦自动关闭(点其它地方消失)
+    let win_close = win.clone();
+    win.on_window_event(move |ev| {
+        if let tauri::WindowEvent::Focused(false) = ev {
+            let _ = win_close.close();
+        }
+    });
+
+    Ok(())
+}
+
+/// 前端主动关闭菜单(选中项后调用)
+#[tauri::command]
+async fn hide_context_menu(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window(CTX_MENU_LABEL) {
+        let _ = win.close();
     }
     Ok(())
 }
@@ -334,8 +464,15 @@ pub fn run() {
             focus_web_tab,
             set_web_tab_opacity,
             set_all_web_tabs_opacity,
+            set_web_tab_resizable,
+            set_web_tab_chrome,
+            web_tab_go_back,
+            web_tab_go_forward,
+            web_tab_reload,
             enter_pip,
             exit_pip,
+            show_context_menu,
+            hide_context_menu,
             is_hidden,
             trigger_boss_key,
             update_boss_shortcut,
