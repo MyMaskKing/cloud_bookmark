@@ -5,21 +5,92 @@
 const storage = new StorageManager();
 
 // 全局加载遮罩控制函数
-function showGlobalLoading(message = '正在执行…') {
+function ensureGlobalLoadingProgressElements() {
+  const overlay = document.getElementById('globalLoadingOverlay');
+  const textEl = overlay?.querySelector('.global-loading-text');
+  const container = textEl?.parentElement;
+  if (!container) return null;
+
+  let wrap = document.getElementById('globalLoadingProgressWrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'globalLoadingProgressWrap';
+    wrap.style.cssText = 'display: none; width: 220px; margin: 0 auto 15px;';
+    wrap.innerHTML = `
+      <div style="height: 6px; background: #e9ecef; border-radius: 999px; overflow: hidden;">
+        <div id="globalLoadingProgressBar" style="width: 0%; height: 100%; background: #4a90e2; transition: width 0.35s ease;"></div>
+      </div>
+      <div id="globalLoadingProgressText" style="margin-top: 6px; font-size: 12px; color: #666;"></div>
+    `;
+    textEl.insertAdjacentElement('afterend', wrap);
+  }
+  return wrap;
+}
+
+function setGlobalLoadingProgress(progress = null) {
+  const wrap = ensureGlobalLoadingProgressElements();
+  if (!wrap) return;
+
+  if (progress === null || progress === undefined) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  const percent = Math.max(0, Math.min(100, Number(progress) || 0));
+  const bar = document.getElementById('globalLoadingProgressBar');
+  const text = document.getElementById('globalLoadingProgressText');
+  if (bar) bar.style.width = `${percent}%`;
+  if (text) text.textContent = `${percent}%`;
+  wrap.style.display = 'block';
+}
+
+function showGlobalLoading(message = '正在执行…', progress = null) {
   const overlay = document.getElementById('globalLoadingOverlay');
   const textEl = overlay?.querySelector('.global-loading-text');
   if (textEl) {
     textEl.textContent = message;
   }
+  setGlobalLoadingProgress(progress);
   if (overlay) {
     overlay.style.display = 'flex';
   }
+}
+
+function updateGlobalLoading(message, progress = null) {
+  const overlay = document.getElementById('globalLoadingOverlay');
+  const textEl = overlay?.querySelector('.global-loading-text');
+  if (textEl && message) {
+    textEl.textContent = message;
+  }
+  setGlobalLoadingProgress(progress);
 }
 
 function hideGlobalLoading() {
   const overlay = document.getElementById('globalLoadingOverlay');
   if (overlay) {
     overlay.style.display = 'none';
+  }
+  setGlobalLoadingProgress(null);
+}
+
+async function runWithGlobalLoadingSteps(steps, task) {
+  const safeSteps = Array.isArray(steps) && steps.length ? steps : [{ message: '正在执行…' }];
+  const lastIndex = Math.max(safeSteps.length - 1, 1);
+  const setStep = (index) => {
+    const stepIndex = Math.max(0, Math.min(safeSteps.length - 1, index));
+    const step = safeSteps[stepIndex] || safeSteps[0];
+    const progress = Math.round((stepIndex / lastIndex) * 100);
+    updateGlobalLoading(step.message, progress);
+  };
+
+  showGlobalLoading(safeSteps[0].message, 0);
+  try {
+    const result = await task(setStep);
+    setStep(safeSteps.length - 1);
+    await new Promise(resolve => setTimeout(resolve, 450));
+    return result;
+  } finally {
+    hideGlobalLoading();
   }
 }
 
@@ -843,6 +914,12 @@ function initSidebarResizer() {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+  // 本地密码锁：未解锁前阻塞主体渲染
+  if (typeof LockScreen !== 'undefined') {
+    try { await LockScreen.guard({ title: '云端书签', subtitle: '已启用本地密码锁，请输入密码后查看书签' }); }
+    catch (_) { /* 不阻塞 */ }
+  }
+
   await loadSettings(); // 先加载显示设置
   await loadCurrentScene();
   await loadScenes();
@@ -1314,16 +1391,35 @@ function setupEventListeners() {
       const source = e.dataTransfer.getData('text/plain');
       const target = row.dataset.folder;
       if (!source || !target || source === target) return;
-      reorderFolder(source, target);
-      // 文件夹排序后，书签也要跟着排序（按新的文件夹顺序）
-      currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
-      refreshFolderMetaOrderFromCurrent();
-      refreshBookmarkMetaOrderFromCurrent();
-      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-      scheduleOrderSync();
-      await loadBookmarks(); // 重新加载书签以显示新顺序
-      await loadFolders();
-      await loadTags();
+      showGlobalLoading('正在调整本地文件夹顺序…', 20);
+      try {
+        reorderFolder(source, target);
+        // 文件夹排序后，书签也要跟着排序（按新的文件夹顺序）
+        currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
+        refreshFolderMetaOrderFromCurrent();
+        refreshBookmarkMetaOrderFromCurrent();
+        await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+        updateGlobalLoading('正在同步文件夹顺序到云端…', 75);
+        await syncToCloud({
+          requireSuccess: true,
+          patch: {
+            folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : [],
+            bookmarkUpserts: (currentBookmarks || []).map((b) => b && b.id).filter(Boolean)
+          }
+        });
+        orderSyncPending = false;
+        updateGlobalLoading('正在刷新文件夹列表…', 90);
+        await loadBookmarks(); // 重新加载书签以显示新顺序
+        await loadFolders();
+        await loadTags();
+        updateGlobalLoading('文件夹排序完成', 100);
+        await new Promise(resolve => setTimeout(resolve, 450));
+      } catch (error) {
+        console.error('拖拽排序文件夹失败:', error);
+        alert('拖拽排序文件夹失败: ' + error.message);
+      } finally {
+        hideGlobalLoading();
+      }
     });
   }
 }
@@ -1981,10 +2077,11 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
  */
 async function renameFolderPath(oldPath, newPath) {
   // 显示全局加载遮罩
-  showGlobalLoading('正在重命名文件夹…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在重命名本地文件夹…', 35);
     const normOld = normalizeFolderPath(oldPath);
     const normNew = normalizeFolderPath(newPath);
     if (!normNew || normOld === normNew) return;
@@ -2060,6 +2157,7 @@ async function renameFolderPath(oldPath, newPath) {
 
     // 2. 等待上传到云端完成，避免用户立刻切场景时仍拉取旧文件导致「改名被还原」
     try {
+      updateGlobalLoading('正在同步文件夹变更到云端…', 75);
       const renamedBookmarkIds = currentBookmarks
         .filter((b) => {
           const bf = normalizeFolderPath(b && b.folder);
@@ -2084,10 +2182,12 @@ async function renameFolderPath(oldPath, newPath) {
           folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : []
         }
       });
+      updateGlobalLoading('正在刷新文件夹列表…', 90);
     } catch (err) {
       console.error('重命名后同步到云端失败:', err);
       const msg = err && err.message ? err.message : String(err);
       showToast(`文件夹已保存到本地，但同步到云端失败：${msg}`, { title: '同步失败', type: 'error', duration: 5000 });
+      throw err;
     }
 
     // 3. 刷新 UI
@@ -2167,10 +2267,11 @@ async function handleAddFolder() {
   if (!normalized) return;
 
   // 显示全局加载遮罩
-  showGlobalLoading('正在创建文件夹…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在创建本地文件夹…', 35);
     if (currentFolders.includes(normalized)) {
       alert('该文件夹已存在');
       return;
@@ -2182,7 +2283,7 @@ async function handleAddFolder() {
     refreshFolderMetaOrderFromCurrent();
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
-    // 2. 异步同步到云端（不仅同步当前文件夹，也包括其所有自动补齐的父级，确保云端路径树完整）
+    // 2. 同步到云端（不仅同步当前文件夹，也包括其所有自动补齐的父级，确保云端路径树完整）
     const folderUpserts = [];
     normalized.split('/').reduce((prev, curr) => {
       const p = prev ? `${prev}/${curr}` : curr;
@@ -2191,16 +2292,21 @@ async function handleAddFolder() {
       return p;
     }, '');
 
-    syncToCloud({
+    updateGlobalLoading('正在同步文件夹到云端…', 75);
+    await syncToCloud({
+      requireSuccess: true,
       patch: {
         folderUpserts,
         folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : []
       }
-    }).catch(err => console.error('新增文件夹后台同步失败:', err));
+    });
 
     // 3. 立即刷新 UI
+    updateGlobalLoading('正在刷新文件夹列表…', 90);
     await loadFolders();
     await loadTags();
+    updateGlobalLoading('文件夹创建完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
   } catch (error) {
     console.error('创建文件夹失败:', error);
     alert('创建文件夹失败: ' + error.message);
@@ -2215,10 +2321,11 @@ async function handleAddFolder() {
  */
 async function deleteFolderPath(folderPath) {
   // 显示全局加载遮罩
-  showGlobalLoading('正在删除文件夹…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在删除本地文件夹…', 35);
     const normalizedRoot = normalizeFolderPath(folderPath);
     // 删除该文件夹及子文件夹下的书签
     currentBookmarks = currentBookmarks.filter(b => {
@@ -2239,20 +2346,22 @@ async function deleteFolderPath(folderPath) {
     refreshFolderMetaOrderFromCurrent();
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
-    // 2. 异步同步到云端（先拉云端再合并时，用 deletedFolderPaths 去掉该目录树在云端的书签与空文件夹）
+    // 2. 同步到云端（先拉云端再合并时，用 deletedFolderPaths 去掉该目录树在云端的书签与空文件夹）
     const deletedFolderIds = Object.keys((currentFolderMeta && currentFolderMeta.byId) ? currentFolderMeta.byId : {}).filter((id) => {
       const row = currentFolderMeta.byId[id];
       const p = normalizeFolderPath(row && row.path);
       return !!p && (p === normalizedRoot || p.startsWith(normalizedRoot + '/'));
     });
-    syncToCloud({ deletedFolderPaths: [normalizedRoot], patch: { folderDeletes: deletedFolderIds } }).catch(err =>
-      console.error('删除文件夹后台同步失败:', err)
-    );
+    updateGlobalLoading('正在从云端删除文件夹…', 75);
+    await syncToCloud({ deletedFolderPaths: [normalizedRoot], patch: { folderDeletes: deletedFolderIds }, requireSuccess: true });
 
     // 3. 刷新 UI
+    updateGlobalLoading('正在刷新文件夹列表…', 90);
     await loadBookmarks();
     await loadFolders();
     await loadTags();
+    updateGlobalLoading('文件夹删除完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
   } catch (error) {
     console.error('删除文件夹失败:', error);
     alert('删除文件夹失败: ' + error.message);
@@ -2332,32 +2441,58 @@ function openFolderMenu(anchorBtn, folderPath) {
   menu.querySelectorAll('.folder-menu-item').forEach(item => {
     item.addEventListener('click', async () => {
       const action = item.dataset.action;
+      menu.remove();
+      document.removeEventListener('click', closeMenu);
       if (action === 'add') {
         const name = prompt('请输入子文件夹名称', '');
         if (!name || !name.trim()) return;
         const newPath = normalizeFolderPath(folderPath ? `${folderPath}/${name}` : name);
         if (!newPath) return;
-        await ensureSceneFreshFromCloudBeforeWrite();
-        if (currentFolders.includes(newPath)) {
-          alert('该文件夹已存在');
-          return;
-        }
-        currentFolders = insertFolderPathSmart(currentFolders, newPath);
-        currentFolders = expandFolderPathsPreserveOrder(currentFolders);
-        // 1. 保存到本地
-        await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-
-        // 2. 异步同步到云端
-        syncToCloud({
-          patch: {
-            folderUpserts: [currentFolderIdByPath.get(newPath)].filter(Boolean),
-            folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : []
+        showGlobalLoading('正在从云端同步最新书签…', 0);
+        try {
+          await ensureSceneFreshFromCloudBeforeWrite();
+          updateGlobalLoading('正在创建本地文件夹…', 35);
+          if (currentFolders.includes(newPath)) {
+            alert('该文件夹已存在');
+            return;
           }
-        }).catch(err => console.error('菜单新增子文件夹后台同步失败:', err));
+          currentFolders = insertFolderPathSmart(currentFolders, newPath);
+          currentFolders = expandFolderPathsPreserveOrder(currentFolders);
+          // 1. 保存到本地
+          refreshBookmarkMetaOrderFromCurrent();
+          refreshFolderMetaOrderFromCurrent();
+          await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
-        // 3. 刷新 UI
-        await loadFolders();
-        await loadTags();
+          // 2. 同步到云端
+          const folderUpserts = [];
+          newPath.split('/').reduce((prev, curr) => {
+            const p = prev ? `${prev}/${curr}` : curr;
+            const fid = currentFolderIdByPath.get(p);
+            if (fid) folderUpserts.push(fid);
+            return p;
+          }, '');
+
+          updateGlobalLoading('正在同步文件夹到云端…', 75);
+          await syncToCloud({
+            requireSuccess: true,
+            patch: {
+              folderUpserts,
+              folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : []
+            }
+          });
+
+          // 3. 刷新 UI
+          updateGlobalLoading('正在刷新文件夹列表…', 90);
+          await loadFolders();
+          await loadTags();
+          updateGlobalLoading('文件夹创建完成', 100);
+          await new Promise(resolve => setTimeout(resolve, 450));
+        } catch (error) {
+          console.error('新增子文件夹失败:', error);
+          alert('新增子文件夹失败: ' + error.message);
+        } finally {
+          hideGlobalLoading();
+        }
       } else if (action === 'rename') {
         // 只重命名文件夹名称，不改变父级
         const lastSlashIndex = folderPath.lastIndexOf('/');
@@ -2370,9 +2505,6 @@ function openFolderMenu(anchorBtn, folderPath) {
         await loadTags();
       } else if (action === 'move') {
         // 移动到新的父级文件夹
-        menu.remove();
-        document.removeEventListener('click', closeMenu);
-
         // 获取当前文件夹的父级路径
         const lastSlashIndex = folderPath.lastIndexOf('/');
         const currentParentPath = lastSlashIndex >= 0 ? folderPath.substring(0, lastSlashIndex) : '';
@@ -2392,16 +2524,37 @@ function openFolderMenu(anchorBtn, folderPath) {
         return; // 已经关闭菜单，直接返回
       } else if (action === 'move-up' || action === 'move-down') {
         const dir = action === 'move-up' ? -1 : 1;
-        await ensureSceneFreshFromCloudBeforeWrite();
-        const moved = moveFolderSameLevel(folderPath, dir);
-        if (!moved) return;
-        // 文件夹排序后，书签也要跟着排序（按新的文件夹顺序）
-        currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
-        await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-        scheduleOrderSync();
-        await loadBookmarks(); // 重新加载书签以显示新顺序
-        await loadFolders();
-        await loadTags();
+        if (!canMoveFolderSameLevel(folderPath, dir, true)) return;
+        showGlobalLoading('正在从云端同步最新书签…', 0);
+        try {
+          await ensureSceneFreshFromCloudBeforeWrite();
+          updateGlobalLoading('正在调整本地文件夹顺序…', 35);
+          const moved = moveFolderSameLevel(folderPath, dir);
+          if (!moved) return;
+          // 文件夹排序后，书签也要跟着排序（按新的文件夹顺序）
+          currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
+          await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+          updateGlobalLoading('正在同步文件夹顺序到云端…', 75);
+          await syncToCloud({
+            requireSuccess: true,
+            patch: {
+              folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : [],
+              bookmarkUpserts: (currentBookmarks || []).map((b) => b && b.id).filter(Boolean)
+            }
+          });
+          orderSyncPending = false;
+          updateGlobalLoading('正在刷新文件夹列表…', 90);
+          await loadBookmarks(); // 重新加载书签以显示新顺序
+          await loadFolders();
+          await loadTags();
+          updateGlobalLoading('文件夹排序完成', 100);
+          await new Promise(resolve => setTimeout(resolve, 450));
+        } catch (error) {
+          console.error('调整文件夹顺序失败:', error);
+          alert('调整文件夹顺序失败: ' + error.message);
+        } finally {
+          hideGlobalLoading();
+        }
       } else if (action === 'delete') {
         const ok = confirm(`确定删除文件夹「${folderPath}」？该文件夹及其中书签将被删除。`);
         if (!ok) return;
@@ -2410,8 +2563,6 @@ function openFolderMenu(anchorBtn, folderPath) {
         await loadFolders();
         await loadTags();
       }
-      menu.remove();
-      document.removeEventListener('click', closeMenu);
     });
   });
 }
@@ -2536,6 +2687,9 @@ function moveFolderSameLevel(folderPath, direction) {
     direction,
     currentFoldersSnapshot: [...currentFolders]
   });
+  if (!canMoveFolderSameLevel(folderPath, direction, true)) {
+    return false;
+  }
   const parent = getParentFolder(folderPath);
 
   // 只把“同层级的根节点”当作兄弟（currentFolders 中的后代路径 parent 不等于该 parent，会被自动排除）
@@ -2580,6 +2734,35 @@ function moveFolderSameLevel(folderPath, direction) {
     newOrder: [...currentFolders]
   });
   return true;
+}
+
+function canMoveFolderSameLevel(folderPath, direction, showMessage = false) {
+  const parent = getParentFolder(folderPath);
+  const siblings = currentFolders.filter(f => getParentFolder(f) === parent);
+  const pos = siblings.indexOf(folderPath);
+  let message = '';
+
+  if (siblings.length <= 1) {
+    message = '同级目录少于2个，无法上移或下移';
+  } else if (pos === -1) {
+    message = '未找到同级目录位置，无法移动';
+  } else {
+    const targetPos = pos + direction;
+    if (targetPos < 0 || targetPos >= siblings.length) {
+      message = direction < 0 ? '已经是最上面的文件夹了' : '已经是最下面的文件夹了';
+    }
+  }
+
+  if (!message) return true;
+
+  if (showMessage && typeof showToast === 'function') {
+    showToast(message, {
+      title: '无法移动',
+      type: 'info',
+      duration: 1500
+    });
+  }
+  return false;
 }
 
 function getParentFolder(path) {
@@ -3394,10 +3577,11 @@ async function handleSubmit(e) {
   }
 
   // 显示全局加载遮罩
-  showGlobalLoading('正在保存…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在保存本地书签…', 30);
 
     const isNewBookmark = !editingBookmarkId;
 
@@ -3444,7 +3628,7 @@ async function handleSubmit(e) {
     refreshFolderMetaOrderFromCurrent();
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
-    // 2. 异步触发云端同步，不 await，不阻塞 UI
+    // 2. 同步到云端，loading 期间等待完成
     // 包含 folderOrderIds 确保云端文件夹顺序与本地一致，并能触发新文件夹的创建
     const patch = { 
       bookmarkUpserts: [bookmark.id],
@@ -3462,12 +3646,18 @@ async function handleSubmit(e) {
       });
       patch.folderUpserts = affectedFolderIds.length > 0 ? affectedFolderIds : [bookmark.folderId];
     }
-    syncToCloud({ patch }).catch(err => console.error('背景同步失败:', err));
+    updateGlobalLoading('正在同步书签到云端…', 70);
+    await syncToCloud({ patch, requireSuccess: true });
 
     // 3. 立即刷新本地 UI
+    updateGlobalLoading('正在刷新书签列表…', 90);
     await loadBookmarks();
     await loadFolders();
     await loadTags();
+    updateGlobalLoading('文件夹更新完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
+    updateGlobalLoading('保存完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
 
     // 4. 显示成功提示并快速后续处理
     showSuccessInModal(isNewBookmark ? '添加成功' : '保存成功');
@@ -3510,10 +3700,11 @@ async function handleSubmit(e) {
  */
 async function toggleStar(bookmarkId) {
   // 显示全局加载遮罩
-  showGlobalLoading('正在更新收藏状态…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在更新收藏状态…', 35);
     const refreshed = currentBookmarks.find(b => b.id === bookmarkId);
     if (!refreshed) return;
     refreshed.starred = !refreshed.starred;
@@ -3525,8 +3716,11 @@ async function toggleStar(bookmarkId) {
     // 2. 立即渲染界面
     renderBookmarks();
 
-    // 3. 异步触发云端同步
-    syncToCloud({ patch: { bookmarkUpserts: [bookmarkId] } }).catch(err => console.error('收藏状态后台同步失败:', err));
+    // 3. 同步到云端，loading 期间等待完成
+    updateGlobalLoading('正在同步收藏状态到云端…', 75);
+    await syncToCloud({ patch: { bookmarkUpserts: [bookmarkId] }, requireSuccess: true });
+    updateGlobalLoading('更新完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
   } catch (error) {
     console.error('更新失败:', error);
   } finally {
@@ -3544,10 +3738,11 @@ async function deleteBookmark(bookmarkId) {
   }
 
   // 显示全局加载遮罩
-  showGlobalLoading('正在删除…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在删除本地书签…', 35);
 
     currentBookmarks = currentBookmarks.filter(b => b.id !== bookmarkId);
 
@@ -3566,8 +3761,11 @@ async function deleteBookmark(bookmarkId) {
     await loadFolders();
     await loadTags();
 
-    // 2. 异步触发云端同步（传入 deletedIds 以从云端移除该条）
-    syncToCloud({ deletedIds: [bookmarkId], patch: { bookmarkDeletes: [bookmarkId] } }).catch(err => console.error('删除书签后台同步失败:', err));
+    // 2. 同步到云端（传入 deletedIds 以从云端移除该条）
+    updateGlobalLoading('正在从云端删除书签…', 75);
+    await syncToCloud({ deletedIds: [bookmarkId], patch: { bookmarkDeletes: [bookmarkId] }, requireSuccess: true });
+    updateGlobalLoading('删除完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
   } catch (error) {
     console.error('删除失败:', error);
     alert('删除失败: ' + error.message);
@@ -3858,20 +4056,26 @@ async function exportAsHtml() {
 async function handleSync() {
   syncBtn.disabled = true;
   syncBtn.textContent = '同步中...';
+  showGlobalLoading('正在从云端同步书签…', 0);
 
   try {
+    updateGlobalLoading('正在读取云端书签…', 40);
     const response = await sendMessageCompat({ action: 'sync' });
     if (response && response.success) {
+      updateGlobalLoading('正在刷新书签列表…', 85);
       await loadBookmarks();
       await loadFolders();
       await loadTags();
       await updateSyncErrorBanner();
+      updateGlobalLoading('同步完成', 100);
+      await new Promise(resolve => setTimeout(resolve, 450));
     } else {
       await updateSyncErrorBanner();
     }
   } catch (error) {
     await updateSyncErrorBanner();
   } finally {
+    hideGlobalLoading();
     syncBtn.disabled = false;
     syncBtn.textContent = '🔄';
   }
@@ -4004,10 +4208,11 @@ async function batchMoveBookmarks() {
   if (targetFolder === null) return; // 用户取消（null 表示取消，空字符串表示"未分类"）
 
   // 显示全局加载遮罩
-  showGlobalLoading('正在批量移动…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在批量移动本地书签…', 35);
 
     const bookmarksToMove = currentBookmarks.filter(b => selectedBookmarkIds.has(b.id));
 
@@ -4048,16 +4253,20 @@ async function batchMoveBookmarks() {
     await loadTags();
     renderBookmarks();
 
-    // 3. 异步触发云端同步
+    // 3. 同步到云端
     const movedIds = bookmarksToMove.map(b => b.id);
     const movedFolderIds = [...new Set(currentBookmarks.filter(b => movedIds.includes(b.id)).map(b => b.folderId).filter(Boolean))];
-    syncToCloud({
+    updateGlobalLoading('正在同步批量移动结果到云端…', 75);
+    await syncToCloud({
+      requireSuccess: true,
       patch: {
         bookmarkUpserts: movedIds,
         folderUpserts: movedFolderIds,
         folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : []
       }
-    }).catch(err => console.error('批量移动后台同步失败:', err));
+    });
+    updateGlobalLoading('批量移动完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
 
     alert(`已成功移动 ${bookmarksToMove.length} 个书签`);
   } catch (error) {
@@ -4086,10 +4295,11 @@ async function batchDeleteBookmarks() {
   }
 
   // 显示全局加载遮罩
-  showGlobalLoading('正在批量删除…');
+  showGlobalLoading('正在从云端同步最新书签…', 0);
 
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在批量删除本地书签…', 35);
 
     const deletedIdsForCloud = Array.from(selectedBookmarkIds);
 
@@ -4120,10 +4330,11 @@ async function batchDeleteBookmarks() {
     await loadTags();
     renderBookmarks();
 
-    // 3. 异步触发云端同步（须在 toggleBatchMode 之前拷贝 id，否则 Set 会被清空）
-    syncToCloud({ deletedIds: deletedIdsForCloud, patch: { bookmarkDeletes: deletedIdsForCloud } }).catch(err =>
-      console.error('批量删除后台同步失败:', err)
-    );
+    // 3. 同步到云端（须在 toggleBatchMode 之前拷贝 id，否则 Set 会被清空）
+    updateGlobalLoading('正在同步批量删除结果到云端…', 75);
+    await syncToCloud({ deletedIds: deletedIdsForCloud, patch: { bookmarkDeletes: deletedIdsForCloud }, requireSuccess: true });
+    updateGlobalLoading('批量删除完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
 
     alert(`已成功删除 ${count} 个书签`);
   } catch (error) {
@@ -4927,7 +5138,7 @@ async function saveDetailField(bookmarkId, field, value) {
   if (overlay) {
     overlay.style.zIndex = '10001';
   }
-  showGlobalLoading('正在保存…');
+  showGlobalLoading('正在保存本地书签…', 20);
 
   try {
     const bookmarksData = await storage.getBookmarks(currentSceneId);
@@ -4949,9 +5160,13 @@ async function saveDetailField(bookmarkId, field, value) {
     currentFolders = bookmarksData.folders;
 
     // 同步到云端
+    updateGlobalLoading('正在同步书签详情到云端…', 75);
     await syncToCloud({
+      requireSuccess: true,
       patch: { bookmarkUpserts: [bookmarkId] }
     });
+    updateGlobalLoading('保存完成', 100);
+    await new Promise(resolve => setTimeout(resolve, 450));
   } catch (error) {
     console.error('保存详情字段失败:', error);
     alert('保存失败: ' + error.message);

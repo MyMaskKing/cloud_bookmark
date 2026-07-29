@@ -27,15 +27,62 @@ async function initDeveloperConsoleLogging() {
 initDeveloperConsoleLogging().catch(() => { });
 
 // 全局加载遮罩控制函数
-function showGlobalLoading(message = '正在保存配置...') {
+function ensureGlobalLoadingProgressElements() {
+  const textEl = document.getElementById('globalLoadingText');
+  const container = textEl?.parentElement;
+  if (!container) return null;
+
+  let wrap = document.getElementById('globalLoadingProgressWrap');
+  if (!wrap) {
+    wrap = document.createElement('div');
+    wrap.id = 'globalLoadingProgressWrap';
+    wrap.style.cssText = 'display: none; width: 220px; margin: 0 auto 15px;';
+    wrap.innerHTML = `
+      <div style="height: 6px; background: #e9ecef; border-radius: 999px; overflow: hidden;">
+        <div id="globalLoadingProgressBar" style="width: 0%; height: 100%; background: #4a90e2; transition: width 0.35s ease;"></div>
+      </div>
+      <div id="globalLoadingProgressText" style="margin-top: 6px; font-size: 12px; color: #666;"></div>
+    `;
+    textEl.insertAdjacentElement('afterend', wrap);
+  }
+  return wrap;
+}
+
+function setGlobalLoadingProgress(progress = null, detail = '') {
+  const wrap = ensureGlobalLoadingProgressElements();
+  if (!wrap) return;
+
+  if (progress === null || progress === undefined) {
+    wrap.style.display = 'none';
+    return;
+  }
+
+  const percent = Math.max(0, Math.min(100, Number(progress) || 0));
+  const bar = document.getElementById('globalLoadingProgressBar');
+  const text = document.getElementById('globalLoadingProgressText');
+  if (bar) bar.style.width = `${percent}%`;
+  if (text) text.textContent = detail || `${percent}%`;
+  wrap.style.display = 'block';
+}
+
+function showGlobalLoading(message = '正在保存配置...', progress = null, detail = '') {
   const overlay = document.getElementById('globalLoadingOverlay');
   const textEl = document.getElementById('globalLoadingText');
   if (textEl) {
     textEl.textContent = message;
   }
+  setGlobalLoadingProgress(progress, detail);
   if (overlay) {
     overlay.style.display = 'flex';
   }
+}
+
+function updateGlobalLoading(message, progress = null, detail = '') {
+  const textEl = document.getElementById('globalLoadingText');
+  if (textEl && message) {
+    textEl.textContent = message;
+  }
+  setGlobalLoadingProgress(progress, detail);
 }
 
 function hideGlobalLoading() {
@@ -43,6 +90,7 @@ function hideGlobalLoading() {
   if (overlay) {
     overlay.style.display = 'none';
   }
+  setGlobalLoadingProgress(null);
 }
 
 // 兼容的消息发送函数（如果 utils.js 中的 sendMessage 不可用，则使用此实现）
@@ -110,6 +158,61 @@ async function sendWithRetry(message, { retries = 2, delay = 300 } = {}) {
     }
     await new Promise(r => setTimeout(r, delay * (i + 1)));
   }
+}
+
+// 云端同步必须遮罩并等待后台完成，避免本地保存后误报上传完成。
+async function runWithGlobalLoading(message, task) {
+  showGlobalLoading(message);
+  try {
+    return await task();
+  } finally {
+    hideGlobalLoading();
+  }
+}
+
+async function runWithGlobalLoadingSteps(steps, task) {
+  const safeSteps = Array.isArray(steps) && steps.length ? steps : [{ message: '正在执行...' }];
+  const lastIndex = Math.max(safeSteps.length - 1, 1);
+  const setStep = (index) => {
+    const stepIndex = Math.max(0, Math.min(safeSteps.length - 1, index));
+    const step = safeSteps[stepIndex] || safeSteps[0];
+    const progress = Math.round((stepIndex / lastIndex) * 100);
+    const detail = step.detail || `${progress}%`;
+    updateGlobalLoading(step.message, progress, detail);
+  };
+
+  showGlobalLoading(safeSteps[0].message, 0, safeSteps[0].detail || '0%');
+  try {
+    const result = await task(setStep);
+    setStep(safeSteps.length - 1);
+    await new Promise(resolve => setTimeout(resolve, 450));
+    return result;
+  } finally {
+    hideGlobalLoading();
+  }
+}
+
+// 统一设置同步的响应校验，确保云端失败时不会被静默吞掉。
+async function syncSettingsToCloudWithLoading(message = '正在同步设置到云端...') {
+  const response = await runWithGlobalLoading(message, () => sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }));
+  if (!response || response.success === false) {
+    throw new Error(response?.error || '同步设置到云端失败');
+  }
+  return response;
+}
+
+// 设置页内的主动云端同步统一走遮罩，等待后台返回后再恢复操作。
+async function sendCloudActionWithLoading(message, payload, retryOptions = null) {
+  const response = await runWithGlobalLoading(message, () => {
+    if (retryOptions) {
+      return sendWithRetry(payload, retryOptions);
+    }
+    return sendMessageCompat(payload);
+  });
+  if (!response || response.success === false) {
+    throw new Error(response?.error || '云端同步失败');
+  }
+  return response;
 }
 
 /**
@@ -214,6 +317,10 @@ const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const showUpdateButtonCheckbox = document.getElementById('showUpdateButton');
 const showLocateButtonCheckbox = document.getElementById('showLocateButton');
 const popupUseFavoriteInPopup = document.getElementById('popupUseFavoriteInPopup');
+// 新增：收藏抽屉点击「所在文件夹」定位到具体书签的开关
+const locateBookmarkOnFolderClickCheckbox = document.getElementById('locateBookmarkOnFolderClick');
+// 新增：进入收藏排序页按钮
+const openFavoriteSortBtn = document.getElementById('openFavoriteSortBtn');
 const enableFloatingBall = document.getElementById('enableFloatingBall');
 const floatingBallPositionGroup = document.getElementById('floatingBallPositionGroup');
 const floatingBallDefaultPosition = document.getElementById('floatingBallDefaultPosition');
@@ -264,6 +371,25 @@ const browserBookmarkTimedSyncStartBtn = document.getElementById('browserBookmar
 
 // 页面加载时初始化
 document.addEventListener('DOMContentLoaded', async () => {
+  // 设置页锁屏：豁免安全设置区，避免用户被永久锁死无法重置
+  if (typeof LockScreen !== 'undefined' && typeof LockManager !== 'undefined') {
+    try {
+      await LockScreen.guard({
+        title: '云端书签 · 设置',
+        subtitle: '请先解锁后再修改设置；忘记密码可在锁屏上点击「重置」',
+        onForgotPassword: () => {
+          // 直接销毁锁屏，让用户在「安全设置」里点重置
+          LockScreen.destroy();
+          // 滚到「安全设置」section
+          const sec = document.getElementById('securitySection');
+          if (sec && sec.scrollIntoView) {
+            sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        }
+      });
+    } catch (_) { /* 不阻塞主流程 */ }
+  }
+
   await loadConfig();
   await updateSyncStatus();
   await loadDevices();
@@ -275,6 +401,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await loadBrowserBookmarkSyncSceneSetting();
   await updateBrowserSyncInlineStatus();
   await loadDeveloperSettings();
+  await loadSecuritySettings();
 
   // 定时更新同步状态
   setInterval(() => {
@@ -361,21 +488,30 @@ async function loadBrowserBookmarkSyncSceneSetting() {
       browserBookmarkSyncSceneSelect.addEventListener('change', async () => {
         try {
           const nextSceneId = browserBookmarkSyncSceneSelect.value;
-          // 绑定场景时走后台统一更新，确保设备列表总是基于云端最新快照修改
-          const result = await sendWithRetry(
-            { action: 'updateBrowserBookmarkSyncBinding', sceneId: nextSceneId || '' },
-            { retries: 2, delay: 300 }
-          );
-          if (!result?.success) {
-            throw new Error(result?.error || '未知错误');
-          }
+          await runWithGlobalLoadingSteps([
+            { message: '正在准备同步定时上传场景...' },
+            { message: '正在写入云端设备设置...' },
+            { message: '正在刷新设备列表...' },
+            { message: '同步完成' }
+          ], async (setStep) => {
+            setStep(1);
+            // 绑定场景时走后台统一更新，确保设备列表总是基于云端最新快照修改
+            const result = await sendWithRetry(
+              { action: 'updateBrowserBookmarkSyncBinding', sceneId: nextSceneId || '' },
+              { retries: 2, delay: 300 }
+            );
+            if (!result?.success) {
+              throw new Error(result?.error || '未知错误');
+            }
 
-          // 更新设备列表展示的绑定信息（不阻塞同步逻辑）
-          loadDevices().catch(() => {});
-          // 用户显式调整同步场景：重置失败计数并重新计算 alarms
-          await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
-          await refreshBrowserTimedSyncStartButton();
-          updateBrowserSyncInlineStatus().catch(() => {});
+            // 用户显式调整同步场景：重置失败计数并重新计算 alarms
+            await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
+            await refreshBrowserTimedSyncStartButton();
+            updateBrowserSyncInlineStatus().catch(() => {});
+            setStep(2);
+            await loadDevices();
+            setStep(3);
+          });
           showMessage('浏览器书签定时上传场景已保存；需点击“开始定时上传”后才会按间隔上传', 'success');
         } catch (e) {
           showMessage('保存失败: ' + (e?.message || e), 'error');
@@ -394,19 +530,33 @@ async function loadBrowserBookmarkSyncSceneSetting() {
           }
 
           // 开始定时上传也交给后台处理，避免本地旧 devices 覆盖云端最新设备列表
-          const result = await sendWithRetry(
-            { action: 'startBrowserBookmarkTimedSync' },
-            { retries: 2, delay: 300 }
-          );
-          if (!result?.success) {
-            throw new Error(result?.error || '未知错误');
-          }
+          await runWithGlobalLoadingSteps([
+            { message: '正在开启浏览器书签定时上传...' },
+            { message: '正在写入云端设备设置...' },
+            { message: '正在执行本次浏览器书签上传...' },
+            { message: '正在刷新设备列表...' },
+            { message: '上传完成' }
+          ], async (setStep) => {
+            setStep(1);
+            const result = await sendWithRetry(
+              { action: 'startBrowserBookmarkTimedSync' },
+              { retries: 2, delay: 300 }
+            );
+            if (!result?.success) {
+              throw new Error(result?.error || '未知错误');
+            }
 
-          loadDevices().catch(() => {});
-          // 开始定时上传后立即执行一次，确保设备列表里的同步时间/错误信息刷新
-          await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
-          await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
-          await loadDevices();
+            // 开始定时上传后立即执行一次，确保设备列表里的同步时间/错误信息刷新
+            await sendMessageCompat({ action: 'resetBrowserBookmarkSyncFailure' });
+            setStep(2);
+            const syncResult = await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
+            if (!syncResult?.success || syncResult?.result?.success === false) {
+              throw new Error(syncResult?.error || syncResult?.result?.error || '浏览器书签上传失败');
+            }
+            setStep(3);
+            await loadDevices();
+            setStep(4);
+          });
           showMessage('已开始浏览器书签定时上传', 'success');
 
           await refreshBrowserTimedSyncStartButton();
@@ -438,7 +588,7 @@ configForm.addEventListener('submit', async (e) => {
     syncInterval: parseInt(syncIntervalInput.value) || 5
   };
 
-  showGlobalLoading('正在测试连接...');
+  showGlobalLoading('正在测试连接...', 0, '0%');
 
   try {
     // 先测试连接，失败则中断保存
@@ -450,7 +600,7 @@ configForm.addEventListener('submit', async (e) => {
       return;
     }
 
-    showGlobalLoading('正在保存配置...');
+    updateGlobalLoading('正在保存配置...', 15, '15%');
 
     // 判断是否是首次保存webdav配置
     const oldConfig = await storage.getConfig();
@@ -461,15 +611,16 @@ configForm.addEventListener('submit', async (e) => {
     await storage.clearSyncedScenes();
 
     if (isFirstTime) {
-      showGlobalLoading('正在归档本地书签并同步到云端...');
+      updateGlobalLoading('正在归档本地书签并同步到云端...', 30, '30%');
       showMessage('配置已保存，正在归档本地书签并同步到云端…', 'success');
     } else {
-      showGlobalLoading('正在清空本地数据并从云端重新同步...');
+      updateGlobalLoading('正在清空本地数据并从云端重新同步...', 30, '30%');
       showMessage('配置已保存，正在清空本地数据并从云端重新同步…', 'success');
     }
 
     try {
       // 通知后台更新同步任务
+      updateGlobalLoading('正在更新同步任务...', 40, '40%');
       await sendMessageCompat({
         action: 'configUpdated',
         config
@@ -480,6 +631,7 @@ configForm.addEventListener('submit', async (e) => {
 
       // 非首次保存时，先清空本地数据，避免旧数据被同步到新云端
       if (!isFirstTime) {
+        updateGlobalLoading('正在清空本地数据...', 50, '50%');
         console.log('[保存配置] 非首次保存，先清空本地数据');
         try {
           const clearResult = await sendMessageCompat({ action: 'clearLocalDataForReconfig' });
@@ -494,6 +646,7 @@ configForm.addEventListener('submit', async (e) => {
       // 从新云端同步设置（非首次保存时，本地数据已清空，会使用新云端的内容）
       // 非首次保存时，传递 forceClear: true，确保即使云端没有场景列表也清空本地场景列表
       try {
+        updateGlobalLoading('正在从云端同步设置...', 58, '58%');
         const syncSettingsResponse = await sendMessageCompat({
           action: 'syncSettingsFromCloud',
           forceClear: !isFirstTime  // 非首次保存时，强制清空场景列表
@@ -519,6 +672,7 @@ configForm.addEventListener('submit', async (e) => {
       }
 
       // 设备注册必须明确成功并进入设备列表后，才继续后续同步，避免手机 Firefox 首次保存时误继续流程。
+      updateGlobalLoading('正在注册当前设备...', 68, '68%');
       await ensureCurrentDeviceRegistered({
         attempts: 3,
         registerRetries: 3,
@@ -531,6 +685,7 @@ configForm.addEventListener('submit', async (e) => {
 
       const currentSceneId = await storage.getCurrentScene();
       try {
+        updateGlobalLoading('正在同步当前场景数据...', 78, '78%');
         // 保存配置时只注册设备，不进行设备检测（skipDeviceDetection: true）
         // 设备检测只在定时同步时进行
         // skipDeviceListSync: true - 保存配置刚注册完设备后，跳过本次设备列表拉取，避免移动端读到旧云端列表覆盖当前设备。
@@ -556,6 +711,7 @@ configForm.addEventListener('submit', async (e) => {
       }
 
       // 刷新设置页面显示云端同步的最新数据（此时 background 已经处理完注册并保存了 storage）
+      updateGlobalLoading('正在刷新设置画面...', 90, '90%');
       await loadScenes();
       await loadDevices();
       await loadUiSettings();
@@ -574,9 +730,12 @@ configForm.addEventListener('submit', async (e) => {
         rowAfter?.browserBookmarkSyncSceneId &&
         rowAfter.browserBookmarkTimedSyncStarted === true
       ) {
+        updateGlobalLoading('正在执行本次浏览器书签上传...', 96, '96%');
         await sendWithRetry({ action: 'syncBrowserBookmarksToCloud' }, { retries: 2, delay: 300 });
       }
       await updateBrowserSyncInlineStatus().catch(() => {});
+      updateGlobalLoading('保存完成', 100, '100%');
+      await new Promise(resolve => setTimeout(resolve, 450));
     } catch (error) {
       console.error('同步过程出错:', error);
       showMessage('配置已保存，但同步过程出现错误: ' + error.message, 'error');
@@ -789,7 +948,20 @@ syncNowBtn.addEventListener('click', async () => {
   syncNowBtn.textContent = '同步中...';
 
   try {
-    const response = await sendMessageCompat({ action: 'sync' });
+    const response = await runWithGlobalLoadingSteps([
+      { message: '正在准备从云端同步...' },
+      { message: '正在读取云端书签...' },
+      { message: '正在刷新本地数据...' },
+      { message: '同步完成' }
+    ], async (setStep) => {
+      setStep(1);
+      const result = await sendWithRetry({ action: 'sync' }, { retries: 2, delay: 300 });
+      if (!result?.success) {
+        throw new Error(result?.error || '同步失败');
+      }
+      setStep(2);
+      return result;
+    });
     if (response && response.success) {
       showMessage('同步成功', 'success');
       setTimeout(updateSyncStatus, 1000);
@@ -811,7 +983,20 @@ syncUploadBtn.addEventListener('click', async () => {
   syncUploadBtn.disabled = true;
   syncUploadBtn.textContent = '上传中...';
   try {
-    const response = await sendMessageCompat({ action: 'syncUpload' });
+    const response = await runWithGlobalLoadingSteps([
+      { message: '正在准备上传书签...' },
+      { message: '正在写入云端书签...' },
+      { message: '正在更新同步状态...' },
+      { message: '上传完成' }
+    ], async (setStep) => {
+      setStep(1);
+      const result = await sendWithRetry({ action: 'syncUpload' }, { retries: 2, delay: 300 });
+      if (!result?.success) {
+        throw new Error(result?.error || '上传失败');
+      }
+      setStep(2);
+      return result;
+    });
     if (response && response.success) {
       showMessage('上传成功', 'success');
     } else {
@@ -1004,10 +1189,24 @@ importBrowserBtn.addEventListener('click', async () => {
     }
 
     if (typeof importFromBrowserBookmarks === 'function') {
-      const response = await sendWithRetry(
-        { action: 'importBrowserBookmarksToScene', sceneId: targetSceneId },
-        { retries: 2, delay: 300 }
-      );
+      const response = await runWithGlobalLoadingSteps([
+        { message: '正在准备导入浏览器书签...' },
+        { message: '正在读取并合并浏览器书签...' },
+        { message: '正在写入云端书签...' },
+        { message: '导入完成' }
+      ], async (setStep) => {
+        setStep(1);
+        const result = await sendWithRetry(
+          { action: 'importBrowserBookmarksToScene', sceneId: targetSceneId },
+          { retries: 2, delay: 300 }
+        );
+        setStep(2);
+        if (!result?.success || !result?.result?.success) {
+          throw new Error(result?.error || result?.result?.error || '导入失败');
+        }
+        setStep(3);
+        return result;
+      });
       if (!response?.success || !response?.result?.success) {
         throw new Error(response?.error || response?.result?.error || '导入失败');
       }
@@ -1015,7 +1214,12 @@ importBrowserBtn.addEventListener('click', async () => {
       const scenes = await storage.getScenes();
       const sceneName = scenes.find(s => s.id === targetSceneId)?.name || targetSceneId;
       const total = response.result.bookmarkCount || 0;
-      showMessage(`导入完成，已按“浏览器书签定时上传”同规则合并到"${sceneName}"场景，共 ${total} 条`, 'success');
+      const added = response.result.addedCount || 0;
+      if (added > 0) {
+        showMessage(`导入完成，已按“浏览器书签定时上传”同规则合并到"${sceneName}"场景(共 ${total} 条)，其中新增 ${added} 条`, 'success');
+      } else {
+        showMessage(`导入完成，已按“浏览器书签定时上传”同规则合并到"${sceneName}"场景(共 ${total} 条)，无新增书签`, 'success');
+      }
     } else {
       showMessage('浏览器书签导入功能未加载', 'error');
     }
@@ -1353,9 +1557,8 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
     if (hasPendingSync) {
       console.log('[失效网站移除] 开始同步到云端');
       try {
-        const response = await sendMessageCompat({
-          action: 'syncSettings'
-        });
+        // 失效网站忽略列表属于设置数据，关闭弹窗前需遮罩等待云端同步完成。
+        const response = await syncSettingsToCloudWithLoading('正在同步失效网站设置到云端...');
         if (response && response.success) {
           console.log('[失效网站移除] 同步到云端成功');
           hasPendingSync = false;
@@ -1577,7 +1780,19 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
 
   confirmBtn.onclick = async () => {
     try {
-      await sendMessageCompat({ action: 'sync', sceneId });
+      await runWithGlobalLoadingSteps([
+        { message: '正在从云端同步最新书签...' },
+        { message: '正在删除本地失效书签...' },
+        { message: '正在同步删除结果到云端...' },
+        { message: '删除完成' }
+      ], async (setStep) => {
+        // 批量删除前需要先从云端拉取最新数据，必须遮罩等待完成。
+        const syncResult = await sendWithRetry({ action: 'sync', sceneId }, { retries: 2, delay: 300 });
+        if (!syncResult?.success) {
+          throw new Error(syncResult?.error || '同步场景数据失败');
+        }
+        setStep(1);
+
       // 获取当前场景的所有书签（与云端对齐后再批量删除失效项）
       const data = await storage.getBookmarks(sceneId);
       const allBookmarks = data.bookmarks || [];
@@ -1600,13 +1815,18 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
       await syncToCloud();
 
       // 同步书签到云端（须传 deletedIds，否则先拉云端合并会把已删失效书签再次并回）
-      await sendMessageCompat({
-        action: 'syncToCloud',
-        bookmarks: remainingBookmarks,
-        folders: remainingFolders,
-        sceneId,
-        deletedIds: Array.from(invalidIds),
-        patch: { bookmarkDeletes: Array.from(invalidIds) }
+        setStep(2);
+        const deleteResult = await sendWithRetry({
+          action: 'syncToCloud',
+          bookmarks: remainingBookmarks,
+          folders: remainingFolders,
+          sceneId,
+          deletedIds: Array.from(invalidIds),
+          patch: { bookmarkDeletes: Array.from(invalidIds) }
+        }, { retries: 2, delay: 300 });
+        if (!deleteResult?.success) {
+          throw new Error(deleteResult?.error || '同步删除结果失败');
+        }
       });
 
       cleanup();
@@ -1672,6 +1892,11 @@ async function loadUiSettings() {
   // 加载弹窗收藏按钮模式（默认关闭）
   if (popupUseFavoriteInPopup) {
     popupUseFavoriteInPopup.checked = !!popup.favoriteAsDelete;
+  }
+
+  // 加载「收藏抽屉点击所在文件夹是否定位到具体书签」（默认开启）
+  if (locateBookmarkOnFolderClickCheckbox) {
+    locateBookmarkOnFolderClickCheckbox.checked = popup.locateBookmarkOnFolderClick !== false;
   }
 
   // 加载同步失败通知开关（默认开启）
@@ -1742,8 +1967,9 @@ expandFirstLevelCheckbox.addEventListener('change', async () => {
         lastExpandFirstLevel: !!popup.expandFirstLevel
       }
     });
-    showMessage('界面设置已保存（后台同步中）', 'success');
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+    // 界面设置会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步界面设置到云端...');
+    showMessage('界面设置已保存（已同步至云端）', 'success');
     // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
     try {
       if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1777,8 +2003,9 @@ if (showUpdateButtonCheckbox) {
       popup.showUpdateButton = showUpdateButtonCheckbox.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('弹窗画面更新按钮显示设置已保存（后台同步中）', 'success');
-      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 弹窗显示设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步弹窗设置到云端...');
+      showMessage('弹窗画面更新按钮显示设置已保存（已同步至云端）', 'success');
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1813,8 +2040,9 @@ if (showLocateButtonCheckbox) {
       popup.showLocateButton = showLocateButtonCheckbox.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('弹窗定位按钮显示设置已保存（后台同步中）', 'success');
-      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 弹窗显示设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步弹窗设置到云端...');
+      showMessage('弹窗定位按钮显示设置已保存（已同步至云端）', 'success');
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1849,8 +2077,9 @@ if (popupUseFavoriteInPopup) {
       popup.favoriteAsDelete = popupUseFavoriteInPopup.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('弹窗画面收藏按钮设置已保存（后台同步中）', 'success');
-      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 弹窗收藏按钮设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步弹窗设置到云端...');
+      showMessage('弹窗画面收藏按钮设置已保存（已同步至云端）', 'success');
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1873,6 +2102,333 @@ if (popupUseFavoriteInPopup) {
   });
 }
 
+// 新增：收藏抽屉点击「所在文件夹」是否定位到具体书签
+if (locateBookmarkOnFolderClickCheckbox) {
+  locateBookmarkOnFolderClickCheckbox.addEventListener('change', async () => {
+    try {
+      const settings = await storage.getSettings();
+      const popup = (settings && settings.popup) || {};
+      popup.locateBookmarkOnFolderClick = locateBookmarkOnFolderClickCheckbox.checked;
+      const newSettings = { ...(settings || {}), popup };
+      await storage.saveSettings(newSettings);
+      // 该设置随其他弹窗设置一起同步到云端
+      await syncSettingsToCloudWithLoading('正在同步弹窗设置到云端...');
+      showMessage('收藏抽屉定位方式设置已保存（已同步至云端）', 'success');
+      // 通知所有打开的弹窗更新设置
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => { });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            if (chrome.runtime.lastError) {
+              // 静默处理
+            }
+          });
+        }
+      } catch (e) {
+        // 忽略
+      }
+    } catch (e) {
+      showMessage('保存失败: ' + e.message, 'error');
+    }
+  });
+}
+
+// 新增：点击「打开收藏排序」按钮 → 弹出对话框在页内排序
+// 与场景选择对话框保持相同的模态样式；保存/重置走全局 loading 遮罩
+if (openFavoriteSortBtn) {
+  // 对话框内部状态（作用域仅限本模块）
+  let __favSortList = [];        // 当前对话框中的书签有序数组
+  let __favSortOriginalIds = []; // 打开对话框时的初始 id 顺序（用于「取消」时判断是否有未保存改动）
+  let __favSortDirty = false;
+  let __favSortDragFromIndex = -1;
+  let __favSortLastDropTarget = null;
+  // 需求：收藏顺序按场景独立存储；对话框打开时冻结当前场景，保存/重置只影响该场景
+  let __favSortSceneId = 'home';
+
+  const modalEl = document.getElementById('favoriteSortModal');
+  const listEl = document.getElementById('favoriteSortList');
+  const emptyEl = document.getElementById('favoriteSortEmpty');
+  const sceneNameEl = document.getElementById('favoriteSortSceneName');
+  const closeBtn = document.getElementById('favoriteSortClose');
+  const cancelBtn = document.getElementById('favoriteSortCancel');
+  const saveBtn = document.getElementById('favoriteSortSave');
+  const resetBtn = document.getElementById('favoriteSortResetBtn');
+
+  function favSortRender() {
+    if (!listEl) return;
+    if (!__favSortList.length) {
+      listEl.innerHTML = '';
+      if (emptyEl) emptyEl.style.display = 'block';
+      return;
+    }
+    if (emptyEl) emptyEl.style.display = 'none';
+    listEl.innerHTML = __favSortList.map((b, idx) => {
+      const id = escapeHtmlSafe(b.id || '');
+      const folder = (b.folder && String(b.folder).trim()) ? String(b.folder).trim() : '';
+      const folderHtml = folder
+        ? `<span class="fs-folder" title="${escapeHtmlSafe(folder)}">${escapeHtmlSafe(folder)}</span>`
+        : '';
+      return `
+        <li class="favorite-sort-item" draggable="true" data-id="${id}" data-index="${idx}">
+          <span class="fs-handle" aria-hidden="true">☰</span>
+          <span class="fs-index">${idx + 1}</span>
+          <div class="fs-main">
+            <div class="fs-title" title="${escapeHtmlSafe(b.title || '')}">${escapeHtmlSafe(b.title || '无标题')}</div>
+            <div class="fs-url" title="${escapeHtmlSafe(b.url || '')}">${escapeHtmlSafe(b.url || '')}</div>
+          </div>
+          ${folderHtml}
+          <div class="fs-actions">
+            <button type="button" class="fs-move-btn" data-move="up" title="上移" ${idx === 0 ? 'disabled' : ''}>↑</button>
+            <button type="button" class="fs-move-btn" data-move="down" title="下移" ${idx === __favSortList.length - 1 ? 'disabled' : ''}>↓</button>
+          </div>
+        </li>
+      `;
+    }).join('');
+  }
+
+  // 简易 HTML 转义（避免依赖 popup 的 escapeHtml；options.js 无同名函数）
+  function escapeHtmlSafe(text) {
+    const div = document.createElement('div');
+    div.textContent = text == null ? '' : String(text);
+    return div.innerHTML;
+  }
+
+  function favSortMoveItem(fromIndex, toIndex) {
+    if (fromIndex === toIndex) return;
+    if (fromIndex < 0 || fromIndex >= __favSortList.length) return;
+    if (toIndex < 0 || toIndex >= __favSortList.length) return;
+    const [it] = __favSortList.splice(fromIndex, 1);
+    __favSortList.splice(toIndex, 0, it);
+    __favSortDirty = true;
+    favSortRender();
+  }
+
+  function favSortIsDirty() {
+    if (__favSortDirty) return true;
+    const cur = __favSortList.map(b => String(b.id));
+    if (cur.length !== __favSortOriginalIds.length) return true;
+    for (let i = 0; i < cur.length; i++) {
+      if (cur[i] !== __favSortOriginalIds[i]) return true;
+    }
+    return false;
+  }
+
+  // 拖拽 & 上下移动 事件（对话框首次创建时绑定一次）
+  if (listEl && !listEl.dataset.bound) {
+    listEl.dataset.bound = '1';
+    listEl.addEventListener('click', (e) => {
+      const btn = e.target.closest('.fs-move-btn');
+      if (!btn) return;
+      const item = btn.closest('.favorite-sort-item');
+      if (!item) return;
+      const idx = parseInt(item.dataset.index, 10);
+      if (!Number.isFinite(idx)) return;
+      const dir = btn.dataset.move;
+      if (dir === 'up') favSortMoveItem(idx, idx - 1);
+      else if (dir === 'down') favSortMoveItem(idx, idx + 1);
+    });
+    listEl.addEventListener('dragstart', (e) => {
+      const item = e.target && e.target.closest ? e.target.closest('.favorite-sort-item') : null;
+      if (!item) return;
+      __favSortDragFromIndex = parseInt(item.dataset.index, 10);
+      item.classList.add('dragging');
+      try {
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', String(__favSortDragFromIndex));
+      } catch (_) { /* Firefox 兼容 */ }
+    });
+    listEl.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      const target = e.target && e.target.closest ? e.target.closest('.favorite-sort-item') : null;
+      if (!target) return;
+      if (__favSortLastDropTarget && __favSortLastDropTarget !== target) {
+        __favSortLastDropTarget.classList.remove('drop-target');
+      }
+      target.classList.add('drop-target');
+      __favSortLastDropTarget = target;
+      try { e.dataTransfer.dropEffect = 'move'; } catch (_) { /* 忽略 */ }
+    });
+    listEl.addEventListener('dragleave', (e) => {
+      const target = e.target && e.target.closest ? e.target.closest('.favorite-sort-item') : null;
+      if (target) target.classList.remove('drop-target');
+    });
+    listEl.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const target = e.target && e.target.closest ? e.target.closest('.favorite-sort-item') : null;
+      if (__favSortLastDropTarget) __favSortLastDropTarget.classList.remove('drop-target');
+      __favSortLastDropTarget = null;
+      if (!target || __favSortDragFromIndex < 0) return;
+      const toIndex = parseInt(target.dataset.index, 10);
+      if (!Number.isFinite(toIndex)) return;
+      favSortMoveItem(__favSortDragFromIndex, toIndex);
+      __favSortDragFromIndex = -1;
+    });
+    listEl.addEventListener('dragend', () => {
+      listEl.querySelectorAll('.favorite-sort-item.dragging').forEach(el => el.classList.remove('dragging'));
+      if (__favSortLastDropTarget) __favSortLastDropTarget.classList.remove('drop-target');
+      __favSortLastDropTarget = null;
+      __favSortDragFromIndex = -1;
+    });
+  }
+
+  function favSortHide() {
+    if (modalEl) modalEl.style.display = 'none';
+  }
+
+  async function favSortOpen() {
+    // 打开时展示 loading，从本地读取数据
+    showGlobalLoading('正在加载收藏书签...');
+    try {
+      let sceneId = 'home';
+      try { sceneId = await storage.getCurrentScene() || 'home'; } catch (_) { /* 忽略 */ }
+      __favSortSceneId = sceneId;
+      const data = await storage.getBookmarks(sceneId);
+      const bookmarks = (data && data.bookmarks) || [];
+      const settings = await storage.getSettings();
+      // 需求：favoriteOrder 按场景分组存储；结构 { [sceneId]: string[] }
+      // 一次性迁移：若历史数据为数组，则把它挂到当前场景并回写
+      const rawMap = settings && settings.favoriteOrder;
+      let orderMap;
+      if (Array.isArray(rawMap)) {
+        orderMap = { [sceneId]: rawMap.slice() };
+        try {
+          const migratedSettings = { ...(settings || {}), favoriteOrder: orderMap };
+          await storage.saveSettings(migratedSettings);
+          // 迁移后同步一次到云端，避免下次同步又拉回旧格式
+          try { await syncSettingsToCloudWithLoading('正在迁移旧的收藏顺序...'); } catch (_) { /* 忽略 */ }
+        } catch (_) { /* 忽略迁移失败 */ }
+      } else if (rawMap && typeof rawMap === 'object') {
+        orderMap = rawMap;
+      } else {
+        orderMap = {};
+      }
+      const savedOrder = Array.isArray(orderMap[sceneId]) ? orderMap[sceneId].slice() : [];
+      const favorites = bookmarks.filter(b => b && b.starred);
+
+      // 按 savedOrder 重排：order 内的排前，其余追加末尾
+      const idIndex = new Map();
+      savedOrder.forEach((id, idx) => { idIndex.set(String(id), idx); });
+      __favSortList = favorites.slice().sort((a, b) => {
+        const ai = idIndex.has(String(a.id)) ? idIndex.get(String(a.id)) : Number.MAX_SAFE_INTEGER;
+        const bi = idIndex.has(String(b.id)) ? idIndex.get(String(b.id)) : Number.MAX_SAFE_INTEGER;
+        return ai - bi;
+      });
+      __favSortOriginalIds = __favSortList.map(b => String(b.id));
+      __favSortDirty = false;
+
+      if (sceneNameEl) {
+        // 展示场景名，尽量显示可读名称
+        let displayName = sceneId;
+        try {
+          const scenes = await storage.getScenes();
+          const s = (scenes || []).find(x => x && x.id === sceneId);
+          if (s && s.name) displayName = s.name;
+        } catch (_) { /* 忽略 */ }
+        sceneNameEl.textContent = displayName ? '场景：' + displayName : '';
+      }
+      favSortRender();
+    } catch (e) {
+      showMessage('加载收藏书签失败：' + (e && e.message ? e.message : e), 'error');
+      hideGlobalLoading();
+      return;
+    }
+    hideGlobalLoading();
+    if (modalEl) modalEl.style.display = 'flex';
+  }
+
+  async function favSortSave() {
+    // 保存 + 同步到云端；全程 loading 遮罩
+    showGlobalLoading('正在保存收藏顺序...');
+    try {
+      const settings = await storage.getSettings();
+      const nextOrder = __favSortList.map(b => String(b.id)).filter(Boolean);
+      // 需求：按场景分组存储；结构 { [sceneId]: string[] }
+      const rawMap = settings && settings.favoriteOrder;
+      const currentMap = (rawMap && typeof rawMap === 'object' && !Array.isArray(rawMap)) ? rawMap : {};
+      const nextMap = { ...currentMap, [__favSortSceneId]: nextOrder };
+      const newSettings = { ...(settings || {}), favoriteOrder: nextMap };
+      await storage.saveSettings(newSettings);
+      // 顺序会随其他弹窗设置一起同步至云端
+      await syncSettingsToCloudWithLoading('正在同步收藏顺序到云端...');
+      __favSortOriginalIds = nextOrder.slice();
+      __favSortDirty = false;
+      // 通知打开的弹窗刷新设置（下次打开收藏抽屉即按新顺序显示）
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => { });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            if (chrome.runtime.lastError) { /* 静默 */ }
+          });
+        }
+      } catch (_) { /* 忽略 */ }
+      showMessage('收藏顺序已保存（已同步至云端）', 'success');
+      favSortHide();
+    } catch (e) {
+      showMessage('保存失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      hideGlobalLoading();
+    }
+  }
+
+  async function favSortReset() {
+    if (!confirm('确认重置当前场景的收藏顺序？将清空该场景的自定义顺序，其他场景不受影响。')) return;
+    showGlobalLoading('正在重置收藏顺序...');
+    try {
+      const settings = await storage.getSettings();
+      // 仅移除当前场景 key；其他场景保留
+      const rawMap = settings && settings.favoriteOrder;
+      const currentMap = (rawMap && typeof rawMap === 'object' && !Array.isArray(rawMap)) ? rawMap : {};
+      const nextMap = { ...currentMap };
+      delete nextMap[__favSortSceneId];
+      const next = { ...(settings || {}) };
+      if (Object.keys(nextMap).length === 0) {
+        // 整对象为空则一并删除 favoriteOrder 字段
+        delete next.favoriteOrder;
+      } else {
+        next.favoriteOrder = nextMap;
+      }
+      await storage.saveSettings(next);
+      await syncSettingsToCloudWithLoading('正在同步收藏顺序到云端...');
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => { });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
+            if (chrome.runtime.lastError) { /* 静默 */ }
+          });
+        }
+      } catch (_) { /* 忽略 */ }
+      showMessage('已重置当前场景的收藏顺序（已同步至云端）', 'success');
+      favSortHide();
+    } catch (e) {
+      showMessage('重置失败：' + (e && e.message ? e.message : e), 'error');
+    } finally {
+      hideGlobalLoading();
+    }
+  }
+
+  function favSortCancel() {
+    if (favSortIsDirty()) {
+      if (!confirm('有未保存的顺序改动，确认放弃并关闭？')) return;
+    }
+    favSortHide();
+  }
+
+  openFavoriteSortBtn.addEventListener('click', () => { favSortOpen(); });
+  if (closeBtn) closeBtn.addEventListener('click', favSortCancel);
+  if (cancelBtn) cancelBtn.addEventListener('click', favSortCancel);
+  if (saveBtn) saveBtn.addEventListener('click', favSortSave);
+  if (resetBtn) resetBtn.addEventListener('click', favSortReset);
+  // 点击遮罩背景关闭
+  if (modalEl) {
+    modalEl.addEventListener('click', (e) => {
+      if (e.target === modalEl) favSortCancel();
+    });
+  }
+}
+
 // 滚动条位置记忆设置
 if (rememberScrollPosition) {
   rememberScrollPosition.addEventListener('change', async () => {
@@ -1882,8 +2438,9 @@ if (rememberScrollPosition) {
       popup.rememberScrollPosition = rememberScrollPosition.checked;
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('界面设置已保存（后台同步中）', 'success');
-      sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('设置同步失败:', err));
+      // 界面设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步界面设置到云端...');
+      showMessage('界面设置已保存（已同步至云端）', 'success');
       // 通知所有打开的弹窗更新设置（兼容manifest v2和v3）
       try {
         if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
@@ -1921,8 +2478,9 @@ if (enableConsoleLogging) {
       const developerSettings = { ...(settings?.developerSettings || {}), enableConsoleLogging: enableConsoleLogging.checked };
       const newSettings = { ...(settings || {}), developerSettings };
       await storage.saveSettings(newSettings);
-      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('开发者设置同步失败:', e));
-      showMessage('开发者设置已保存（后台同步中）', 'success');
+      // 开发者设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步开发者设置到云端...');
+      showMessage('开发者设置已保存（已同步至云端）', 'success');
       
       sendMessageCompat({ 
         action: 'updateDeveloperSettings', 
@@ -2005,8 +2563,9 @@ async function syncFloatingBallPopupHeightToCloud() {
     };
     const newSettings = { ...(settings || {}), floatingBallPopup };
     await storage.saveSettings(newSettings);
-    showMessage('高度设置已保存，正在后台同步到云端...', 'success');
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('高度设置同步失败:', err));
+    // 高度设置同步到云端时必须显示遮罩并等待上传完成。
+    await syncSettingsToCloudWithLoading('正在同步高度设置到云端...');
+    showMessage('高度设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('同步失败: ' + e.message, 'error');
   }
@@ -2043,8 +2602,9 @@ async function syncIconPopupHeightToCloud() {
     };
     const newSettings = { ...(settings || {}), iconPopup };
     await storage.saveSettings(newSettings);
-    showMessage('高度设置已保存，正在后台同步到云端...', 'success');
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('高度设置同步失败:', err));
+    // 高度设置同步到云端时必须显示遮罩并等待上传完成。
+    await syncSettingsToCloudWithLoading('正在同步高度设置到云端...');
+    showMessage('高度设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('同步失败: ' + e.message, 'error');
   }
@@ -2085,8 +2645,9 @@ async function syncAddBookmarkPopupHeightToCloud() {
     };
     const newSettings = { ...(settings || {}), addBookmarkPopup };
     await storage.saveSettings(newSettings);
-    showMessage('添加书签弹窗高度已保存，正在后台同步到云端...', 'success');
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('添加书签弹窗高度同步失败:', err));
+    // 添加书签弹窗高度同步到云端时必须显示遮罩并等待上传完成。
+    await syncSettingsToCloudWithLoading('正在同步添加书签弹窗高度到云端...');
+    showMessage('添加书签弹窗高度已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('同步失败: ' + e.message, 'error');
   }
@@ -2345,15 +2906,29 @@ importFile.addEventListener('change', async (e) => {
         scene: targetSceneId
       }));
 
-      const response = await sendWithRetry(
-        {
-          action: 'importBookmarkPayloadToScene',
-          sceneId: targetSceneId,
-          bookmarks: importedBookmarks,
-          folders: data.folders || []
-        },
-        { retries: 2, delay: 300 }
-      );
+      const response = await runWithGlobalLoadingSteps([
+        { message: '正在准备导入书签文件...' },
+        { message: '正在合并书签数据...' },
+        { message: '正在写入云端书签...' },
+        { message: '导入完成' }
+      ], async (setStep) => {
+        setStep(1);
+        const result = await sendWithRetry(
+          {
+            action: 'importBookmarkPayloadToScene',
+            sceneId: targetSceneId,
+            bookmarks: importedBookmarks,
+            folders: data.folders || []
+          },
+          { retries: 2, delay: 300 }
+        );
+        setStep(2);
+        if (!result?.success || !result?.result?.success) {
+          throw new Error(result?.error || result?.result?.error || '导入失败');
+        }
+        setStep(3);
+        return result;
+      });
       if (!response?.success || !response?.result?.success) {
         throw new Error(response?.error || response?.result?.error || '导入失败');
       }
@@ -2397,21 +2972,32 @@ async function adoptDeviceAsCurrent(targetId) {
     });
     if (!ok) return;
 
-    // 设备置换改为走后台统一处理，避免本地旧设备列表回写时覆盖云端最新数据
-    const adoptResult = await sendWithRetry(
-      { action: 'adoptDeviceAsCurrent', targetId },
-      { retries: 2, delay: 300 }
-    );
-    if (!adoptResult?.success) {
-      throw new Error(adoptResult?.error || '未知错误');
-    }
+    await runWithGlobalLoadingSteps([
+      { message: '正在准备置换当前设备...' },
+      { message: '正在写入云端设备列表...' },
+      { message: '正在刷新同步任务...' },
+      { message: '正在刷新设备列表...' },
+      { message: '置换完成' }
+    ], async (setStep) => {
+      setStep(1);
+      // 设备置换改为走后台统一处理，避免本地旧设备列表回写时覆盖云端最新数据
+      const adoptResult = await sendWithRetry(
+        { action: 'adoptDeviceAsCurrent', targetId },
+        { retries: 2, delay: 300 }
+      );
+      if (!adoptResult?.success) {
+        throw new Error(adoptResult?.error || '未知错误');
+      }
 
-    await sendWithRetry({ action: 'refreshSyncAlarms' }, { retries: 2, delay: 300 });
-
+      setStep(2);
+      await sendWithRetry({ action: 'refreshSyncAlarms' }, { retries: 2, delay: 300 });
+      setStep(3);
+      await loadDevices();
+      await loadBrowserBookmarkSyncSceneSetting();
+      updateBrowserSyncInlineStatus().catch(() => {});
+      setStep(4);
+    });
     showMessage('已切换为本机设备并同步到云端', 'success');
-    await loadDevices();
-    await loadBrowserBookmarkSyncSceneSetting();
-    updateBrowserSyncInlineStatus().catch(() => {});
   } catch (e) {
     showMessage('切换失败: ' + (e?.message || e), 'error');
   }
@@ -2684,16 +3270,12 @@ async function loadDevices() {
           const doubleCheck = confirm('这是当前设备，移除后本机会在下一次同步清空本地数据并停止同步，确定继续？');
           if (!doubleCheck) return;
         }
-        const removeResult = await sendWithRetry(
-          { action: 'removeDevice', deviceId: id },
-          { retries: 2, delay: 300 }
-        );
-        if (!removeResult?.success) {
-          showMessage('移除失败: ' + (removeResult?.error || '未知错误'), 'error');
-          return;
+        try {
+          await removeDeviceWithProgress(id);
+          showMessage('已移除设备', 'success');
+        } catch (error) {
+          showMessage('移除失败: ' + (error?.message || error), 'error');
         }
-        showMessage('已移除设备', 'success');
-        await loadDevices();
         return;
       });
     });
@@ -2709,6 +3291,28 @@ async function loadDevices() {
   } catch (error) {
     showMessage('加载设备失败: ' + error.message, 'error');
   }
+}
+
+async function removeDeviceWithProgress(deviceId) {
+  return runWithGlobalLoadingSteps([
+    { message: '正在准备移除设备...' },
+    { message: '正在写入云端设备列表...' },
+    { message: '正在刷新设备列表...' },
+    { message: '移除完成' }
+  ], async (setStep) => {
+    setStep(1);
+    const removeResult = await sendWithRetry(
+      { action: 'removeDevice', deviceId },
+      { retries: 2, delay: 300 }
+    );
+    if (!removeResult?.success) {
+      throw new Error(removeResult?.error || '未知错误');
+    }
+    setStep(2);
+    await loadDevices();
+    setStep(3);
+    return removeResult;
+  });
 }
 
 /**
@@ -2728,19 +3332,28 @@ async function editDeviceName(deviceId, currentCustomName, isCurrentDevice) {
   }
   
   try {
-    const result = await sendWithRetry(
-      { action: 'updateDeviceName', deviceId, deviceName: trimmedName },
-      { retries: 2, delay: 300 }
-    );
-    
-    if (!result?.success) {
-      throw new Error(result?.error || '更新失败');
-    }
+    await runWithGlobalLoadingSteps([
+      { message: '正在准备更新设备名称...' },
+      { message: '正在写入云端设备列表...' },
+      { message: '正在刷新设备列表...' },
+      { message: '更新完成' }
+    ], async (setStep) => {
+      setStep(1);
+      const result = await sendWithRetry(
+        { action: 'updateDeviceName', deviceId, deviceName: trimmedName },
+        { retries: 2, delay: 300 }
+      );
+      
+      if (!result?.success) {
+        throw new Error(result?.error || '更新失败');
+      }
+      
+      setStep(2);
+      await loadDevices();
+      setStep(3);
+    });
     
     showMessage('设备名称已更新', 'success');
-    
-    // 重新加载设备列表
-    await loadDevices();
   } catch (error) {
     showMessage('更新设备名称失败: ' + error.message, 'error');
   }
@@ -2829,16 +3442,12 @@ async function updateCurrentDeviceRow() {
           const doubleCheck = confirm('这是当前设备，移除后本机会在下一次同步清空本地数据并停止同步，确定继续？');
           if (!doubleCheck) return;
         }
-        const removeResult = await sendWithRetry(
-          { action: 'removeDevice', deviceId: id },
-          { retries: 2, delay: 300 }
-        );
-        if (!removeResult?.success) {
-          showMessage('移除失败: ' + (removeResult?.error || '未知错误'), 'error');
-          return;
+        try {
+          await removeDeviceWithProgress(id);
+          showMessage('已移除设备', 'success');
+        } catch (error) {
+          showMessage('移除失败: ' + (error?.message || error), 'error');
         }
-        showMessage('已移除设备', 'success');
-        await loadDevices();
         return;
       });
     }
@@ -2857,7 +3466,34 @@ async function updateCurrentDeviceRow() {
   }
 }
 
-refreshDevicesBtn.addEventListener('click', loadDevices);
+refreshDevicesBtn.addEventListener('click', async () => {
+  try {
+    await runWithGlobalLoadingSteps([
+      { message: '正在检查 WebDAV 配置...' },
+      { message: '正在从云端刷新设备列表...' },
+      { message: '正在更新设备列表画面...' },
+      { message: '刷新完成' }
+    ], async (setStep) => {
+      const config = await storage.getConfig();
+      if (config && config.serverUrl) {
+        setStep(1);
+        const response = await sendWithRetry(
+          { action: 'syncSettingsFromCloud' },
+          { retries: 2, delay: 300 }
+        );
+        if (!response || response.success === false) {
+          throw new Error(response?.error || '刷新设备列表失败');
+        }
+      }
+      setStep(2);
+      await loadDevices();
+      setStep(3);
+    });
+    showMessage('设备列表已刷新', 'success');
+  } catch (error) {
+    showMessage('刷新设备列表失败: ' + (error?.message || error), 'error');
+  }
+});
 
 /**
  * 加载设备检测设置
@@ -2883,9 +3519,9 @@ enableDeviceDetection.addEventListener('change', async () => {
     const deviceDetection = { enabled: enableDeviceDetection.checked };
     const newSettings = { ...(settings || {}), deviceDetection };
     await storage.saveSettings(newSettings);
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('设备检测设置同步失败:', e));
-    showMessage('设备检测设置已保存（后台同步中）', 'success');
+    // 设备检测设置会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步设备检测设置到云端...');
+    showMessage('设备检测设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
@@ -2922,8 +3558,8 @@ async function loadFloatingBallSetting() {
       };
       const newSettings = { ...(settings || {}), floatingBall: nextFloatingBall };
       await storage.saveSettings(newSettings);
-      // 通知所有标签页更新悬浮球状态（不阻塞）
-      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(() => {});
+      // 首次写入悬浮球默认设置时也会同步云端，需等待上传完成。
+      await syncSettingsToCloudWithLoading('正在同步悬浮球默认设置到云端...');
       const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
       try {
         const tabs = await tabsAPI.query({});
@@ -2965,8 +3601,8 @@ enableFloatingBall.addEventListener('change', async () => {
     floatingBallPositionGroup.style.display = visible ? 'block' : 'none';
     floatingBallActionGroup.style.display = visible ? 'block' : 'none';
 
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球启用同步失败:', e));
+    // 悬浮球启用状态会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步悬浮球设置到云端...');
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
     try {
@@ -2994,8 +3630,8 @@ floatingBallDefaultPosition.addEventListener('change', async () => {
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
 
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球位置同步失败:', e));
+    // 悬浮球默认位置会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步悬浮球位置到云端...');
 
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
@@ -3024,8 +3660,8 @@ floatingBallClickAction.addEventListener('change', async () => {
     const newSettings = { ...(settings || {}), floatingBall };
     await storage.saveSettings(newSettings);
 
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('悬浮球点击行为同步失败:', e));
+    // 悬浮球点击行为会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步悬浮球点击行为到云端...');
 
     // 通知所有标签页更新悬浮球状态
     const tabsAPI = typeof browser !== 'undefined' ? browser.tabs : chrome.tabs;
@@ -3052,9 +3688,9 @@ enableSyncErrorNotification.addEventListener('change', async () => {
     const syncErrorNotification = { ...(settings?.syncErrorNotification || {}), enabled: enableSyncErrorNotification.checked };
     const newSettings = { ...(settings || {}), syncErrorNotification };
     await storage.saveSettings(newSettings);
-    // 立即同步到云端（不阻塞）
-    sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('同步失败通知同步失败:', e));
-    showMessage('同步失败通知设置已保存（后台同步中）', 'success');
+    // 同步失败通知设置会同步到云端，必须等待上传完成后再提示成功。
+    await syncSettingsToCloudWithLoading('正在同步通知设置到云端...');
+    showMessage('同步失败通知设置已保存（已同步至云端）', 'success');
   } catch (e) {
     showMessage('保存失败: ' + e.message, 'error');
   }
@@ -3068,8 +3704,9 @@ if (stickySyncErrorToast) {
       const syncErrorNotification = { ...(settings?.syncErrorNotification || {}), sticky: !!stickySyncErrorToast.checked };
       const newSettings = { ...(settings || {}), syncErrorNotification };
       await storage.saveSettings(newSettings);
-      sendWithRetry({ action: 'syncSettings' }, { retries: 2, delay: 300 }).catch(e => console.error('调试设置同步失败:', e));
-      showMessage('调试设置已保存（后台同步中）', 'success');
+      // 调试设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步调试设置到云端...');
+      showMessage('调试设置已保存（已同步至云端）', 'success');
     } catch (e) {
       showMessage('保存失败: ' + (e?.message || e), 'error');
     }
@@ -3130,7 +3767,19 @@ async function loadScenes() {
           // WebDAV配置有效：每次切换场景都从云端拉取最新，避免本地缓存覆盖浏览器定时同步写云结果
           if (hasValidConfig) {
             try {
-              await sendMessageCompat({ action: 'sync', sceneId });
+              await runWithGlobalLoadingSteps([
+                { message: '正在准备切换场景...' },
+                { message: '正在从云端同步场景数据...' },
+                { message: '正在刷新场景列表...' },
+                { message: '切换完成' }
+              ], async (setStep) => {
+                setStep(1);
+                const syncResult = await sendWithRetry({ action: 'sync', sceneId }, { retries: 2, delay: 300 });
+                if (!syncResult?.success) {
+                  throw new Error(syncResult?.error || '同步场景数据失败');
+                }
+                setStep(2);
+              });
             } catch (e) {
               // 忽略单次同步失败，继续后续逻辑
             }
@@ -3143,10 +3792,9 @@ async function loadScenes() {
               // 1. 立即更新本地并加载
               await storage.updateScene(sceneId, { name: newName.trim() });
               await loadScenes();
-              showMessage('场景已重命名', 'success');
-
-              // 2. 背景同步设置
-              sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('重命名场景同步失败:', err));
+              // 场景名称属于设置数据，必须遮罩等待云端同步完成。
+              await syncSettingsToCloudWithLoading('正在同步场景设置到云端...');
+              showMessage('场景已重命名（已同步至云端）', 'success');
             } catch (e) {
               showMessage('重命名失败: ' + e.message, 'error');
             }
@@ -3189,11 +3837,10 @@ async function loadScenes() {
             // 1. 立即执行本地删除并反馈 UI
             await storage.saveBookmarks(filteredBookmarks, filteredFolders);
             await loadScenes();
-            showMessage('场景已删除', 'success');
-
-            // 2. 后台通知删除云端文件和同步设置
-            sendMessageCompat({ action: 'deleteSceneBookmarks', sceneId }).catch(err => console.error('后台删除场景书签失败:', err));
-            sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('删除场景后同步设置失败:', err));
+            // 删除场景会同时删除云端书签文件并同步设置，必须等待两个云端动作完成。
+            await sendCloudActionWithLoading('正在删除云端场景书签...', { action: 'deleteSceneBookmarks', sceneId });
+            await syncSettingsToCloudWithLoading('正在同步场景设置到云端...');
+            showMessage('场景已删除（已同步至云端）', 'success');
           } catch (e) {
             showMessage('删除失败: ' + e.message, 'error');
           }
@@ -3320,10 +3967,9 @@ addSceneBtn.addEventListener('click', async () => {
       isDefault: false
     });
     await loadScenes();
-    showMessage('场景已添加', 'success');
-
-    // 2. 后台触发设置同步
-    sendMessageCompat({ action: 'syncSettings' }).catch(err => console.error('添加场景后台同步失败:', err));
+    // 添加场景属于设置数据，必须遮罩等待云端同步完成。
+    await syncSettingsToCloudWithLoading('正在同步场景设置到云端...');
+    showMessage('场景已添加（已同步至云端）', 'success');
   } catch (e) {
     showMessage('添加失败: ' + e.message, 'error');
   }
@@ -3443,4 +4089,158 @@ try {
   });
 } catch (e) {
   // 忽略：部分环境可能不允许在此处注册
+}
+
+// ============================================================
+// 安全设置（本地密码锁）
+// ============================================================
+async function loadSecuritySettings() {
+  if (typeof LockManager === 'undefined') return;
+  const enableEl = document.getElementById('enableLocalPasswordLock');
+  if (!enableEl) return;
+
+  const refresh = async () => {
+    const enabled = await LockManager.isEnabled();
+    enableEl.checked = !!enabled;
+    document.getElementById('lockEnabledActions').style.display = enabled ? '' : 'none';
+    // 表单默认隐藏（每次操作时再展开）
+    closeLockPasswordForm();
+  };
+
+  // toggle 逻辑
+  enableEl.addEventListener('change', async () => {
+    const enabled = await LockManager.isEnabled();
+    if (enableEl.checked && !enabled) {
+      // 想要开启 → 弹出「设置新密码」表单
+      openLockPasswordForm({ mode: 'create' });
+      enableEl.checked = false; // 等保存成功后才真正打开
+    } else if (!enableEl.checked && enabled) {
+      // 想要关闭 → 要求当前密码
+      enableEl.checked = true; // 等校验后再变更
+      await disableLockFlow();
+    }
+  });
+
+  // 修改密码
+  const changeBtn = document.getElementById('lockChangePasswordBtn');
+  if (changeBtn) {
+    changeBtn.addEventListener('click', () => openLockPasswordForm({ mode: 'change' }));
+  }
+
+  // 重置
+  const resetBtn = document.getElementById('lockResetBtn');
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => resetLockFlow());
+  }
+
+  // 表单按钮
+  const cancelBtn = document.getElementById('lockPasswordCancelBtn');
+  if (cancelBtn) cancelBtn.addEventListener('click', () => closeLockPasswordForm());
+  const saveBtn = document.getElementById('lockPasswordSaveBtn');
+  if (saveBtn) saveBtn.addEventListener('click', () => submitLockPasswordForm(refresh));
+
+  await refresh();
+}
+
+let _lockFormMode = null; // 'create' | 'change'
+
+function openLockPasswordForm(opts) {
+  _lockFormMode = (opts && opts.mode) || 'create';
+  const form = document.getElementById('lockPasswordForm');
+  const oldRow = document.getElementById('lockOldPasswordRow');
+  const oldInput = document.getElementById('lockOldPassword');
+  const newInput = document.getElementById('lockNewPassword');
+  const confirmInput = document.getElementById('lockNewPasswordConfirm');
+  const errEl = document.getElementById('lockPasswordError');
+  if (!form) return;
+  oldRow.style.display = _lockFormMode === 'change' ? '' : 'none';
+  oldInput.value = '';
+  newInput.value = '';
+  confirmInput.value = '';
+  if (errEl) errEl.textContent = '';
+  form.style.display = '';
+  setTimeout(() => {
+    if (_lockFormMode === 'change') oldInput.focus();
+    else newInput.focus();
+  }, 0);
+}
+
+function closeLockPasswordForm() {
+  const form = document.getElementById('lockPasswordForm');
+  if (form) form.style.display = 'none';
+  _lockFormMode = null;
+  const errEl = document.getElementById('lockPasswordError');
+  if (errEl) errEl.textContent = '';
+}
+
+async function submitLockPasswordForm(refresh) {
+  const oldPwd = document.getElementById('lockOldPassword').value;
+  const newPwd = document.getElementById('lockNewPassword').value;
+  const confirmPwd = document.getElementById('lockNewPasswordConfirm').value;
+  const errEl = document.getElementById('lockPasswordError');
+  const setErr = (m) => { if (errEl) errEl.textContent = m || ''; };
+
+  setErr('');
+  const v = LockManager.validatePasswordStrength(newPwd);
+  if (!v.ok) { setErr(v.message); return; }
+  if (newPwd !== confirmPwd) { setErr('两次输入的密码不一致'); return; }
+
+  try {
+    if (_lockFormMode === 'create') {
+      await LockManager.setPassword(newPwd);
+      showMessage('已开启本地密码锁', 'success');
+    } else if (_lockFormMode === 'change') {
+      if (!oldPwd) { setErr('请输入当前密码'); return; }
+      await LockManager.changePassword(oldPwd, newPwd);
+      showMessage('密码已更新', 'success');
+    }
+    closeLockPasswordForm();
+    if (typeof refresh === 'function') await refresh();
+  } catch (e) {
+    setErr((e && e.message) || '操作失败');
+  }
+}
+
+async function disableLockFlow() {
+  const enableEl = document.getElementById('enableLocalPasswordLock');
+  const pwd = window.prompt('关闭本地密码锁需要验证当前密码，请输入：');
+  if (pwd === null) {
+    // 用户取消 → toggle 维持开启
+    if (enableEl) enableEl.checked = true;
+    return;
+  }
+  try {
+    await LockManager.disableWithPassword(pwd || '');
+    showMessage('已关闭本地密码锁', 'success');
+    if (enableEl) enableEl.checked = false;
+    document.getElementById('lockEnabledActions').style.display = 'none';
+  } catch (e) {
+    showMessage((e && e.message) || '关闭失败', 'error');
+    if (enableEl) enableEl.checked = true;
+  }
+}
+
+async function resetLockFlow() {
+  const ok = window.confirm(
+    '确定要重置本地密码吗？\n\n' +
+    '将会执行：\n' +
+    '• 清除本地密码（关闭密码锁）\n' +
+    '• 清除本地书签缓存（不影响 WebDAV 云端数据，重新登录即可拉回）\n' +
+    '• 浏览器原生书签保持不变\n\n' +
+    '此操作不可撤销。'
+  );
+  if (!ok) return;
+  try {
+    await LockManager.forceReset();
+    if (storage && typeof storage.clearLocalBookmarkCache === 'function') {
+      await storage.clearLocalBookmarkCache();
+    }
+    showMessage('已重置：密码与本地书签缓存已清除', 'success');
+    const enableEl = document.getElementById('enableLocalPasswordLock');
+    if (enableEl) enableEl.checked = false;
+    document.getElementById('lockEnabledActions').style.display = 'none';
+    closeLockPasswordForm();
+  } catch (e) {
+    showMessage((e && e.message) || '重置失败', 'error');
+  }
 }

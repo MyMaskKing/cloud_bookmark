@@ -150,6 +150,26 @@
               </label>
               <small>开启后，弹窗列表中的删除按钮会变为「★ 收藏」开关；删除请在完整书签管理页面中进行。</small>
             </div>
+            <!-- 需求：收藏抽屉中点击「所在：xxx」默认定位到该书签在弹窗内的具体位置 -->
+            <div class="form-group checkbox-row">
+              <label>
+                <input type="checkbox" id="locateBookmarkOnFolderClick">
+                收藏抽屉点击「所在文件夹」定位到该书签
+              </label>
+              <small>开启后（默认开启），点击收藏抽屉中的「所在：xxx」会在弹窗内滚动并高亮到该书签本身；关闭时按原逻辑，仅滚动到所属文件夹的位置。</small>
+            </div>
+          </div>
+        </div>
+
+        <!-- 需求：收藏书签自定义排序入口（弹出对话框在页内排序） -->
+        <div class="ui-settings-block">
+          <h3 class="section-subtitle">收藏(排序)</h3>
+          <p class="section-desc">调整弹窗右侧「收藏抽屉」中书签的排列顺序；不影响书签本身的自定义排序。</p>
+          <div class="section-grid-2">
+            <div class="form-group">
+              <button type="button" id="openFavoriteSortBtn" class="btn btn-primary">打开收藏排序</button>
+              <small>点击后在当前页弹出对话框，通过拖拽或上下按钮调整「收藏抽屉」中书签的显示顺序；顺序按场景独立保存，保存后同步至云端。</small>
+            </div>
           </div>
         </div>
 
@@ -282,6 +302,63 @@
           <small>仅用于调试：开启后 toast 不会自动消失（直到下次提示覆盖）。不建议长期开启。</small>
         </div>
       </section>
+      <section class="section" id="securitySection">
+        <h2>安全设置</h2>
+        <div class="ui-settings-block">
+          <h3 class="section-subtitle">本地密码锁</h3>
+          <p class="section-desc">
+            开启后，<strong>每次浏览器关闭再打开本插件时</strong>都会要求输入密码。
+            只在本浏览器内生效，<strong>不会上传到云端</strong>，也不会随设置同步到其他设备。
+          </p>
+          <div class="form-group checkbox-row">
+            <label>
+              <input type="checkbox" id="enableLocalPasswordLock">
+              开启本地密码锁
+            </label>
+            <small>开启后，弹窗、书签管理页、设置页都会要求先解锁。</small>
+          </div>
+
+          <!-- 设置 / 修改密码表单 -->
+          <div id="lockPasswordForm" class="lock-password-form" style="display: none;">
+            <div class="form-group" id="lockOldPasswordRow" style="display: none;">
+              <label for="lockOldPassword">当前密码</label>
+              <input type="password" id="lockOldPassword" placeholder="请输入当前密码" autocomplete="current-password">
+            </div>
+            <div class="form-group">
+              <label for="lockNewPassword">新密码</label>
+              <input type="password" id="lockNewPassword" placeholder="至少 4 位" autocomplete="new-password">
+            </div>
+            <div class="form-group">
+              <label for="lockNewPasswordConfirm">确认新密码</label>
+              <input type="password" id="lockNewPasswordConfirm" placeholder="再次输入" autocomplete="new-password">
+            </div>
+            <div class="lock-password-error" id="lockPasswordError" aria-live="polite"></div>
+            <div class="form-actions">
+              <button type="button" id="lockPasswordCancelBtn" class="btn btn-secondary">取消</button>
+              <button type="button" id="lockPasswordSaveBtn" class="btn btn-primary">保存密码</button>
+            </div>
+          </div>
+
+          <!-- 已启用时的操作区 -->
+          <div id="lockEnabledActions" class="lock-enabled-actions" style="display: none;">
+            <div class="form-actions">
+              <button type="button" id="lockChangePasswordBtn" class="btn btn-secondary">修改密码</button>
+              <button type="button" id="lockResetBtn" class="btn btn-secondary lock-reset-btn">忘记密码？重置</button>
+            </div>
+          </div>
+
+          <div class="lock-notice" role="note">
+            <p><strong>关于此密码：</strong></p>
+            <ul>
+              <li>密码仅以哈希形式保存在<strong>当前浏览器本地</strong>，<strong>不会上传到 WebDAV 云端</strong>，也不会随设置同步到其他设备。</li>
+              <li>它只是「打开此扩展 UI」的访问开关，<strong>不会加密 WebDAV 服务器上的书签</strong>。</li>
+              <li>密码只对查看 / 管理 UI 生效，<strong>后台同步流程不受影响</strong>。</li>
+              <li>解锁有效期为「整个浏览器会话」——浏览器关闭后下次再打开需要重新输入。</li>
+              <li>若忘记密码，可点击「重置」清除本地密码与本地书签缓存（不影响云端数据），重新登录 WebDAV 即可拉回书签。</li>
+            </ul>
+          </div>
+        </div>
+      </section>
       <section class="section">
             <h2>开发者设置</h2>
             <div class="ui-settings-block">
@@ -387,6 +464,31 @@
     </div>
   </div>
 
+  <!-- 需求：收藏排序对话框（复用 scene-select-modal 样式风格） -->
+  <div id="favoriteSortModal" class="scene-select-modal" style="display: none;">
+    <div class="scene-select-dialog favorite-sort-dialog">
+      <div class="scene-select-header">
+        <h3>收藏书签排序</h3>
+        <button class="scene-select-close" id="favoriteSortClose" title="关闭">&times;</button>
+      </div>
+      <div class="scene-select-body">
+        <p class="scene-select-hint">
+          拖拽书签或点击右侧上下按钮调整顺序，保存后收藏抽屉将按此顺序显示。<br>
+          <span style="color:#6b7280;">收藏顺序按场景独立存储，此处调整仅影响下方标记的场景。</span><span id="favoriteSortSceneName" class="scene-tag"></span>
+        </p>
+        <ul id="favoriteSortList" class="favorite-sort-list" aria-label="收藏书签列表"></ul>
+        <div id="favoriteSortEmpty" class="favorite-sort-empty" style="display:none">
+          暂无收藏书签。请先在弹窗中将删除按钮切换为「★ 收藏」按钮，然后给常用书签加星。
+        </div>
+      </div>
+      <div class="scene-select-footer">
+        <button id="favoriteSortResetBtn" class="btn btn-secondary" title="清空自定义顺序，恢复默认">重置</button>
+        <button id="favoriteSortCancel" class="btn btn-secondary">取消</button>
+        <button id="favoriteSortSave" class="btn btn-primary">保存</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 全局加载遮罩 -->
   <div id="globalLoadingOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 10000; justify-content: center; align-items: center;">
     <div style="background: white; padding: 30px 40px; border-radius: 8px; text-align: center; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);">
@@ -406,6 +508,8 @@
   <script src="../utils/webdav.js"></script>
   <script src="../utils/utils.js"></script>
   <script src="../utils/bookmarkParser.js"></script>
+  <script src="../utils/lockManager.js"></script>
+  <script src="../utils/lockScreen.js"></script>
   <script src="options.js"></script>
   <script src="options.popupNavSettings.js"></script>
 </body>

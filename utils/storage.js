@@ -793,6 +793,29 @@ class StorageManager {
   }
 
   /**
+   * 清空本地书签缓存（保留 WebDAV 配置/设备/设置/场景）。
+   * 用于「忘记本地密码 → 重置」时清除可能被泄露的明文书签内容；
+   * 用户重新登录 WebDAV 后再次同步即可拉回云端书签。
+   */
+  async clearLocalBookmarkCache() {
+    const keys = [
+      this.bookmarksKey,
+      this.pendingChangesKey,
+      this.syncStatusKey,
+      this.sceneBookmarkMetaKey
+    ];
+    return new Promise((resolve, reject) => {
+      this.storage.remove(keys, () => {
+        if (this.hasError()) {
+          reject(new Error(this.getError()));
+        } else {
+          resolve();
+        }
+      });
+    });
+  }
+
+  /**
    * 清空本地所有数据（包括配置/设备/设置/场景）
    */
   async clearAllData() {

@@ -808,6 +808,140 @@ body {
   gap: 12px;
 }
 
+/* 收藏排序对话框（复用 .scene-select-modal 容器与样式） */
+.favorite-sort-dialog {
+  max-width: 560px;
+}
+.scene-tag {
+  margin-left: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 12px;
+}
+.favorite-sort-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 52vh;
+  overflow-y: auto;
+}
+.favorite-sort-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  cursor: grab;
+  user-select: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.favorite-sort-item:hover {
+  border-color: #4a90e2;
+  box-shadow: 0 2px 6px rgba(74, 144, 226, 0.10);
+}
+.favorite-sort-item.dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+.favorite-sort-item.drop-target {
+  border-color: #4a90e2;
+  box-shadow: 0 0 0 3px rgba(74, 144, 226, 0.20);
+}
+.favorite-sort-item .fs-handle {
+  width: 18px;
+  color: #b0b3b8;
+  font-size: 16px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.favorite-sort-item .fs-index {
+  min-width: 24px;
+  text-align: center;
+  font-size: 12px;
+  color: #666;
+  background: #f5f7fa;
+  padding: 1px 6px;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+.favorite-sort-item .fs-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.favorite-sort-item .fs-title {
+  font-size: 13px;
+  color: #333;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.favorite-sort-item .fs-url {
+  font-size: 11px;
+  color: #888;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.favorite-sort-item .fs-folder {
+  font-size: 11px;
+  color: #92400e;
+  background: #fffbeb;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid #fde68a;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+  flex-shrink: 0;
+}
+.favorite-sort-item .fs-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.favorite-sort-item .fs-move-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid #e0e0e0;
+  background: #fff;
+  color: #555;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.favorite-sort-item .fs-move-btn:hover:not(:disabled) {
+  background: #eef4ff;
+  border-color: #4a90e2;
+  color: #1d4ed8;
+}
+.favorite-sort-item .fs-move-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+.favorite-sort-empty {
+  padding: 24px;
+  text-align: center;
+  color: #888;
+  background: #fafafa;
+  border: 1px dashed #d0d0d0;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
 /* 移动端适配 */
 /* 移动端和触摸设备优化 */
 @media (max-width: 768px) {
@@ -1158,5 +1292,79 @@ body {
 .btn-sync:disabled {
   background: #95a5a6;
   cursor: not-allowed;
+}
+
+/* ========== 安全设置（本地密码锁） ========== */
+.lock-password-form {
+  background: #f8f9fb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 14px 16px 12px;
+  margin-top: 12px;
+}
+
+.lock-password-form .form-group {
+  margin-bottom: 10px;
+}
+
+.lock-password-form .form-group:last-child {
+  margin-bottom: 0;
+}
+
+.lock-password-form .form-actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.lock-password-error {
+  min-height: 18px;
+  font-size: 12px;
+  color: #dc2626;
+  margin-top: 4px;
+}
+
+.lock-enabled-actions {
+  margin-top: 12px;
+}
+
+.lock-enabled-actions .form-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.lock-reset-btn {
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+.lock-reset-btn:hover {
+  background: #fef2f2;
+}
+
+.lock-notice {
+  margin-top: 14px;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 12px;
+  color: #78350f;
+  line-height: 1.6;
+}
+
+.lock-notice p {
+  margin: 0 0 6px;
+}
+
+.lock-notice ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.lock-notice li {
+  margin-bottom: 2px;
 }
 

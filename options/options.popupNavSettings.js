@@ -53,17 +53,39 @@
       popup.folderNavMode = mode === 'tabs' ? 'tabs' : 'tree';
       const newSettings = { ...(settings || {}), popup };
       await storage.saveSettings(newSettings);
-      showMessage('弹窗目录展示方式已保存（后台同步中）', 'success');
 
-      // 同步到云端（不阻塞）
+      // 弹窗目录设置会同步到云端，必须遮罩等待上传完成后再提示成功。
       try {
-        if (typeof sendMessageCompat === 'function') {
-          sendMessageCompat({ action: 'syncSettings' }).catch(() => {});
+        if (typeof syncSettingsToCloudWithLoading === 'function') {
+          await syncSettingsToCloudWithLoading('正在同步弹窗目录设置到云端...');
+        } else if (typeof sendMessageCompat === 'function') {
+          if (typeof showGlobalLoading === 'function') showGlobalLoading('正在同步弹窗目录设置到云端...');
+          const response = await sendMessageCompat({ action: 'syncSettings' });
+          if (!response || response.success === false) {
+            throw new Error(response?.error || '同步弹窗目录设置到云端失败');
+          }
         } else if (runtimeAPI && runtimeAPI.sendMessage) {
-          runtimeAPI.sendMessage({ action: 'syncSettings' }, () => {});
+          if (typeof showGlobalLoading === 'function') showGlobalLoading('正在同步弹窗目录设置到云端...');
+          await new Promise((resolve, reject) => {
+            runtimeAPI.sendMessage({ action: 'syncSettings' }, (response) => {
+              const lastError = runtimeAPI.lastError;
+              if (lastError) {
+                reject(new Error(lastError.message));
+                return;
+              }
+              if (!response || response.success === false) {
+                reject(new Error(response?.error || '同步弹窗目录设置到云端失败'));
+                return;
+              }
+              resolve(response);
+            });
+          });
         }
+        showMessage('弹窗目录展示方式已保存（已同步至云端）', 'success');
       } catch (e) {
-        // 忽略同步错误
+        showMessage('同步失败: ' + (e.message || e), 'error');
+      } finally {
+        if (typeof hideGlobalLoading === 'function') hideGlobalLoading();
       }
 
       // 通知弹窗更新设置
