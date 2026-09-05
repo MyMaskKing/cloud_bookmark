@@ -33,6 +33,16 @@ class WebDAVClient {
   }
 
   /**
+   * 拼接完整URL，自动去除连接处多余的斜杠
+   * @param {String} path - 路径部分
+   */
+  buildUrl(path) {
+    const base = this.serverUrl.replace(/\/+$/, '');
+    const suffix = String(path || '').replace(/^\/+/, '');
+    return suffix ? `${base}/${suffix}` : base;
+  }
+
+  /**
    * 构建认证头
    */
   getAuthHeader() {
@@ -87,7 +97,7 @@ class WebDAVClient {
     for (const part of pathParts) {
       currentPath += '/' + part;
       try {
-        const response = await fetch(this.serverUrl + currentPath, {
+        const response = await fetch(this.buildUrl(currentPath), {
           method: 'MKCOL',
           headers: {
             'Authorization': this.getAuthHeader()
@@ -123,7 +133,7 @@ class WebDAVClient {
       await this.ensureDirectory();
 
       const filePath = this.getFilePath(sceneId);
-      const url = this.serverUrl + filePath;
+      const url = this.buildUrl(filePath);
       console.log('[WebDAV] readBookmarks GET', { sceneId: sceneId || null, filePath });
       const response = await fetch(url, {
         method: 'GET',
@@ -191,7 +201,7 @@ class WebDAVClient {
         'Content-Type': 'application/json'
       };
 
-      const response = await fetch(this.serverUrl + filePath, {
+      const response = await fetch(this.buildUrl(filePath), {
         method: 'PUT',
         headers,
         body: jsonData
@@ -218,7 +228,7 @@ class WebDAVClient {
       await this.ensureDirectory();
 
       const filePath = this.getSettingsPath();
-      const response = await fetch(this.serverUrl + filePath, {
+      const response = await fetch(this.buildUrl(filePath), {
         method: 'GET',
         headers: {
           'Authorization': this.getAuthHeader()
@@ -252,7 +262,7 @@ class WebDAVClient {
       const filePath = this.getSettingsPath();
       const jsonData = JSON.stringify(settings || {}, null, 2);
 
-      const response = await fetch(this.serverUrl + filePath, {
+      const response = await fetch(this.buildUrl(filePath), {
         method: 'PUT',
         headers: {
           'Authorization': this.getAuthHeader(),
@@ -279,7 +289,7 @@ class WebDAVClient {
   async getLastModified(sceneId = null) {
     try {
       const filePath = this.getFilePath(sceneId);
-      const response = await fetch(this.serverUrl + filePath, {
+      const response = await fetch(this.buildUrl(filePath), {
         method: 'HEAD',
         headers: {
           'Authorization': this.getAuthHeader()
@@ -309,7 +319,7 @@ class WebDAVClient {
   async deleteSceneBookmarks(sceneId) {
     try {
       const filePath = this.getFilePath(sceneId);
-      const response = await fetch(this.serverUrl + filePath, {
+      const response = await fetch(this.buildUrl(filePath), {
         method: 'DELETE',
         headers: {
           'Authorization': this.getAuthHeader()
