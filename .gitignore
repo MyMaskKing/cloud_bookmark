@@ -2,6 +2,12 @@
 .DS_Store
 Thumbs.db
 
+# AI
+.codegraph
+.serena
+
+*.zip
+
 # 编辑器文件
 .vscode/
 .idea/
