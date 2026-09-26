@@ -1863,8 +1863,23 @@ async function openBookmarksInFolder(sceneId, folderPath) {
     .filter(Boolean);
   // URL 去重，避免同一地址打开多个标签页
   const uniqueUrls = [...new Set(urls)];
+  const tabIds = [];
   for (const url of uniqueUrls) {
-    tabsAPI.create({ url, active: false });
+    // MV3 Chrome 与 Firefox 的 tabs.create 均返回 Promise，收集 tabId 用于分组
+    const tab = await tabsAPI.create({ url, active: false });
+    if (tab && tab.id) tabIds.push(tab.id);
+  }
+
+  // Chromium 支持标签组时，归为一个标签组并以文件夹名命名；Firefox 或分组失败时静默回退普通标签
+  if (tabIds.length && typeof chrome !== 'undefined'
+    && chrome.tabs && typeof chrome.tabs.group === 'function'
+    && chrome.tabGroups && typeof chrome.tabGroups.update === 'function') {
+    try {
+      const groupId = await chrome.tabs.group({ tabIds });
+      // 标签组标题取文件夹最后一段名称；未分类固定为「未分类」
+      const title = fp ? fp.split('/').pop() : '未分类';
+      await chrome.tabGroups.update(groupId, { title });
+    } catch (_) { /* 分组失败不影响已打开的标签页 */ }
   }
   return uniqueUrls.length;
 }
