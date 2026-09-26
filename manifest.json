@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "云端书签",
-  "version": "1.1.36",
+  "version": "1.1.72",
   "description": "基于WebDAV的云端书签管理插件",
-  
+
   "permissions": [
     "storage",
     "bookmarks",
@@ -13,15 +13,15 @@
     "alarms",
     "activeTab"
   ],
-  
+
   "host_permissions": [
     "<all_urls>"
   ],
-  
+
   "background": {
     "service_worker": "background/background.js"
   },
-  
+
   "icons": {
     "16": "assets/icons/icon16.png",
     "32": "assets/icons/icon32.png",
@@ -37,9 +37,9 @@
       "128": "assets/icons/icon128.png"
     }
   },
-  
+
   "options_page": "options/options.html",
-  
+
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
@@ -47,7 +47,7 @@
       "run_at": "document_idle"
     }
   ],
-  
+
   "commands": {
     "add-bookmark": {
       "suggested_key": {

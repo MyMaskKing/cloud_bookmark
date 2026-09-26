@@ -18,7 +18,7 @@ function ensureGlobalLoadingProgressElements() {
     wrap.style.cssText = 'display: none; width: 220px; margin: 0 auto 15px;';
     wrap.innerHTML = `
       <div style="height: 6px; background: #e9ecef; border-radius: 999px; overflow: hidden;">
-        <div id="globalLoadingProgressBar" style="width: 0%; height: 100%; background: #4a90e2; transition: width 0.35s ease;"></div>
+        <div id="globalLoadingProgressBar" style="width: 100%; height: 100%; background: #4a90e2; transform: scaleX(0); transform-origin: left center; transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);"></div>
       </div>
       <div id="globalLoadingProgressText" style="margin-top: 6px; font-size: 12px; color: #666;"></div>
     `;
@@ -39,7 +39,7 @@ function setGlobalLoadingProgress(progress = null) {
   const percent = Math.max(0, Math.min(100, Number(progress) || 0));
   const bar = document.getElementById('globalLoadingProgressBar');
   const text = document.getElementById('globalLoadingProgressText');
-  if (bar) bar.style.width = `${percent}%`;
+  if (bar) bar.style.transform = `scaleX(${percent / 100})`;
   if (text) text.textContent = `${percent}%`;
   wrap.style.display = 'block';
 }
@@ -169,6 +169,8 @@ let viewOptions = {
   showIcon: true,
   showFolder: false
 };
+// 文件夹「打开全部」按钮开关（顶层设置，弹窗与本页共用），默认开启
+let folderOpenAllEnabled = true;
 let currentView = 'list';
 const defaultSettings = {
   viewOptions: { ...viewOptions },
@@ -965,6 +967,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
 
+    // 设置页保存设置后广播：重新加载设置并刷新文件夹列表（「打开全部」按钮即时生效）
+    if (request && request.action === 'settingsUpdated') {
+      loadSettings().then(() => loadFolders());
+      return;
+    }
+
     // 后台广播的同步失败 toast（扩展页面收 runtime 消息）
     if (request && request.action === 'showSyncErrorToast') {
       showToast(request.message || '同步失败', {
@@ -1269,6 +1277,10 @@ function setupEventListeners() {
       if (e.target.closest('.folder-menu')) {
         return;
       }
+      // 如果点击的是“打开全部书签”小按钮，不处理（由单独的事件处理）
+      if (e.target.closest('.folder-open-all-btn')) {
+        return;
+      }
       // 如果点击的是展开/折叠按钮，不处理（由单独的事件处理）
       if (e.target.closest('.folder-expand-toggle')) {
         return;
@@ -1354,6 +1366,19 @@ function setupEventListeners() {
       e.stopPropagation();
       const folderPath = btn.dataset.folder;
       openFolderMenu(btn, folderPath);
+    });
+
+    // “打开文件夹全部书签”小按钮点击事件
+    foldersList.addEventListener('click', (e) => {
+      const btn = e.target.closest('.folder-open-all-btn');
+      if (!btn) return;
+
+      e.stopPropagation();
+      sendMessageCompat({
+        action: 'openFolderBookmarks',
+        folderPath: btn.dataset.folder || '',
+        sceneId: currentSceneId
+      });
     });
 
     // 文件夹中书签链接点击事件
@@ -1944,6 +1969,7 @@ async function loadFolders() {
           <div class="folder-row" data-folder="">
             <span class="folder-label" data-folder="" title="未分类">
               <span class="folder-label-text">📁 未分类</span>
+              ${folderOpenAllEnabled ? '<button class="folder-open-all-btn" data-folder="" title="在新标签页打开全部">🔗</button>' : ''}
               <span class="folder-count">${uncategorizedCount}</span>
             </span>
           </div>
@@ -2059,6 +2085,7 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
             </button>
             <span class="folder-label" data-folder="${escapeHtml(child.path)}" title="${escapeHtml(child.path)}">
               <span class="folder-label-text">${icon} ${escapeHtml(child.name)}</span>
+              ${folderOpenAllEnabled ? `<button class="folder-open-all-btn" data-folder="${escapeHtml(child.path)}" title="在新标签页打开全部（含子文件夹）">🔗</button>` : ''}
               <span class="folder-count">${totalCount}</span>
             </span>
             <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
@@ -3940,6 +3967,9 @@ async function loadSettings() {
       viewOptions = { ...defaultViewOptions };
     }
 
+    // 文件夹「打开全部」按钮开关（默认开启）
+    folderOpenAllEnabled = settings?.folderOpenAll?.enabled !== false;
+
     // viewMode 从本地存储读取，不从云端同步的设置中读取
     let localViewMode = null;
     if (typeof browser !== 'undefined' && browser.storage) {
@@ -3960,6 +3990,7 @@ async function loadSettings() {
     }
   } catch (e) {
     viewOptions = { ...defaultViewOptions };
+    folderOpenAllEnabled = true;
     currentView = defaultSettings.viewMode;
   }
   applyViewMode();

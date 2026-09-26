@@ -102,8 +102,10 @@
 
       <!-- 场景切换轻提示（方案 B：不打断主流程） -->
       <div id="sceneSwitchingBar" class="scene-switching-bar scene-switching-bar--collapsed" role="status" aria-live="polite">
-        <span class="scene-switching-bar-spinner" aria-hidden="true"></span>
-        <span id="sceneSwitchingBarText" class="scene-switching-bar-text"></span>
+        <div class="scene-switching-bar-inner">
+          <span class="scene-switching-bar-spinner" aria-hidden="true"></span>
+          <span id="sceneSwitchingBarText" class="scene-switching-bar-text"></span>
+        </div>
       </div>
 
       <!-- 主内容加载遮罩（覆盖整个主内容区，不含侧边栏） -->

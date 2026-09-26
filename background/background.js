@@ -1843,6 +1843,32 @@ async function adoptDeviceAsCurrentFromLatest(targetId) {
   return newInfo;
 }
 
+/**
+ * 打开文件夹下的全部书签（含子文件夹），每个书签以新标签页打开
+ * @param {String} sceneId - 场景ID
+ * @param {String} folderPath - 文件夹路径（空字符串表示未分类）
+ * @returns {Promise<Number>} 实际打开的标签页数量
+ */
+async function openBookmarksInFolder(sceneId, folderPath) {
+  const fp = normalizeFolderPath(folderPath || '');
+  const data = await storage.getBookmarks(sceneId);
+  const urls = (data.bookmarks || [])
+    .filter(b => {
+      const bf = normalizeFolderPath(b.folder || '');
+      // folderPath 为空时只取未分类书签
+      if (!fp) return !bf;
+      return bf === fp || bf.startsWith(fp + '/');
+    })
+    .map(b => b.url)
+    .filter(Boolean);
+  // URL 去重，避免同一地址打开多个标签页
+  const uniqueUrls = [...new Set(urls)];
+  for (const url of uniqueUrls) {
+    tabsAPI.create({ url, active: false });
+  }
+  return uniqueUrls.length;
+}
+
 // 监听来自popup或pages的消息
 runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'sync') {
@@ -1896,6 +1922,13 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     storage.getConfig().then(config => {
       sendResponse({ config });
     });
+    return true;
+  }
+
+  if (request.action === 'openFolderBookmarks') {
+    openBookmarksInFolder(request.sceneId, request.folderPath)
+      .then(count => sendResponse({ success: true, count }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 

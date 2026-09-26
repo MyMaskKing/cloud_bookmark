@@ -43,6 +43,10 @@ class StorageManager {
       },
       developerSettings: {
         enableConsoleLogging: false // 默认关闭开发者控制台日志
+      },
+      // 文件夹名称后「打开全部书签」小按钮（弹窗与书签管理页共用），默认开启
+      folderOpenAll: {
+        enabled: true
       }
     };
   }
@@ -60,6 +64,10 @@ class StorageManager {
       developerSettings: {
         ...(d.developerSettings || {}),
         ...(s.developerSettings || {})
+      },
+      folderOpenAll: {
+        ...(d.folderOpenAll || {}),
+        ...(s.folderOpenAll || {})
       }
     };
   }

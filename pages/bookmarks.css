@@ -273,6 +273,34 @@ body.cb-add-flow-lock {
   color: #4a90e2;
 }
 
+/* 让“打开全部”小按钮紧跟文件夹名称，数量仍靠右 */
+.folder-label {
+  justify-content: flex-start;
+}
+
+.folder-label .folder-count {
+  margin-left: auto;
+}
+
+/* 文件夹名称后的“打开全部书签”小按钮 */
+.folder-open-all-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  color: #888;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+  flex-shrink: 0;
+  transition: background 0.2s, color 0.2s;
+}
+
+.folder-open-all-btn:hover {
+  background: #e8f0fe;
+  color: #4a90e2;
+}
+
 .section-title {
   font-size: 12px;
   font-weight: 600;
@@ -340,12 +368,12 @@ body.cb-add-flow-lock {
   position: absolute;
   left: 0;
   top: 50%;
-  transform: translateY(-50%);
+  transform: translateY(-50%) scaleY(0);
   width: 3px;
-  height: 0;
+  height: 60%;
   background: #4a90e2;
   border-radius: 0 3px 3px 0;
-  transition: height 0.2s ease;
+  transition: transform 0.2s ease;
 }
 
 .folder-menu-item:hover {
@@ -355,7 +383,7 @@ body.cb-add-flow-lock {
 }
 
 .folder-menu-item:hover::before {
-  height: 60%;
+  transform: translateY(-50%) scaleY(1);
 }
 
 .folder-menu-item.danger {
@@ -511,37 +539,40 @@ body.cb-add-flow-lock {
   gap: 8px;
 }
 
-/* 场景切换轻提示条（与管理页顶栏风格一致） */
+/* 场景切换轻提示条：grid 行高 0fr/1fr 平滑展开（与弹窗风格一致） */
 .scene-switching-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  grid-template-rows: 1fr;
   margin: 0 24px 10px 24px;
   font-size: 13px;
   line-height: 1.35;
   color: #3730a3;
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.09), rgba(129, 140, 248, 0.07));
-  border-radius: 8px;
+  transition: grid-template-rows 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.32s ease;
+}
+
+.scene-switching-bar-inner {
   overflow: hidden;
-  transition: max-height 0.32s cubic-bezier(0.33, 0.86, 0.2, 1),
-    opacity 0.32s ease, padding 0.32s ease, margin 0.32s ease, border-width 0.32s ease;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.09), rgba(129, 140, 241, 0.07));
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: 8px;
 }
 
 .scene-switching-bar--collapsed {
-  max-height: 0;
+  grid-template-rows: 0fr;
   opacity: 0;
-  padding: 0 12px;
-  margin: 0 24px 0 24px;
-  border: 0 solid transparent;
+  /* 底部外边距随收起瞬变为 0，不留空隙（不做动画，避免布局属性过渡） */
+  margin: 0 24px;
   pointer-events: none;
 }
 
 .scene-switching-bar--open {
-  max-height: 56px;
   opacity: 1;
-  padding: 8px 12px;
-  margin: 0 24px 10px 24px;
-  border: 1px solid rgba(99, 102, 241, 0.18);
   pointer-events: auto;
 }
 
@@ -1981,7 +2012,7 @@ body.cb-add-flow-lock {
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
   display: flex;
   flex-direction: column;
-  animation: detailPanelIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: detailPanelIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes detailPanelIn {
@@ -2299,7 +2330,7 @@ body.cb-add-flow-lock {
     max-height: 85vh;
     border-radius: 12px 12px 0 0;
     margin-top: auto;
-    animation: detailPanelSlideIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: detailPanelSlideIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   @keyframes detailPanelSlideIn {

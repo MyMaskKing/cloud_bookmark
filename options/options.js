@@ -39,7 +39,7 @@ function ensureGlobalLoadingProgressElements() {
     wrap.style.cssText = 'display: none; width: 220px; margin: 0 auto 15px;';
     wrap.innerHTML = `
       <div style="height: 6px; background: #e9ecef; border-radius: 999px; overflow: hidden;">
-        <div id="globalLoadingProgressBar" style="width: 0%; height: 100%; background: #4a90e2; transition: width 0.35s ease;"></div>
+        <div id="globalLoadingProgressBar" style="width: 100%; height: 100%; background: #4a90e2; transform: scaleX(0); transform-origin: left center; transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);"></div>
       </div>
       <div id="globalLoadingProgressText" style="margin-top: 6px; font-size: 12px; color: #666;"></div>
     `;
@@ -60,7 +60,7 @@ function setGlobalLoadingProgress(progress = null, detail = '') {
   const percent = Math.max(0, Math.min(100, Number(progress) || 0));
   const bar = document.getElementById('globalLoadingProgressBar');
   const text = document.getElementById('globalLoadingProgressText');
-  if (bar) bar.style.width = `${percent}%`;
+  if (bar) bar.style.transform = `scaleX(${percent / 100})`;
   if (text) text.textContent = detail || `${percent}%`;
   wrap.style.display = 'block';
 }
@@ -316,6 +316,7 @@ const browserBookmarkSyncSceneSelect = document.getElementById('browserBookmarkS
 const expandFirstLevelCheckbox = document.getElementById('expandFirstLevel');
 const showUpdateButtonCheckbox = document.getElementById('showUpdateButton');
 const showLocateButtonCheckbox = document.getElementById('showLocateButton');
+const folderOpenAllCheckbox = document.getElementById('folderOpenAll');
 const popupUseFavoriteInPopup = document.getElementById('popupUseFavoriteInPopup');
 // 新增：收藏抽屉点击「所在文件夹」定位到具体书签的开关
 const locateBookmarkOnFolderClickCheckbox = document.getElementById('locateBookmarkOnFolderClick');
@@ -1899,6 +1900,11 @@ async function loadUiSettings() {
     locateBookmarkOnFolderClickCheckbox.checked = popup.locateBookmarkOnFolderClick !== false;
   }
 
+  // 加载文件夹「打开全部」按钮开关（默认开启，弹窗与书签管理页共用）
+  if (folderOpenAllCheckbox) {
+    folderOpenAllCheckbox.checked = settings?.folderOpenAll?.enabled !== false;
+  }
+
   // 加载同步失败通知开关（默认开启）
   const syncErrorNotification = settings?.syncErrorNotification || {};
   enableSyncErrorNotification.checked = syncErrorNotification.enabled !== false;
@@ -2054,6 +2060,42 @@ if (showLocateButtonCheckbox) {
           // Chrome/Edge: 使用回调包装成Promise
           chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
             // 忽略错误，可能没有打开的弹窗
+            if (chrome.runtime.lastError) {
+              // 静默处理错误
+            }
+          });
+        }
+      } catch (e) {
+        // 忽略错误
+      }
+    } catch (e) {
+      showMessage('保存失败: ' + e.message, 'error');
+    }
+  });
+}
+
+// 文件夹「打开全部」按钮显示设置
+if (folderOpenAllCheckbox) {
+  folderOpenAllCheckbox.addEventListener('change', async () => {
+    try {
+      const settings = await storage.getSettings();
+      const folderOpenAll = {
+        ...((settings && settings.folderOpenAll) || {}),
+        enabled: folderOpenAllCheckbox.checked
+      };
+      const newSettings = { ...(settings || {}), folderOpenAll };
+      await storage.saveSettings(newSettings);
+      // 该设置会同步到云端，必须等待上传完成后再提示成功。
+      await syncSettingsToCloudWithLoading('正在同步设置到云端...');
+      showMessage('「打开全部」按钮设置已保存（已同步至云端）', 'success');
+      // 通知所有打开的弹窗/页面更新设置（兼容manifest v2和v3）
+      try {
+        if (typeof browser !== 'undefined' && browser.runtime && browser.runtime.sendMessage) {
+          browser.runtime.sendMessage({ action: 'settingsUpdated' }).catch(() => {
+            // 忽略错误，可能没有打开的页面
+          });
+        } else if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
+          chrome.runtime.sendMessage({ action: 'settingsUpdated' }, () => {
             if (chrome.runtime.lastError) {
               // 静默处理错误
             }

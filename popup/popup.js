@@ -39,7 +39,7 @@ function ensureGlobalLoadingProgressElements() {
     wrap.style.cssText = 'display: none; width: 220px; margin: 0 auto 15px;';
     wrap.innerHTML = `
       <div style="height: 6px; background: #e9ecef; border-radius: 999px; overflow: hidden;">
-        <div id="globalLoadingProgressBar" style="width: 0%; height: 100%; background: #4a90e2; transition: width 0.35s ease;"></div>
+        <div id="globalLoadingProgressBar" style="width: 100%; height: 100%; background: #4a90e2; transform: scaleX(0); transform-origin: left center; transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);"></div>
       </div>
       <div id="globalLoadingProgressText" style="margin-top: 6px; font-size: 12px; color: #666;"></div>
     `;
@@ -60,7 +60,7 @@ function setGlobalLoadingProgress(progress = null) {
   const percent = Math.max(0, Math.min(100, Number(progress) || 0));
   const bar = document.getElementById('globalLoadingProgressBar');
   const text = document.getElementById('globalLoadingProgressText');
-  if (bar) bar.style.width = `${percent}%`;
+  if (bar) bar.style.transform = `scaleX(${percent / 100})`;
   if (text) text.textContent = `${percent}%`;
   wrap.style.display = 'block';
 }
@@ -995,6 +995,18 @@ function handlePopupFolderListClick(e) {
   if (!row || !bookmarkList || !bookmarkList.contains(row)) return;
   e.preventDefault();
   e.stopPropagation();
+
+  // 小按钮：在新标签页打开该文件夹全部书签（由后台执行，避免弹窗关闭中断）
+  const openAllBtn = e.target.closest('.folder-open-all-btn');
+  if (openAllBtn) {
+    sendMessageCompat({
+      action: 'openFolderBookmarks',
+      folderPath: openAllBtn.dataset.folder || '',
+      sceneId: currentSceneId
+    }).catch(() => { });
+    return;
+  }
+
   const path = row.dataset.folder || '';
   if (expandedFolders.has(path)) {
     expandedFolders.delete(path);
@@ -1138,7 +1150,9 @@ async function loadPopupSettings() {
       favoriteAsDelete: !!(settings && settings.popup && settings.popup.favoriteAsDelete), // 默认false
       showLocateButton: settings && settings.popup && settings.popup.showLocateButton !== false, // 默认true
       // 新增：读取「收藏抽屉点击所在文件夹是否定位到具体书签」，默认true
-      locateBookmarkOnFolderClick: !(settings && settings.popup && settings.popup.locateBookmarkOnFolderClick === false)
+      locateBookmarkOnFolderClick: !(settings && settings.popup && settings.popup.locateBookmarkOnFolderClick === false),
+      // 文件夹「打开全部」按钮开关（顶层设置，弹窗与书签管理页共用），默认true
+      folderOpenAll: settings && settings.folderOpenAll && settings.folderOpenAll.enabled !== false
     };
     // 新增：把 favoriteOrder（按场景分组的对象）暴露给 popup.folderNav.js 使用
     // 结构：{ [sceneId]: string[] }；若历史数据为数组则一次性迁移到当前场景
@@ -1168,7 +1182,8 @@ async function loadPopupSettings() {
       showUpdateButton: false,
       favoriteAsDelete: false,
       showLocateButton: true,
-      locateBookmarkOnFolderClick: true
+      locateBookmarkOnFolderClick: true,
+      folderOpenAll: true
     };
     window.__favoriteOrderMap = {};
     applyPopupSettings();
@@ -1421,6 +1436,7 @@ function renderFolderTreeHtml(node, indentPath) {
         <div class="folder-row" data-folder="${escapeHtml(child.path)}">
           <span class="folder-icon">${icon}</span>
           <span class="folder-name">${escapeHtml(child.name)}</span>
+          ${(popupSettings && popupSettings.folderOpenAll !== false) ? `<button class="folder-open-all-btn" data-folder="${escapeHtml(child.path)}" title="在新标签页打开全部（含子文件夹）">🔗</button>` : ''}
           <span class="folder-count">${totalCount}</span>
         </div>
         ${expanded ? `<div class="folder-children">${childContent}</div>` : ''}

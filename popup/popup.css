@@ -116,33 +116,36 @@ body {
   to { transform: rotate(360deg); }
 }
 
-/* 顶部轻提示条：不用 display:none，避免收起时整块内容上跳造成「闪一下」 */
+/* 顶部轻提示条：grid 行高 0fr/1fr 平滑展开，不用 display:none 避免收起时整块上跳 */
 .scene-switching-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  display: grid;
+  grid-template-rows: 1fr;
   font-size: 12px;
   line-height: 1.35;
   color: #4338ca;
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.08), rgba(129, 140, 248, 0.06));
+  transition: grid-template-rows 0.32s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.32s ease;
+}
+
+.scene-switching-bar-inner {
   overflow: hidden;
-  transition: max-height 0.32s cubic-bezier(0.33, 0.86, 0.2, 1),
-    opacity 0.32s ease, padding 0.32s ease, border-width 0.32s ease;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.08), rgba(129, 140, 241, 0.06));
+  border-bottom: 1px solid rgba(99, 102, 241, 0.12);
 }
 
 .scene-switching-bar--collapsed {
-  max-height: 0;
+  grid-template-rows: 0fr;
   opacity: 0;
-  padding: 0 12px;
-  border-bottom: 0 solid transparent;
   pointer-events: none;
 }
 
 .scene-switching-bar--open {
-  max-height: 48px;
   opacity: 1;
-  padding: 6px 12px;
-  border-bottom: 1px solid rgba(99, 102, 241, 0.12);
   pointer-events: auto;
 }
 
@@ -824,6 +827,34 @@ body {
   color: #888;
 }
 
+/* 让“打开全部”小按钮紧跟文件夹名称，数量仍靠右 */
+.folder-row .folder-name {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.folder-row .folder-count {
+  margin-left: auto;
+}
+
+/* 文件夹名称后的“打开全部书签”小按钮 */
+.folder-open-all-btn {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  color: #888;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1;
+  transition: background 0.2s, color 0.2s;
+}
+
+.folder-open-all-btn:hover {
+  background: #e8f0fe;
+  color: #4a90e2;
+}
+
 .folder-children {
   padding: 8px 10px 10px 10px;
   display: flex;
@@ -1161,7 +1192,7 @@ body {
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
   display: flex;
   flex-direction: column;
-  animation: detailPanelIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  animation: detailPanelIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes detailPanelIn {
@@ -1477,7 +1508,7 @@ body {
     max-height: 85vh;
     border-radius: 12px 12px 0 0;
     margin-top: auto;
-    animation: detailPanelSlideIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    animation: detailPanelSlideIn 0.3s cubic-bezier(0.22, 1, 0.36, 1);
   }
 
   @keyframes detailPanelSlideIn {

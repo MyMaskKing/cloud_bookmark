@@ -40,8 +40,10 @@
 
     <!-- 场景切换轻提示（方案 B：不打断主流程，仅提示正在拉取/切换） -->
     <div id="sceneSwitchingBar" class="scene-switching-bar scene-switching-bar--collapsed" role="status" aria-live="polite">
-      <span class="scene-switching-bar-spinner" aria-hidden="true"></span>
-      <span id="sceneSwitchingBarText" class="scene-switching-bar-text"></span>
+      <div class="scene-switching-bar-inner">
+        <span class="scene-switching-bar-spinner" aria-hidden="true"></span>
+        <span id="sceneSwitchingBarText" class="scene-switching-bar-text"></span>
+      </div>
     </div>
 
     <!-- 当前文件夹粘性条：固定在列表区域顶部（搜索/快捷操作之上） -->
