@@ -1163,6 +1163,16 @@ function setupEventListeners() {
   closeModal.addEventListener('click', hideModal);
   cancelBtn.addEventListener('click', hideModal);
 
+  // 添加书签弹窗（快捷键/悬浮球/弹窗入口的独立窗口）支持 ESC 关闭，行为与「取消」一致
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (pageSource !== 'popup' && pageSource !== 'floating-ball' && pageSource !== 'shortcut') return;
+    if (!bookmarkModal || bookmarkModal.style.display === 'none') return;
+    // 新建文件夹/选择文件夹等子对话框打开时，ESC 只关子对话框，不穿透关闭整个添加窗口
+    if (document.querySelector('.dialog-overlay')) return;
+    hideModal();
+  });
+
   bookmarkForm.addEventListener('submit', handleSubmit);
   addFolderBtn.addEventListener('click', handleAddFolder);
 

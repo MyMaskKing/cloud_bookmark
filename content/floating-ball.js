@@ -1204,6 +1204,13 @@
     });
   }
 
+  // ESC 关闭页面内快速收藏浮层（常驻一个监听，无浮层时不动作）
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && inlineBookmarkOverlay) {
+      removeInlineBookmarkOverlay();
+    }
+  });
+
   runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     if (request.action === 'updateFloatingBall') {
       initFloatingBall();
@@ -1232,6 +1239,12 @@
       }).catch((error) => {
         sendResponse({ success: false, error: error.message || String(error) });
       });
+      return true;
+    }
+    if (request.action === 'hideInlineBookmarkOverlay') {
+      // 新弹层顶替旧弹层时，由后台通知移除本页面内的快速收藏浮层
+      removeInlineBookmarkOverlay();
+      sendResponse({ success: true });
       return true;
     }
   });

@@ -645,6 +645,11 @@ body {
   gap: 6px;
 }
 
+/* 搜索结果中的“所在：xxx”可点击定位到书签位置 */
+[data-search-folder-link="1"] {
+  cursor: pointer;
+}
+
 .bookmark-locate-btn {
   background: none;
   border: none;

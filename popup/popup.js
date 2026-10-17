@@ -284,6 +284,25 @@ document.addEventListener('click', (e) => {
       return;
     }
 
+    // 搜索结果中“所在：xxx”点击 -> 清空搜索框，并定位到该书签在弹窗内的具体位置（滚动 + 高亮）
+    const searchFolderLink = e.target.closest('[data-search-folder-link="1"]');
+    if (searchFolderLink) {
+      e.preventDefault();
+      e.stopPropagation();
+      const bookmarkId = searchFolderLink.dataset.id || '';
+      const folderPath = searchFolderLink.dataset.folder || '';
+      // 先真正清空搜索框（含搜索内容记忆与清除按钮），定位函数随后会恢复完整列表再滚动
+      searchInput.value = '';
+      if (searchClearBtn) {
+        searchClearBtn.style.display = 'none';
+      }
+      saveSearchContent();
+      if (bookmarkId && typeof window.scrollToBookmarkInPopup === 'function') {
+        window.scrollToBookmarkInPopup(bookmarkId, folderPath);
+      }
+      return;
+    }
+
     // 先检查是否点击了定位按钮
     const locateBtn = e.target.closest('.bookmark-locate-btn');
     if (locateBtn) {
@@ -532,7 +551,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // 监听消息更新
-  runtimeAPI.onMessage.addListener(async (request) => {
+  // 必须用普通函数而非 async 函数：悬浮球弹窗开着时，本页面也会收到 content script 广播的
+  // openPopup 等消息；async 函数对不处理的消息会返回 resolve(undefined) 的 Promise，
+  // 被浏览器当作本接收端的响应回传，吞掉后台真正的 { success: true }，导致悬浮球误判失败
+  // 而回退打开「添加书签」窗口。不处理的消息同步返回 undefined 即不构成响应。
+  runtimeAPI.onMessage.addListener((request) => {
     if (request.action === 'bookmarksUpdated' || request.action === 'sceneChanged') {
       console.log('[弹窗] 收到更新消息，重新加载书签');
       loadCurrentScene();
@@ -543,11 +566,14 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
     } else if (request.action === 'settingsUpdated') {
       console.log('[弹窗] 收到设置更新消息，重新加载设置');
-      await loadPopupSettings();
-      // 重新渲染书签以应用设置
-      requestAnimationFrame(async () => {
-        await loadBookmarksForPopup();
-      });
+      // 异步刷新无需响应消息，用 IIFE 执行，避免监听器返回 Promise
+      (async () => {
+        await loadPopupSettings();
+        // 重新渲染书签以应用设置
+        requestAnimationFrame(async () => {
+          await loadBookmarksForPopup();
+        });
+      })();
     }
   });
 
@@ -985,6 +1011,9 @@ async function loadBookmarksForPopup(options = {}) {
   }
 }
 
+// 暴露给 popup.folderNav.js：从搜索结果/收藏抽屉定位书签时，用于恢复完整列表
+window.loadBookmarksForPopup = loadBookmarksForPopup;
+
 /**
  * 文件夹行点击：在 #bookmarkList 上委托绑定，避免「innerHTML 后再 requestAnimationFrame 才绑监听」与首次加载/场景动画竞态导致点不开。
  * 仅使用 Element.closest / contains、DOM0 事件、queueMicrotask 等标准能力；与 manifest_version 2/3 无关：
@@ -1035,7 +1064,7 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
     bookmarkList.innerHTML = bookmarks.map(bookmark => {
       const id = escapeHtml(bookmark.id);
       const folderHtml = bookmark.folder
-        ? `<div class="bookmark-item-folder">所在：${escapeHtml(bookmark.folder)}</div>`
+        ? `<div class="bookmark-item-folder" data-search-folder-link="1" data-id="${id}" data-folder="${escapeHtml(bookmark.folder || '')}">所在：${escapeHtml(bookmark.folder)}</div>`
         : '';
       const locateBtn = showLocateButton
         ? `<button class="bookmark-locate-btn" data-id="${id}" data-folder="${escapeHtml(bookmark.folder || '')}" title="在管理页面中定位" style="background:none;border:none;padding:0;margin:0;cursor:pointer;">

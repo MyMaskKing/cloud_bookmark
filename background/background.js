@@ -1164,10 +1164,175 @@ function resolveAddPopupSettings(settings, source = 'popup') {
   return { heightPc, heightMobile };
 }
 
+/**
+ * 弹层单例管理：悬浮球/快捷键重复触发时，用新弹层顶替旧弹层。
+ * 引用持久化到 storage.local，避免 service worker 休眠后丢失跟踪。
+ * ref 结构：{ kind: 'window' | 'tab' | 'inline', id }（inline 时 id 为标签页 ID）
+ */
+const ADD_BOOKMARK_FLOW_REF_KEY = 'addBookmarkFlowRef';
+const FLOATING_POPUP_REF_KEY = 'floatingPopupRef';
+
+function getLocalStorageAPI() {
+  return (typeof browser !== 'undefined' && browser.storage) ? browser.storage.local : chrome.storage.local;
+}
+
+function readFlowRef(key) {
+  return new Promise((resolve) => {
+    try {
+      getLocalStorageAPI().get([key], (result) => {
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        resolve(lastError ? null : (result && result[key]) || null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function writeFlowRef(key, ref) {
+  return new Promise((resolve) => {
+    try {
+      if (!ref || typeof ref.id !== 'number') {
+        resolve();
+        return;
+      }
+      getLocalStorageAPI().set({ [key]: ref }, () => resolve());
+    } catch (_) {
+      resolve();
+    }
+  });
+}
+
+function clearFlowRef(key) {
+  return new Promise((resolve) => {
+    try {
+      getLocalStorageAPI().remove(key, () => resolve());
+    } catch (_) {
+      resolve();
+    }
+  });
+}
+
+// 窗口查询/关闭（Firefox 用 Promise，Chrome 用回调）
+function getWindowCompat(windowId) {
+  if (!windowsAPI || !windowsAPI.get) return Promise.resolve(null);
+  if (typeof browser !== 'undefined' && browser.windows) {
+    return windowsAPI.get(windowId, { populate: true }).catch(() => null);
+  }
+  return new Promise((resolve) => {
+    try {
+      windowsAPI.get(windowId, { populate: true }, (win) => {
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        resolve(lastError ? null : win);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function removeWindowCompat(windowId) {
+  if (!windowsAPI || !windowsAPI.remove) return Promise.resolve();
+  if (typeof browser !== 'undefined' && browser.windows) {
+    return windowsAPI.remove(windowId).catch(() => {});
+  }
+  return new Promise((resolve) => {
+    try {
+      windowsAPI.remove(windowId, () => {
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        resolve();
+      });
+    } catch (_) {
+      resolve();
+    }
+  });
+}
+
+// 标签页查询/关闭（Firefox 用 Promise，Chrome 用回调）
+function getTabCompat(tabId) {
+  if (!tabsAPI || !tabsAPI.get) return Promise.resolve(null);
+  if (typeof browser !== 'undefined' && browser.tabs) {
+    return tabsAPI.get(tabId).catch(() => null);
+  }
+  return new Promise((resolve) => {
+    try {
+      tabsAPI.get(tabId, (tab) => {
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        resolve(lastError ? null : tab);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+}
+
+function removeTabCompat(tabId) {
+  if (!tabsAPI || !tabsAPI.remove) return Promise.resolve();
+  if (typeof browser !== 'undefined' && browser.tabs) {
+    return tabsAPI.remove(tabId).catch(() => {});
+  }
+  return new Promise((resolve) => {
+    try {
+      tabsAPI.remove(tabId, () => {
+        const lastError = chrome.runtime && chrome.runtime.lastError;
+        resolve();
+      });
+    } catch (_) {
+      resolve();
+    }
+  });
+}
+
+// 关闭并清除已记录的旧弹层；pagePath 校验目标仍是本扩展弹窗页面，避免 ID 复用误关
+async function dismissFlowRef(key, pagePath) {
+  const ref = await readFlowRef(key);
+  if (!ref) return;
+  if (!ref.kind || typeof ref.id !== 'number') {
+    await clearFlowRef(key);
+    return;
+  }
+  try {
+    const pageUrl = runtimeAPI.getURL(pagePath);
+    const urlMatches = (url) => typeof url === 'string' && url.indexOf(pageUrl) === 0;
+    if (ref.kind === 'inline') {
+      await sendMessageToTabCompat(ref.id, { action: 'hideInlineBookmarkOverlay' });
+    } else if (ref.kind === 'window') {
+      const win = await getWindowCompat(ref.id);
+      const matched = win && Array.isArray(win.tabs) && win.tabs.some((tab) => urlMatches(tab && tab.url));
+      if (matched) {
+        await removeWindowCompat(ref.id);
+      }
+    } else if (ref.kind === 'tab') {
+      const tab = await getTabCompat(ref.id);
+      if (tab && urlMatches(tab.url)) {
+        await removeTabCompat(ref.id);
+      }
+    }
+  } catch (_) {
+    // 旧弹层可能已被手动关闭，忽略
+  } finally {
+    await clearFlowRef(key);
+  }
+}
+
+// 窗口/标签被关闭（含用户手动关闭）时清除对应单例引用
+async function handleFlowRefRemoved(kinds, removedId) {
+  const keys = [ADD_BOOKMARK_FLOW_REF_KEY, FLOATING_POPUP_REF_KEY];
+  for (const key of keys) {
+    const ref = await readFlowRef(key);
+    if (ref && kinds.indexOf(ref.kind) !== -1 && ref.id === removedId) {
+      await clearFlowRef(key);
+    }
+  }
+}
+
 async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', tabId = null, preferInlineOverlay = false } = {}) {
   if (!url) {
     throw new Error('缺少URL');
   }
+
+  // 单例顶替：先关闭上一次的添加书签弹层（独立窗口/标签页/页面内浮层）
+  await dismissFlowRef(ADD_BOOKMARK_FLOW_REF_KEY, 'pages/bookmarks.html');
 
   const settings = await storage.getSettings().catch(() => ({}));
   const addPopupSettings = resolveAddPopupSettings(settings, source);
@@ -1189,6 +1354,7 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
         heightMobileVh: mobileVh
       });
       if (inlineResp && inlineResp.success) {
+        await writeFlowRef(ADD_BOOKMARK_FLOW_REF_KEY, { kind: 'inline', id: targetTabId });
         return { mode: 'inline', tabId: targetTabId };
       }
     }
@@ -1204,7 +1370,8 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
 
   const openInTab = async () => {
     if (typeof browser !== 'undefined' && browser.tabs) {
-      await tabsAPI.create({ url: targetUrl });
+      const tab = await tabsAPI.create({ url: targetUrl });
+      await writeFlowRef(ADD_BOOKMARK_FLOW_REF_KEY, { kind: 'tab', id: tab && tab.id });
       return { mode: 'tab' };
     }
 
@@ -1215,6 +1382,7 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
           reject(new Error(lastError.message));
           return;
         }
+        writeFlowRef(ADD_BOOKMARK_FLOW_REF_KEY, { kind: 'tab', id: tab && tab.id });
         resolve({ mode: 'tab', tabId: tab && tab.id });
       });
     });
@@ -1270,6 +1438,7 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
   try {
     if (typeof browser !== 'undefined' && browser.windows) {
       const win = await windowsAPI.create(popupOptions);
+      await writeFlowRef(ADD_BOOKMARK_FLOW_REF_KEY, { kind: 'window', id: win && win.id });
       return { mode: 'popup', windowId: win?.id };
     }
 
@@ -1280,6 +1449,7 @@ async function openAddBookmarkWindow({ url = '', title = '', source = 'popup', t
           reject(new Error(lastError.message));
           return;
         }
+        writeFlowRef(ADD_BOOKMARK_FLOW_REF_KEY, { kind: 'window', id: win && win.id });
         resolve({ mode: 'popup', windowId: win && win.id });
       });
     });
@@ -1545,6 +1715,26 @@ if (windowsAPI && windowsAPI.onFocusChanged && typeof windowsAPI.onFocusChanged.
     });
   } catch (e) {
     console.warn('[返回检测] 注册窗口焦点监听失败（可能当前平台不支持）:', e?.message || e);
+  }
+}
+
+// 监听弹层窗口/标签关闭，及时清除单例引用（用户手动关闭等场景）
+if (windowsAPI && windowsAPI.onRemoved && typeof windowsAPI.onRemoved.addListener === 'function') {
+  try {
+    windowsAPI.onRemoved.addListener((windowId) => {
+      handleFlowRefRemoved(['window'], windowId);
+    });
+  } catch (e) {
+    console.warn('[弹层单例] 注册窗口关闭监听失败:', e?.message || e);
+  }
+}
+if (tabsAPI && tabsAPI.onRemoved && typeof tabsAPI.onRemoved.addListener === 'function') {
+  try {
+    tabsAPI.onRemoved.addListener((tabId) => {
+      handleFlowRefRemoved(['tab', 'inline'], tabId);
+    });
+  } catch (e) {
+    console.warn('[弹层单例] 注册标签页关闭监听失败:', e?.message || e);
   }
 }
 
@@ -1977,10 +2167,13 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     // 如果 windows API 不存在或不支持，直接回退到打开标签页
     if (!windowsAPI || !windowsAPI.create) {
       console.log('[后台] windows API 不存在，使用 tabs.create 打开标签页');
-      tabsAPI.create({
-        url: popupUrl
-      }).then(() => {
+      // 单例顶替：先关闭上一次悬浮球调出的主弹窗
+      dismissFlowRef(FLOATING_POPUP_REF_KEY, 'popup/popup.html').then(() => {
+        return tabsAPI.create({ url: popupUrl });
+      }).then((tab) => {
         console.log('[后台] tabs.create 成功');
+        return writeFlowRef(FLOATING_POPUP_REF_KEY, { kind: 'tab', id: tab && tab.id });
+      }).then(() => {
         sendResponse({ success: true });
       }).catch(error => {
         console.error('[后台] tabs.create 失败:', error);
@@ -1992,6 +2185,9 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
     // 使用立即执行的异步函数来处理异步操作
     (async () => {
       try {
+        // 单例顶替：先关闭上一次悬浮球调出的主弹窗
+        await dismissFlowRef(FLOATING_POPUP_REF_KEY, 'popup/popup.html');
+
         // 计算弹窗居中位置
         const popupWidth = 400;
         // 检测是否为悬浮球打开的弹窗（通过检查是否有 currentUrl 参数）
@@ -2119,12 +2315,14 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
           if (typeof browser !== 'undefined' && browser.windows) {
             // Firefox: 使用 Promise
             return windowsAPI.create(popupOptions).then(window => {
+              writeFlowRef(FLOATING_POPUP_REF_KEY, { kind: 'window', id: window && window.id });
               sendResponse({ success: true, windowId: window?.id });
             }).catch(error => {
               // 如果 popup 类型失败，回退到普通标签页
               tabsAPI.create({
                 url: popupUrl
-              }).then(() => {
+              }).then((tab) => {
+                writeFlowRef(FLOATING_POPUP_REF_KEY, { kind: 'tab', id: tab && tab.id });
                 sendResponse({ success: true });
               }).catch(err => {
                 sendResponse({ success: false, error: err.message || error.message });
@@ -2138,11 +2336,13 @@ runtimeAPI.onMessage.addListener((request, sender, sendResponse) => {
                   // 如果 popup 类型失败，回退到普通标签页
                   tabsAPI.create({
                     url: popupUrl
-                  }, () => {
+                  }, (tab) => {
+                    writeFlowRef(FLOATING_POPUP_REF_KEY, { kind: 'tab', id: tab && tab.id });
                     sendResponse({ success: true });
                     resolve();
                   });
                 } else {
+                  writeFlowRef(FLOATING_POPUP_REF_KEY, { kind: 'window', id: window && window.id });
                   sendResponse({ success: true, windowId: window?.id });
                   resolve();
                 }
