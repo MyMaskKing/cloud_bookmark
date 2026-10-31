@@ -381,11 +381,10 @@ document.addEventListener('DOMContentLoaded', async () => {
         onForgotPassword: () => {
           // 直接销毁锁屏，让用户在「安全设置」里点重置
           LockScreen.destroy();
-          // 滚到「安全设置」section
-          const sec = document.getElementById('securitySection');
-          if (sec && sec.scrollIntoView) {
-            sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
-          }
+          // 设置页已分类 tab 化：先切到「安全」tab，再由 tabs 脚本滚动到安全设置区
+          document.dispatchEvent(new CustomEvent('cloudBookmark:activateOptionsTab', {
+            detail: { tab: 'security', scroll: true }
+          }));
         }
       });
     } catch (_) { /* 不阻塞主流程 */ }

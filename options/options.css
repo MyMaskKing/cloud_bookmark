@@ -51,6 +51,73 @@ body {
   gap: 20px;
 }
 
+/* 设置分类 tab */
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.settings-tab {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-family: inherit;
+  color: #555;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+}
+
+.settings-tab:hover {
+  background: #f0f5fc;
+  color: #357abd;
+}
+
+.settings-tab.is-active,
+.settings-tab.is-active:hover {
+  background: #4a90e2;
+  color: white;
+}
+
+.settings-tab:focus-visible {
+  outline: 2px solid #4a90e2;
+  outline-offset: 1px;
+}
+
+.settings-tab-panel:not(.is-active) {
+  display: none;
+}
+
+/* tab 移动端适配：保持触控尺寸，tab 栏自身横向滚动 */
+@media (max-width: 768px) {
+  .settings-tabs {
+    gap: 6px;
+    padding: 6px;
+  }
+
+  .settings-tab {
+    padding: 10px 14px;
+    min-height: 40px;
+  }
+}
+
+@media (max-width: 480px) {
+  .settings-tab {
+    padding: 10px 12px;
+    font-size: 13px;
+  }
+}
+
 .section {
   background: white;
   padding: 24px;

@@ -13,7 +13,15 @@
     </header>
 
     <main class="main">
-      <section class="section">
+      <nav class="settings-tabs" role="tablist" aria-label="设置分类">
+        <button type="button" class="settings-tab is-active" id="settingsTab-sync" role="tab" aria-selected="true" aria-controls="settingsPanel-sync-webdav settingsPanel-sync-status settingsPanel-sync-devices" data-tab="sync">同步</button>
+        <button type="button" class="settings-tab" id="settingsTab-data" role="tab" aria-selected="false" aria-controls="settingsPanel-data-manage settingsPanel-data-scene" data-tab="data">数据</button>
+        <button type="button" class="settings-tab" id="settingsTab-ui" role="tab" aria-selected="false" aria-controls="settingsPanel-ui" data-tab="ui">界面</button>
+        <button type="button" class="settings-tab" id="settingsTab-security" role="tab" aria-selected="false" aria-controls="securitySection" data-tab="security">安全</button>
+        <button type="button" class="settings-tab" id="settingsTab-advanced" role="tab" aria-selected="false" aria-controls="settingsPanel-advanced" data-tab="advanced">高级</button>
+      </nav>
+
+      <section class="section settings-tab-panel is-active" id="settingsPanel-sync-webdav" role="tabpanel" aria-labelledby="settingsTab-sync" data-tabpanel="sync">
         <h2>WebDAV配置</h2>
         <form id="configForm" class="form">
           <div class="form-group">
@@ -53,7 +61,7 @@
         </form>
       </section>
 
-      <section class="section">
+      <section class="section settings-tab-panel is-active" id="settingsPanel-sync-status" role="tabpanel" aria-labelledby="settingsTab-sync" data-tabpanel="sync">
         <h2>同步状态</h2>
         <div id="syncStatus" class="sync-status">
           <div class="status-item">
@@ -75,7 +83,7 @@
         </div>
       </section>
 
-      <section class="section">
+      <section class="section settings-tab-panel" id="settingsPanel-data-manage" role="tabpanel" aria-labelledby="settingsTab-data" data-tabpanel="data">
         <h2>数据管理</h2>
         <div class="data-actions">
           <button id="exportJsonBtn" class="btn btn-secondary">导出JSON</button>
@@ -87,7 +95,7 @@
         </div>
       </section>
 
-      <section class="section">
+      <section class="section settings-tab-panel" id="settingsPanel-data-scene" role="tabpanel" aria-labelledby="settingsTab-data" data-tabpanel="data">
         <h2>场景管理</h2>
         <div class="scene-header">
           <div>当前场景：<span id="currentSceneName">-</span></div>
@@ -99,7 +107,7 @@
         <small>提示：不同场景的书签完全隔离，每个场景的书签存储在独立的文件中（{sceneId}_bookmarks.json）。</small>
       </section>
 
-      <section class="section">
+      <section class="section settings-tab-panel" id="settingsPanel-ui" role="tabpanel" aria-labelledby="settingsTab-ui" data-tabpanel="ui">
         <h2>界面设置</h2>
 
         <!-- 弹窗行为（滚动 / 展开） -->
@@ -301,15 +309,8 @@
             <br/>
             &nbsp;&nbsp;Firefox：在 about:addons → 管理扩展快捷键 中设置。</small>
         </div>
-        <div class="form-group checkbox-row">
-          <label>
-            <input type="checkbox" id="stickySyncErrorToast">
-            调试：同步失败提示不自动消失
-          </label>
-          <small>仅用于调试：开启后 toast 不会自动消失（直到下次提示覆盖）。不建议长期开启。</small>
-        </div>
       </section>
-      <section class="section" id="securitySection">
+      <section class="section settings-tab-panel" id="securitySection" role="tabpanel" aria-labelledby="settingsTab-security" data-tabpanel="security">
         <h2>安全设置</h2>
         <div class="ui-settings-block">
           <h3 class="section-subtitle">本地密码锁</h3>
@@ -366,7 +367,7 @@
           </div>
         </div>
       </section>
-      <section class="section">
+      <section class="section settings-tab-panel" id="settingsPanel-advanced" role="tabpanel" aria-labelledby="settingsTab-advanced" data-tabpanel="advanced">
             <h2>开发者设置</h2>
             <div class="ui-settings-block">
                 <h3 class="section-subtitle">调试选项</h3>
@@ -395,7 +396,7 @@
                 </div>
             </div>
       </section>
-      <section class="section">
+      <section class="section settings-tab-panel is-active" id="settingsPanel-sync-devices" role="tabpanel" aria-labelledby="settingsTab-sync" data-tabpanel="sync">
         <h2>存储设备管理</h2>
         <div class="device-header">
           <div>
@@ -519,6 +520,7 @@
   <script src="../utils/lockScreen.js"></script>
   <script src="options.js"></script>
   <script src="options.popupNavSettings.js"></script>
+  <script src="options.tabs.js"></script>
 </body>
 </html>
 

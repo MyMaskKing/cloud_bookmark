@@ -5,6 +5,7 @@ Thumbs.db
 # AI
 .codegraph
 .serena
+.ai/
 
 *.zip
 
