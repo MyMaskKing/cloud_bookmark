@@ -539,6 +539,14 @@ body.cb-add-flow-lock {
   gap: 8px;
 }
 
+/* 常规操作区：select 与图标按钮垂直居中对齐，窄屏自动换行不溢出 */
+.normal-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* 场景切换轻提示条：grid 行高 0fr/1fr 平滑展开（与弹窗风格一致） */
 .scene-switching-bar {
   display: grid;
@@ -771,6 +779,8 @@ body.cb-add-flow-lock {
   cursor: pointer;
   transition: all 0.2s;
   position: relative;
+  /* 允许 grid item 收缩到内容 min-content 以下，防止长 URL/文件夹名撑破列宽导致横向滚动 */
+  min-width: 0;
 }
 
 .bookmark-card:hover {
@@ -842,6 +852,93 @@ body.cb-dragging-bookmark .bookmark-card:hover:not(.dragging) {
   background: #e3f2fd;
   outline: 2px solid #4a90e2;
   outline-offset: -2px;
+}
+
+/* ==================== 移动端触摸排序模式 ==================== */
+/* 排序模式操作条：风格对齐批量操作条 */
+.reorder-actions-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reorder-actions-bar .reorder-hint-text {
+  flex: 1;
+  font-size: 13px;
+  color: #666;
+}
+
+/* 拖动手柄：44px 触摸目标，touch-action:none 阻断浏览器默认滚动手势 */
+.bookmark-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  margin: -8px -10px -8px auto;
+  border: none;
+  background: transparent;
+  color: #999;
+  font-size: 20px;
+  border-radius: 8px;
+  cursor: grab;
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bookmark-drag-handle:active {
+  cursor: grabbing;
+  background: #f0f4ff;
+  color: #4a90e2;
+}
+
+/* 排序模式中的卡片轻微提示 */
+.bookmark-card.reordering {
+  border-style: dashed;
+}
+
+/* 拖拽中源卡原位置的占位：同高虚线框 */
+.bookmark-reorder-placeholder {
+  border: 2px dashed #4a90e2;
+  border-radius: 8px;
+  background: #e3f2fd;
+  opacity: 0.6;
+  margin-bottom: 0;
+}
+
+/* 跟手浮动的源卡 */
+.bookmark-card.dragging-touch {
+  position: fixed;
+  z-index: 2000;
+  opacity: 0.95;
+  transform: scale(1.03);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+  cursor: grabbing;
+}
+
+@media (max-width: 768px) {
+  .reorder-actions-bar {
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .reorder-actions-bar .reorder-hint-text {
+    flex: 1 1 100%;
+    text-align: center;
+    padding: 4px 0;
+  }
+
+  .reorder-actions-bar button {
+    min-height: 44px;
+    padding: 10px 14px;
+    font-size: 14px;
+    flex: 1;
+    min-width: 0;
+  }
 }
 
 .bookmark-header {
@@ -947,6 +1044,11 @@ body.cb-dragging-bookmark .bookmark-card:hover:not(.dragging) {
   align-items: center;
   gap: 4px;
   font-weight: 400;
+  /* 长文件夹路径截断，避免不可断英文路径撑宽卡片 */
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .bookmark-tags {
@@ -964,6 +1066,11 @@ body.cb-dragging-bookmark .bookmark-card:hover:not(.dragging) {
   line-height: 1.4;
   color: #666;
   font-weight: 400;
+  /* 单个长标签不超出卡片，超出省略号 */
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .bookmark-actions {
@@ -1530,7 +1637,7 @@ body.cb-dragging-bookmark .bookmark-card:hover:not(.dragging) {
   }
 
   .mobile-only {
-    display: inline-flex;
+    display: inline-block; /* 与普通 .btn-icon 的 UA 默认 display 保持一致，inline-flex 会改变 button 内在尺寸导致 flex 容器内异常换行 */
   }
 
   .toolbar {
@@ -1582,15 +1689,23 @@ body.cb-dragging-bookmark .bookmark-card:hover:not(.dragging) {
     padding: 16px;
   }
 
-  /* 移动端：grid 视图显示2列，list 视图显示1列 */
+  /* 移动端：grid 视图显示2列，list 视图显示1列；minmax(0,1fr) 防止内容撑破轨道出现横向滚动 */
   .bookmarks-grid.view-grid {
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 12px;
   }
-  
+
   .bookmarks-grid.view-list {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
+  }
+
+  /* 移动端自定义排序的上下移按钮工具条（此前无样式，裸按钮参与文档流） */
+  .bookmark-reorder-mobile {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-bottom: 8px;
   }
 
   /* 移动端文件夹展开/折叠按钮优化 */

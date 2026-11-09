@@ -649,6 +649,24 @@ let dragLastInsertKey = null; // 本次拖拽最近一次插入位置，避免�
 let dragSortHintShown = false; // 非自定义排序模式下的一次性引导提示标记
 let gridDropHandled = false; // 本次拖拽是否已在书签网格内落位
 let folderDropHandled = false; // 本次拖拽是否已在侧边栏文件夹落位
+let reorderMode = false; // 移动端触摸排序模式（与批量模式互斥）
+// 触摸排序会话状态
+const touchReorder = {
+  active: false,       // 是否已越过阈值正式激活拖拽
+  started: false,      // 是否已在手柄上按下
+  srcCard: null,
+  placeholder: null,
+  startX: 0,
+  startY: 0,
+  offsetX: 0,          // 触点相对卡片左上角的偏移，保证跟手不跳位
+  offsetY: 0,
+  lastInsertKey: null,
+  moved: false,
+  rafId: null,
+  autoScrollRafId: null,
+  autoScrollDir: 0
+};
+const TOUCH_REORDER_THRESHOLD = 8; // 触摸位移激活阈值（px）
 const BOOKMARK_DND_MIME = 'application/x-cb-bookmark'; // 书签拖拽自定义数据类型（types 中统一小写）
 
 // CB_ICONS 图标集与 cbIcon() 统一定义在 utils/utils.js，本页经全局直接使用
@@ -753,6 +771,10 @@ const batchMoveBtn = document.getElementById('batchMoveBtn');
 const batchDeleteBtn = document.getElementById('batchDeleteBtn');
 const batchCancelBtn = document.getElementById('batchCancelBtn');
 const selectAllBtn = document.getElementById('selectAllBtn');
+const reorderModeBtn = document.getElementById('reorderModeBtn');
+const reorderActionsBar = document.getElementById('reorderActionsBar');
+const reorderDoneBtn = document.getElementById('reorderDoneBtn');
+const reorderCancelBtn = document.getElementById('reorderCancelBtn');
 
 // 非阻断 Toast（用于同步失败提示）
 let toastEl = null;
@@ -1147,6 +1169,11 @@ function setupEventListeners() {
   searchInput.addEventListener('input', debounce(handleSearch, 300));
   sortSelect.addEventListener('change', (e) => {
     currentSort = e.target.value;
+    // 离开自定义排序时自动退出触摸排序模式，未提交的改动随重绘回滚
+    if (reorderMode && currentSort !== 'custom') {
+      exitReorderMode(false);
+      return;
+    }
     renderBookmarks();
   });
   // 视图切换按钮：同时支持点击和触摸事件（解决安卓上点击没效果的问题）
@@ -1343,6 +1370,12 @@ function setupEventListeners() {
       draggingCardEl = null;
       dragLastInsertKey = null;
     });
+
+    // 移动端触摸排序（仅排序模式下手柄生效；touchmove 需非被动才能 preventDefault）
+    bookmarksGrid.addEventListener('touchstart', onReorderTouchStart, { passive: true });
+    bookmarksGrid.addEventListener('touchmove', onReorderTouchMove, { passive: false });
+    bookmarksGrid.addEventListener('touchend', onReorderTouchEnd);
+    bookmarksGrid.addEventListener('touchcancel', onReorderTouchCancel);
   }
 
   // 使用事件委托处理文件夹相关事件（避免重复绑定导致内存泄漏）
@@ -2802,32 +2835,21 @@ function reorderBookmarksById(sourceId, targetId, position = 'before') {
 }
 
 /**
- * dragover 帧回调：按指针在目标卡片上/下半部决定插前/插后，DOM 重排 + FLIP 平滑让位
- * 纯视图层操作，不触碰 currentBookmarks 数据（数据在 drop 时提交）
+ * 网格内 DOM 重排 + FLIP 平滑让位（桌面 HTML5 拖拽与移动端触摸拖拽共用）
+ * @param {HTMLElement} movingEl 被移动元素（桌面为源卡片，触摸为占位符）
+ * @param {HTMLElement} targetCard 目标卡片
+ * @param {boolean} before 插到目标卡片之前还是之后
  */
-function applyDragOverReorder(point) {
-  if (!draggingCardEl || !draggingBookmarkId) return;
-  const target = point.target.closest('.bookmark-card');
-  if (!target || target === draggingCardEl) return;
-  const srcBookmark = currentBookmarks.find(b => b.id === draggingBookmarkId);
-  const tgtBookmark = currentBookmarks.find(b => b.id === target.dataset.id);
-  if (!srcBookmark || !tgtBookmark) return;
-  // 仅同文件夹内允许实时让位，跨文件夹不响应
-  if (getBookmarkFolderKey(srcBookmark) !== getBookmarkFolderKey(tgtBookmark)) return;
-
-  const rect = target.getBoundingClientRect();
-  const before = point.y < rect.top + rect.height / 2;
-  const insertKey = `${target.dataset.id}:${before ? 'b' : 'a'}`;
-  if (insertKey === dragLastInsertKey) return;
-  dragLastInsertKey = insertKey;
-
-  // FLIP：先记录全部卡片旧位置（排除拖起源卡），DOM 变更后反向 transform 再过渡归位
-  const cards = Array.from(bookmarksGrid.querySelectorAll('.bookmark-card')).filter(c => c !== draggingCardEl);
+function flipReorderGrid(movingEl, targetCard, before) {
+  // FLIP：先记录全部卡片旧位置。占位符不是 .bookmark-card 天然排除；
+  // 触摸场景下源卡为 fixed 跟手（.dragging-touch），也必须排除，否则 transform 会与 left/top 叠加跳位
+  const cards = Array.from(bookmarksGrid.querySelectorAll('.bookmark-card'))
+    .filter(c => c !== movingEl && !c.classList.contains('dragging-touch'));
   const oldRects = new Map(cards.map(c => [c, c.getBoundingClientRect()]));
   if (before) {
-    bookmarksGrid.insertBefore(draggingCardEl, target);
+    bookmarksGrid.insertBefore(movingEl, targetCard);
   } else {
-    bookmarksGrid.insertBefore(draggingCardEl, target.nextSibling);
+    bookmarksGrid.insertBefore(movingEl, targetCard.nextSibling);
   }
   requestAnimationFrame(() => {
     cards.forEach(card => {
@@ -2853,6 +2875,29 @@ function applyDragOverReorder(point) {
   });
 }
 
+/**
+ * dragover 帧回调：按指针在目标卡片上/下半部决定插前/插后，DOM 重排 + FLIP 平滑让位
+ * 纯视图层操作，不触碰 currentBookmarks 数据（数据在 drop 时提交）
+ */
+function applyDragOverReorder(point) {
+  if (!draggingCardEl || !draggingBookmarkId) return;
+  const target = point.target.closest('.bookmark-card');
+  if (!target || target === draggingCardEl) return;
+  const srcBookmark = currentBookmarks.find(b => b.id === draggingBookmarkId);
+  const tgtBookmark = currentBookmarks.find(b => b.id === target.dataset.id);
+  if (!srcBookmark || !tgtBookmark) return;
+  // 仅同文件夹内允许实时让位，跨文件夹不响应
+  if (getBookmarkFolderKey(srcBookmark) !== getBookmarkFolderKey(tgtBookmark)) return;
+
+  const rect = target.getBoundingClientRect();
+  const before = point.y < rect.top + rect.height / 2;
+  const insertKey = `${target.dataset.id}:${before ? 'b' : 'a'}`;
+  if (insertKey === dragLastInsertKey) return;
+  dragLastInsertKey = insertKey;
+
+  flipReorderGrid(draggingCardEl, target, before);
+}
+
 /** 清除侧边栏所有文件夹行的书签放置高亮 */
 function clearFolderDropTargets() {
   if (!foldersList) return;
@@ -2865,6 +2910,282 @@ function clearFolderDropTargets() {
 function isBookmarkDragEvent(e) {
   const types = (e.dataTransfer && e.dataTransfer.types) || [];
   return Array.from(types).includes(BOOKMARK_DND_MIME);
+}
+
+/* ==================== 移动端触摸排序模式 ==================== */
+
+/** 切换排序模式操作条显隐（与批量模式操作条同风格） */
+function updateReorderModeUI() {
+  if (!reorderActionsBar || !normalActions) return;
+  if (reorderMode) {
+    reorderActionsBar.style.display = 'flex';
+    normalActions.style.display = 'none';
+  } else {
+    reorderActionsBar.style.display = 'none';
+    normalActions.style.display = 'flex';
+  }
+}
+
+/** 进入移动端触摸排序模式（纯本地视图切换，不发起网络请求，保证零延迟响应） */
+function enterReorderMode() {
+  if (reorderMode) return;
+  if (!isMobileView()) {
+    showToast('桌面端可直接拖拽卡片调整顺序', { title: '无需排序模式', type: 'info', duration: 1800 });
+    return;
+  }
+  if (currentSort !== 'custom') {
+    showToast('请先切换到「自定义排序（拖拽）」', { title: '无法排序', type: 'info', duration: 1800 });
+    return;
+  }
+  if (batchMode) return;
+  // 进入模式不写任何数据，无需先同步云端；顺序在点「完成」时才保存并上行，与桌面拖拽落位路径一致
+  resetTouchReorder();
+  reorderMode = true;
+  updateReorderModeUI();
+  renderBookmarks();
+}
+
+/**
+ * 退出触摸排序模式
+ * @param {boolean} commit true=提交本次会话的顺序改动；false=放弃（切模式/进批量/Esc）
+ */
+async function exitReorderMode(commit) {
+  if (!reorderMode) return;
+  const hasMoved = touchReorder.moved;
+  reorderMode = false;
+  resetTouchReorder();
+  updateReorderModeUI();
+  if (commit && hasMoved) {
+    // 与桌面拖拽落位同一套数据提交流程，整个排序会话只保存/同步一次
+    reindexBookmarkOrderByFolder();
+    currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
+    reindexBookmarkOrderByFolder();
+    refreshBookmarkMetaOrderFromCurrent();
+    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+    scheduleOrderSync();
+    renderBookmarks();
+  } else if (hasMoved) {
+    // 放弃改动：内存顺序已被拖动改写，从本地存储轻量重新加载恢复（不弹全屏遮罩）
+    await loadBookmarks({ lightLoading: true });
+  } else {
+    renderBookmarks();
+  }
+}
+
+/** 彻底清理触摸排序会话状态 */
+function resetTouchReorder() {
+  stopTouchAutoScroll();
+  if (touchReorder.rafId !== null) {
+    cancelAnimationFrame(touchReorder.rafId);
+    touchReorder.rafId = null;
+  }
+  Object.assign(touchReorder, {
+    active: false,
+    started: false,
+    srcCard: null,
+    placeholder: null,
+    startX: 0,
+    startY: 0,
+    offsetX: 0,
+    offsetY: 0,
+    lastX: 0,
+    lastY: 0,
+    lastInsertKey: null,
+    moved: false,
+    rafId: null,
+    autoScrollRafId: null,
+    autoScrollDir: 0,
+    container: null
+  });
+}
+
+/** 触摸起点：仅在手柄上按下才进入待激活状态 */
+function onReorderTouchStart(e) {
+  if (!reorderMode) return;
+  const handle = e.target.closest('.bookmark-drag-handle');
+  if (!handle) return;
+  const card = handle.closest('.bookmark-card');
+  if (!card) return;
+  const t = e.touches[0];
+  touchReorder.started = true;
+  touchReorder.active = false;
+  touchReorder.srcCard = card;
+  touchReorder.startX = t.clientX;
+  touchReorder.startY = t.clientY;
+  touchReorder.lastX = t.clientX;
+  touchReorder.lastY = t.clientY;
+  touchReorder.lastInsertKey = null;
+  // moved 不在此重置：同一会话内多次拖动的改动需累积到「完成」统一提交
+  touchReorder.container = document.querySelector('.bookmarks-container');
+}
+
+/** 越过阈值后正式激活：插入占位符，源卡转 fixed 跟手 */
+function activateTouchReorder(t) {
+  const card = touchReorder.srcCard;
+  const rect = card.getBoundingClientRect();
+  const placeholder = document.createElement('div');
+  placeholder.className = 'bookmark-reorder-placeholder';
+  placeholder.style.height = `${rect.height}px`;
+  card.parentNode.insertBefore(placeholder, card);
+
+  touchReorder.offsetX = t.clientX - rect.left;
+  touchReorder.offsetY = t.clientY - rect.top;
+  card.classList.add('dragging-touch');
+  card.style.width = `${rect.width}px`;
+  positionTouchGhost(t);
+  touchReorder.placeholder = placeholder;
+  touchReorder.active = true;
+  if (navigator.vibrate) navigator.vibrate(10);
+}
+
+/** 源卡跟随触点 */
+function positionTouchGhost(t) {
+  const card = touchReorder.srcCard;
+  if (!card) return;
+  card.style.left = `${t.clientX - touchReorder.offsetX}px`;
+  card.style.top = `${t.clientY - touchReorder.offsetY}px`;
+}
+
+/** 触摸移动：激活后跟手 + 防滚动 + 边缘自动滚动 + rAF 节流重排 */
+function onReorderTouchMove(e) {
+  if (!reorderMode || !touchReorder.started || !touchReorder.srcCard) return;
+  const t = e.touches[0];
+  touchReorder.lastX = t.clientX;
+  touchReorder.lastY = t.clientY;
+  if (!touchReorder.active) {
+    const dx = t.clientX - touchReorder.startX;
+    const dy = t.clientY - touchReorder.startY;
+    if (Math.abs(dx) < TOUCH_REORDER_THRESHOLD && Math.abs(dy) < TOUCH_REORDER_THRESHOLD) return;
+    activateTouchReorder(t);
+  }
+  // 激活后阻断浏览器默认滚动手势，滚动改由边缘自动滚动承担
+  e.preventDefault();
+  positionTouchGhost(t);
+  handleTouchAutoScroll(t);
+  if (touchReorder.rafId === null) {
+    touchReorder.rafId = requestAnimationFrame(() => {
+      touchReorder.rafId = null;
+      applyTouchReorderAtPoint(touchReorder.lastX, touchReorder.lastY);
+    });
+  }
+}
+
+/** 按当前触点查找目标卡片并执行 FLIP 重排（同文件夹约束与桌面一致） */
+function applyTouchReorderAtPoint(x, y) {
+  if (!touchReorder.active || !touchReorder.placeholder) return;
+  const srcCard = touchReorder.srcCard;
+  const targetEl = document.elementFromPoint(x, y);
+  const target = targetEl && targetEl.closest('.bookmark-card');
+  if (!target || target === srcCard) return;
+  const srcBookmark = currentBookmarks.find(b => b.id === srcCard.dataset.id);
+  const tgtBookmark = currentBookmarks.find(b => b.id === target.dataset.id);
+  if (!srcBookmark || !tgtBookmark) return;
+  if (getBookmarkFolderKey(srcBookmark) !== getBookmarkFolderKey(tgtBookmark)) return;
+  const rect = target.getBoundingClientRect();
+  const before = y < rect.top + rect.height / 2;
+  const insertKey = `${target.dataset.id}:${before ? 'b' : 'a'}`;
+  if (insertKey === touchReorder.lastInsertKey) return;
+  touchReorder.lastInsertKey = insertKey;
+  flipReorderGrid(touchReorder.placeholder, target, before);
+}
+
+/** 触点贴近容器上下边缘时自动滚动 */
+function handleTouchAutoScroll(t) {
+  const container = touchReorder.container;
+  if (!container) return;
+  const rect = container.getBoundingClientRect();
+  const EDGE = 56;
+  let dir = 0;
+  if (t.clientY < rect.top + EDGE) dir = -1;
+  else if (t.clientY > rect.bottom - EDGE) dir = 1;
+  touchReorder.autoScrollDir = dir;
+  if (dir !== 0 && touchReorder.autoScrollRafId === null) {
+    startTouchAutoScroll();
+  } else if (dir === 0 && touchReorder.autoScrollRafId !== null) {
+    stopTouchAutoScroll();
+  }
+}
+
+function startTouchAutoScroll() {
+  const SPEED = 12;
+  const step = () => {
+    if (touchReorder.autoScrollDir === 0 || !touchReorder.container) {
+      touchReorder.autoScrollRafId = null;
+      return;
+    }
+    touchReorder.container.scrollTop += SPEED * touchReorder.autoScrollDir;
+    // 滚动中触点不动但卡片位置变了，按最后触点重新检测落位
+    applyTouchReorderAtPoint(touchReorder.lastX, touchReorder.lastY);
+    touchReorder.autoScrollRafId = requestAnimationFrame(step);
+  };
+  touchReorder.autoScrollRafId = requestAnimationFrame(step);
+}
+
+function stopTouchAutoScroll() {
+  if (touchReorder.autoScrollRafId !== null) {
+    cancelAnimationFrame(touchReorder.autoScrollRafId);
+    touchReorder.autoScrollRafId = null;
+  }
+  touchReorder.autoScrollDir = 0;
+}
+
+/** 松手：按占位符相邻关系把顺序写入内存数据（保存与同步留给「完成」统一提交） */
+function onReorderTouchEnd() {
+  if (!reorderMode || !touchReorder.started) {
+    resetTouchReorder();
+    return;
+  }
+  if (touchReorder.active) {
+    const srcCard = touchReorder.srcCard;
+    const placeholder = touchReorder.placeholder;
+    const next = placeholder.nextElementSibling;
+    const prev = placeholder.previousElementSibling;
+    const nextCard = next && next.classList && next.classList.contains('bookmark-card') ? next : null;
+    const prevCard = prev && prev.classList && prev.classList.contains('bookmark-card') ? prev : null;
+    let movedOk = false;
+    if (nextCard) {
+      movedOk = reorderBookmarksById(srcCard.dataset.id, nextCard.dataset.id, 'before');
+    } else if (prevCard) {
+      movedOk = reorderBookmarksById(srcCard.dataset.id, prevCard.dataset.id, 'after');
+    }
+    if (movedOk) touchReorder.moved = true;
+    // 源卡插回占位符位置并还原样式
+    placeholder.parentNode.insertBefore(srcCard, placeholder);
+    placeholder.remove();
+    srcCard.classList.remove('dragging-touch');
+    srcCard.style.left = '';
+    srcCard.style.top = '';
+    srcCard.style.width = '';
+  }
+  stopTouchAutoScroll();
+  if (touchReorder.rafId !== null) {
+    cancelAnimationFrame(touchReorder.rafId);
+    touchReorder.rafId = null;
+  }
+  // 保留 moved 供「完成」读取，其余会话状态复位
+  const moved = touchReorder.moved;
+  resetTouchReorder();
+  touchReorder.moved = moved;
+}
+
+/** 系统中断手势（来电等）：放弃本次拖动，从存储恢复数据与 DOM */
+function onReorderTouchCancel() {
+  if (touchReorder.active && touchReorder.placeholder && touchReorder.srcCard) {
+    const { srcCard, placeholder } = touchReorder;
+    placeholder.parentNode.insertBefore(srcCard, placeholder);
+    placeholder.remove();
+    srcCard.classList.remove('dragging-touch');
+    srcCard.style.left = '';
+    srcCard.style.top = '';
+    srcCard.style.width = '';
+  }
+  const hadMoved = touchReorder.moved;
+  resetTouchReorder();
+  if (hadMoved) {
+    loadBookmarks({ lightLoading: true });
+  } else {
+    renderBookmarks();
+  }
 }
 
 function moveBookmarkByDirection(bookmarkId, direction) {
@@ -3162,8 +3483,9 @@ function renderBookmarks() {
         });
       } else {
         // 正常模式
-        // 点击卡片打开网站（排除详情按钮）
+        // 点击卡片打开网站（排除详情按钮；触摸排序模式下整体禁用）
         card.querySelector('.bookmark-info').addEventListener('click', (e) => {
+          if (reorderMode) return;
           if (e.target.closest('.bookmark-detail-btn')) {
             return;
           }
@@ -3175,6 +3497,7 @@ function renderBookmarks() {
         if (starBtn) {
           starBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (reorderMode) return;
             toggleStar(bookmarkId);
           });
         }
@@ -3184,6 +3507,7 @@ function renderBookmarks() {
         if (editBtn) {
           editBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (reorderMode) return;
             showEditForm(bookmark);
           });
         }
@@ -3193,6 +3517,7 @@ function renderBookmarks() {
         if (deleteBtn) {
           deleteBtn.addEventListener('click', (e) => {
             e.stopPropagation();
+            if (reorderMode) return;
             deleteBookmark(bookmarkId);
           });
         }
@@ -3243,10 +3568,11 @@ function renderBookmarkCard(bookmark) {
   const favicon = bookmark.favicon || bookmark.icon || getFaviconUrl(bookmark.url);
   const domain = getDomain(bookmark.url);
   const isSelected = selectedBookmarkIds.has(bookmark.id);
-  const showMobileReorder = currentSort === 'custom' && !batchMode && isMobileView();
+  const showMobileReorder = currentSort === 'custom' && !batchMode && isMobileView() && !reorderMode;
+  const showDragHandle = currentSort === 'custom' && !batchMode && isMobileView() && reorderMode;
 
   return `
-    <div class="bookmark-card ${bookmark.starred ? 'starred' : ''} ${isSelected ? 'selected' : ''}" data-id="${bookmark.id}">
+    <div class="bookmark-card ${bookmark.starred ? 'starred' : ''} ${isSelected ? 'selected' : ''} ${showDragHandle ? 'reordering' : ''}" data-id="${bookmark.id}">
       ${batchMode ? `
         <div class="bookmark-checkbox">
           <input type="checkbox" class="bookmark-select-checkbox" data-id="${bookmark.id}" ${isSelected ? 'checked' : ''}>
@@ -3257,6 +3583,9 @@ function renderBookmarkCard(bookmark) {
           <button class="action-btn move-up-btn" title="上移">${cbIcon('arrowUp')}</button>
           <button class="action-btn move-down-btn" title="下移">${cbIcon('arrowDown')}</button>
         </div>
+      ` : ''}
+      ${showDragHandle ? `
+        <div class="bookmark-drag-handle" title="拖动排序">${cbIcon('gripVertical')}</div>
       ` : ''}
       <div class="bookmark-header">
         ${viewOptions.showIcon ? `<img src="${favicon}" alt="" class="bookmark-favicon" data-fallback-icon>` : ''}
@@ -4342,6 +4671,10 @@ async function syncToCloud(opts = {}) {
  * 切换批量模式
  */
 function toggleBatchMode() {
+  // 批量模式与触摸排序模式互斥：进入批量前先放弃排序改动并退出
+  if (!batchMode && reorderMode) {
+    exitReorderMode(false);
+  }
   batchMode = !batchMode;
   if (!batchMode) {
     selectedBookmarkIds.clear();
@@ -4781,6 +5114,20 @@ function showFolderSelectDialog(options = {}) {
 // 绑定批量操作事件
 batchModeBtn.addEventListener('click', toggleBatchMode);
 batchCancelBtn.addEventListener('click', toggleBatchMode);
+if (reorderModeBtn) {
+  reorderModeBtn.addEventListener('click', enterReorderMode);
+}
+if (reorderDoneBtn) {
+  reorderDoneBtn.addEventListener('click', () => exitReorderMode(true));
+}
+if (reorderCancelBtn) {
+  reorderCancelBtn.addEventListener('click', () => exitReorderMode(false));
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && reorderMode) {
+    exitReorderMode(false);
+  }
+});
 batchMoveBtn.addEventListener('click', batchMoveBookmarks);
 batchDeleteBtn.addEventListener('click', batchDeleteBookmarks);
 selectAllBtn.addEventListener('click', toggleSelectAll);
