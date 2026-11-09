@@ -643,6 +643,57 @@ let sourceTabId = null; // 记录来源标签页ID（用于关闭后恢复焦点
 let autoCloseTimer = null; // 自动关闭定时器
 let orderSyncPending = false; // 标记是否有未执行的排序同步
 let draggingBookmarkId = null; // 当前拖拽的书签ID（自定义排序）
+let draggingCardEl = null; // 当前拖拽的书签卡片 DOM（FLIP 动画与清理用）
+let dragRafId = null; // dragover 重排的 rAF 节流句柄
+let dragLastInsertKey = null; // 本次拖拽最近一次插入位置，避免重复 FLIP
+let dragSortHintShown = false; // 非自定义排序模式下的一次性引导提示标记
+let gridDropHandled = false; // 本次拖拽是否已在书签网格内落位
+let folderDropHandled = false; // 本次拖拽是否已在侧边栏文件夹落位
+const BOOKMARK_DND_MIME = 'application/x-cb-bookmark'; // 书签拖拽自定义数据类型（types 中统一小写）
+
+/**
+ * 统一线性 SVG 图标集（24×24，currentColor，无新依赖）
+ * filled 变体使用填充而非描边
+ */
+const CB_ICONS = {
+  info: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  edit: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+  trash: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="m19 6-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  star: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>',
+  starFilled: '<svg class="cb-icon cb-icon-fill" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>',
+  note: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/></svg>',
+  folder: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg>',
+  folderOpen: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/></svg>',
+  external: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>',
+  chevronRight: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="9 18 15 12 9 6"/></svg>',
+  chevronDown: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>',
+  arrowUp: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>',
+  arrowDown: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><polyline points="19 12 12 19 5 12"/></svg>',
+  grid: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>',
+  list: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+  eye: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>',
+  save: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>',
+  refresh: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>',
+  menu: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="18" x2="20" y2="18"/></svg>',
+  plus: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>',
+  close: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+  clipboard: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>',
+  checkSquare: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><polyline points="9 12 11 14 15 10"/></svg>',
+  book: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+  clock: '<svg class="cb-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
+};
+
+/** 取内联 SVG 图标字符串 */
+function cbIcon(name) {
+  return CB_ICONS[name] || '';
+}
+
+/** 当前设备是否支持 HTML5 指针拖拽（触摸粗指针设备不启用，移动端走上下移按钮） */
+function supportsPointerDrag() {
+  if (isMobileView()) return false;
+  if (window.matchMedia && window.matchMedia('(hover: none) and (pointer: coarse)').matches) return false;
+  return true;
+}
 
 function isMobileView() {
   return window.innerWidth <= 768;
@@ -1230,36 +1281,71 @@ function setupEventListeners() {
     sidebarOverlay.addEventListener('click', () => closeSidebarMobile());
   }
 
-  // 书签卡片拖拽排序（仅在自定义排序模式且非批量模式启用）
+  // 书签卡片拖拽：自定义排序模式下网格内实时让位排序，任意模式下可拖到侧边栏文件夹归类
   if (bookmarksGrid) {
     bookmarksGrid.addEventListener('dragstart', (e) => {
-      if (currentSort !== 'custom' || batchMode) return;
+      if (batchMode) return;
       const card = e.target.closest('.bookmark-card');
       if (!card) return;
       draggingBookmarkId = card.dataset.id;
+      draggingCardEl = card;
+      dragLastInsertKey = null;
+      dragSortHintShown = false;
+      gridDropHandled = false;
+      folderDropHandled = false;
+      // Firefox 必须 setData 才会真正启动拖拽；自定义 MIME 用于与文件夹排序拖拽分流
+      e.dataTransfer.setData(BOOKMARK_DND_MIME, draggingBookmarkId);
+      e.dataTransfer.setData('text/plain', draggingBookmarkId);
       e.dataTransfer.effectAllowed = 'move';
+      card.classList.add('dragging');
+      document.body.classList.add('cb-dragging-bookmark');
     });
 
     bookmarksGrid.addEventListener('dragover', (e) => {
-      if (currentSort !== 'custom' || batchMode) return;
+      if (batchMode || !draggingBookmarkId) return;
+      // 非自定义排序：网格内不接受落位，仅给一次引导提示（仍可继续拖向侧边栏文件夹）
+      if (currentSort !== 'custom') {
+        if (!dragSortHintShown) {
+          dragSortHintShown = true;
+          showToast('切换到「自定义排序（拖拽）」后可在此调整顺序，也可以直接拖到左侧文件夹归类', {
+            title: '排序提示',
+            type: 'info',
+            duration: 2200
+          });
+        }
+        return;
+      }
       const card = e.target.closest('.bookmark-card');
-      if (!card) return;
+      if (!card || card === draggingCardEl) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
+
+      // rAF 节流：每帧最多重排一次，记录事件坐标与目标供帧回调使用
+      if (dragRafId !== null) return;
+      const point = { x: e.clientX, y: e.clientY, target: card };
+      dragRafId = requestAnimationFrame(() => {
+        dragRafId = null;
+        applyDragOverReorder(point);
+      });
     });
 
     bookmarksGrid.addEventListener('drop', async (e) => {
-      if (currentSort !== 'custom' || batchMode) return;
+      if (batchMode || currentSort !== 'custom' || !draggingBookmarkId) return;
       const card = e.target.closest('.bookmark-card');
-      if (!card || !draggingBookmarkId) return;
+      if (!card || !draggingCardEl) return;
       e.preventDefault();
-      const targetId = card.dataset.id;
-      if (!targetId || targetId === draggingBookmarkId) {
-        draggingBookmarkId = null;
-        return;
+      gridDropHandled = true;
+      // 以实时 FLIP 后的 DOM 相邻关系推导落位，保证数据顺序与视觉一致
+      const siblings = Array.from(bookmarksGrid.querySelectorAll('.bookmark-card'));
+      const domIdx = siblings.indexOf(draggingCardEl);
+      const next = siblings[domIdx + 1];
+      const prev = siblings[domIdx - 1];
+      let movedOk = false;
+      if (next) {
+        movedOk = reorderBookmarksById(draggingBookmarkId, next.dataset.id, 'before');
+      } else if (prev) {
+        movedOk = reorderBookmarksById(draggingBookmarkId, prev.dataset.id, 'after');
       }
-      const movedOk = reorderBookmarksById(draggingBookmarkId, targetId);
-      draggingBookmarkId = null;
       if (!movedOk) return;
       // 仅在本地完成“同文件夹内排序”，不在拖拽时拉云端，避免侧边栏文件夹顺序被重绘影响观感
       reindexBookmarkOrderByFolder();
@@ -1272,7 +1358,25 @@ function setupEventListeners() {
     });
 
     bookmarksGrid.addEventListener('dragend', () => {
+      if (dragRafId !== null) {
+        cancelAnimationFrame(dragRafId);
+        dragRafId = null;
+      }
+      const cancelled = !gridDropHandled && !folderDropHandled;
+      clearFolderDropTargets();
+      document.body.classList.remove('cb-dragging-bookmark');
+      if (draggingCardEl) {
+        draggingCardEl.classList.remove('dragging');
+        draggingCardEl.style.transition = '';
+        draggingCardEl.style.transform = '';
+      }
+      // 拖到容器外松手：DOM 已被 FLIP 改动但数据未提交，重绘恢复，避免视觉与数据脱节
+      if (cancelled) {
+        renderBookmarks();
+      }
       draggingBookmarkId = null;
+      draggingCardEl = null;
+      dragLastInsertKey = null;
     });
   }
 
@@ -1414,8 +1518,23 @@ function setupEventListeners() {
 
     foldersList.addEventListener('dragover', (e) => {
       const row = e.target.closest('.folder-row');
-      if (row) {
-        e.preventDefault();
+      if (!row) return;
+      e.preventDefault();
+      // 书签卡片拖入：高亮目标文件夹行（文件夹之间排序的拖拽不进入此分支）
+      if (isBookmarkDragEvent(e)) {
+        e.dataTransfer.dropEffect = 'move';
+        if (!row.classList.contains('folder-drop-target')) {
+          clearFolderDropTargets();
+          row.classList.add('folder-drop-target');
+        }
+      }
+    });
+
+    foldersList.addEventListener('dragleave', (e) => {
+      // 仅当指针真正离开文件夹行（而非移入其子元素）时清除高亮
+      const row = e.target.closest('.folder-row');
+      if (row && !row.contains(e.relatedTarget)) {
+        row.classList.remove('folder-drop-target');
       }
     });
 
@@ -1423,6 +1542,17 @@ function setupEventListeners() {
       const row = e.target.closest('.folder-row');
       if (!row) return;
       e.preventDefault();
+      // 书签拖入文件夹归类：与文件夹排序分流
+      if (isBookmarkDragEvent(e)) {
+        const bookmarkId = e.dataTransfer.getData(BOOKMARK_DND_MIME) || draggingBookmarkId;
+        const targetFolder = row.dataset.folder || '';
+        clearFolderDropTargets();
+        folderDropHandled = true;
+        if (bookmarkId) {
+          await moveBookmarkToFolderByDrag(bookmarkId, targetFolder);
+        }
+        return;
+      }
       const source = e.dataTransfer.getData('text/plain');
       const target = row.dataset.folder;
       if (!source || !target || source === target) return;
@@ -1978,8 +2108,8 @@ async function loadFolders() {
         <li class="folder-node">
           <div class="folder-row" data-folder="">
             <span class="folder-label" data-folder="" title="未分类">
-              <span class="folder-label-text">📁 未分类</span>
-              ${folderOpenAllEnabled ? '<button class="folder-open-all-btn" data-folder="" title="在新标签页打开全部">🔗</button>' : ''}
+              <span class="folder-label-text">${cbIcon('folder')} 未分类</span>
+              ${folderOpenAllEnabled ? '<button class="folder-open-all-btn" data-folder="" title="在新标签页打开全部">' + cbIcon('external') + '</button>' : ''}
               <span class="folder-count">${uncategorizedCount}</span>
             </span>
           </div>
@@ -2057,8 +2187,8 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
     // 检查展开状态：只要 expandedFolders 中包含该路径，就展开，不管是否有子文件夹或书签
     const expanded = expandedFolders.has(child.path);
 
-    // 根据展开状态选择图标（展开用📂，折叠用📁）
-    const icon = expanded ? '📂' : '📁';
+    // 根据展开状态选择图标（展开用打开的文件夹，折叠用闭合文件夹）
+    const icon = expanded ? cbIcon('folderOpen') : cbIcon('folder');
 
     // 展开时，获取该文件夹下的书签并渲染
     let bookmarksHtml = '';
@@ -2091,11 +2221,11 @@ function renderFolderTree(children, folderCountMap = new Map(), rootNode = null,
         <li class="folder-node">
           <div class="folder-row" data-folder="${escapeHtml(child.path)}">
             <button class="folder-expand-toggle" data-folder="${escapeHtml(child.path)}" title="${expanded ? '折叠' : '展开'}">
-              ${expanded ? '▼' : '▶'}
+              ${expanded ? cbIcon('chevronDown') : cbIcon('chevronRight')}
             </button>
             <span class="folder-label" data-folder="${escapeHtml(child.path)}" title="${escapeHtml(child.path)}">
               <span class="folder-label-text">${icon} ${escapeHtml(child.name)}</span>
-              ${folderOpenAllEnabled ? `<button class="folder-open-all-btn" data-folder="${escapeHtml(child.path)}" title="在新标签页打开全部（含子文件夹）">🔗</button>` : ''}
+              ${folderOpenAllEnabled ? `<button class="folder-open-all-btn" data-folder="${escapeHtml(child.path)}" title="在新标签页打开全部（含子文件夹）">${cbIcon('external')}</button>` : ''}
               <span class="folder-count">${totalCount}</span>
             </span>
             <button class="folder-menu" data-folder="${escapeHtml(child.path)}" title="操作">⋯</button>
@@ -2420,28 +2550,28 @@ function openFolderMenu(anchorBtn, folderPath) {
   menu.className = 'folder-menu-popup';
   menu.innerHTML = `
     <div class="folder-menu-item" data-action="add">
-      <span style="font-size: 16px;">📁</span>
+      <span style="font-size: 16px;">${cbIcon('folder')}</span>
       <span>新增子文件夹</span>
     </div>
     <div class="folder-menu-item" data-action="rename">
-      <span style="font-size: 16px;">✏️</span>
+      <span style="font-size: 16px;">${cbIcon('edit')}</span>
       <span>重命名</span>
     </div>
     <div class="folder-menu-item" data-action="move">
-      <span style="font-size: 16px;">📂</span>
+      <span style="font-size: 16px;">${cbIcon('folderOpen')}</span>
       <span>移动到</span>
     </div>
     <div class="folder-menu-item" data-action="move-up">
-      <span style="font-size: 16px;">⬆️</span>
+      <span style="font-size: 16px;">${cbIcon('arrowUp')}</span>
       <span>上移（同层级）</span>
     </div>
     <div class="folder-menu-item" data-action="move-down">
-      <span style="font-size: 16px;">⬇️</span>
+      <span style="font-size: 16px;">${cbIcon('arrowDown')}</span>
       <span>下移（同层级）</span>
     </div>
     <div style="height: 1px; background: #e0e0e0; margin: 6px 0;"></div>
     <div class="folder-menu-item danger" data-action="delete">
-      <span style="font-size: 16px;">🗑️</span>
+      <span style="font-size: 16px;">${cbIcon('trash')}</span>
       <span>删除文件夹（含书签）</span>
     </div>
   `;
@@ -2671,8 +2801,11 @@ function moveFolderBlock(list, srcRoot, { before = null, after = null } = {}) {
 
 /**
  * 重排书签顺序（自定义排序拖拽）
+ * @param {string} sourceId 被拖拽书签 id
+ * @param {string} targetId 参照书签 id
+ * @param {'before'|'after'} [position='before'] 落到参照书签的前/后
  */
-function reorderBookmarksById(sourceId, targetId) {
+function reorderBookmarksById(sourceId, targetId, position = 'before') {
   const srcIdx = currentBookmarks.findIndex(b => b.id === sourceId);
   const tgtIdx = currentBookmarks.findIndex(b => b.id === targetId);
   if (srcIdx === -1 || tgtIdx === -1) {
@@ -2688,12 +2821,85 @@ function reorderBookmarksById(sourceId, targetId) {
   }
   const newOrder = [...currentBookmarks];
   const [item] = newOrder.splice(srcIdx, 1);
-  const adjustedTarget = srcIdx < tgtIdx ? tgtIdx - 1 : tgtIdx;
-  newOrder.splice(adjustedTarget, 0, item);
+  let insertAt;
+  if (position === 'after') {
+    // 取出源元素后参照元素的新索引 +1，即插到参照之后
+    insertAt = newOrder.findIndex(b => b.id === targetId) + 1;
+  } else {
+    const adjustedTarget = srcIdx < tgtIdx ? tgtIdx - 1 : tgtIdx;
+    insertAt = adjustedTarget;
+  }
+  newOrder.splice(insertAt, 0, item);
   currentBookmarks = newOrder;
   // 同文件夹内重排 order 字段，确保刷新/上云后一致
   reindexBookmarkOrderByFolder();
   return true;
+}
+
+/**
+ * dragover 帧回调：按指针在目标卡片上/下半部决定插前/插后，DOM 重排 + FLIP 平滑让位
+ * 纯视图层操作，不触碰 currentBookmarks 数据（数据在 drop 时提交）
+ */
+function applyDragOverReorder(point) {
+  if (!draggingCardEl || !draggingBookmarkId) return;
+  const target = point.target.closest('.bookmark-card');
+  if (!target || target === draggingCardEl) return;
+  const srcBookmark = currentBookmarks.find(b => b.id === draggingBookmarkId);
+  const tgtBookmark = currentBookmarks.find(b => b.id === target.dataset.id);
+  if (!srcBookmark || !tgtBookmark) return;
+  // 仅同文件夹内允许实时让位，跨文件夹不响应
+  if (getBookmarkFolderKey(srcBookmark) !== getBookmarkFolderKey(tgtBookmark)) return;
+
+  const rect = target.getBoundingClientRect();
+  const before = point.y < rect.top + rect.height / 2;
+  const insertKey = `${target.dataset.id}:${before ? 'b' : 'a'}`;
+  if (insertKey === dragLastInsertKey) return;
+  dragLastInsertKey = insertKey;
+
+  // FLIP：先记录全部卡片旧位置（排除拖起源卡），DOM 变更后反向 transform 再过渡归位
+  const cards = Array.from(bookmarksGrid.querySelectorAll('.bookmark-card')).filter(c => c !== draggingCardEl);
+  const oldRects = new Map(cards.map(c => [c, c.getBoundingClientRect()]));
+  if (before) {
+    bookmarksGrid.insertBefore(draggingCardEl, target);
+  } else {
+    bookmarksGrid.insertBefore(draggingCardEl, target.nextSibling);
+  }
+  requestAnimationFrame(() => {
+    cards.forEach(card => {
+      const oldRect = oldRects.get(card);
+      if (!oldRect) return;
+      const newRect = card.getBoundingClientRect();
+      const dx = oldRect.left - newRect.left;
+      const dy = oldRect.top - newRect.top;
+      if (!dx && !dy) return;
+      card.style.transition = 'none';
+      card.style.transform = `translate(${dx}px, ${dy}px)`;
+      // 强制重排后启动过渡归位
+      card.getBoundingClientRect();
+      card.style.transition = 'transform 0.18s ease';
+      card.style.transform = '';
+    });
+    // 兜底清理内联过渡，避免 transitionend 丢失时残留
+    setTimeout(() => {
+      cards.forEach(card => {
+        if (card.style.transform === '') card.style.transition = '';
+      });
+    }, 220);
+  });
+}
+
+/** 清除侧边栏所有文件夹行的书签放置高亮 */
+function clearFolderDropTargets() {
+  if (!foldersList) return;
+  foldersList.querySelectorAll('.folder-drop-target').forEach(row => {
+    row.classList.remove('folder-drop-target');
+  });
+}
+
+/** 判断当前拖拽事件是否携带书签自定义数据类型（types 统一小写匹配） */
+function isBookmarkDragEvent(e) {
+  const types = (e.dataTransfer && e.dataTransfer.types) || [];
+  return Array.from(types).includes(BOOKMARK_DND_MIME);
 }
 
 function moveBookmarkByDirection(bookmarkId, direction) {
@@ -2942,9 +3148,9 @@ function renderBookmarks() {
     emptyState.style.display = 'none';
     bookmarksGrid.innerHTML = filtered.map(bookmark => renderBookmarkCard(bookmark)).join('');
 
-    // 自定义排序模式下允许拖拽书签卡片
+    // 非批量模式且设备支持指针拖拽时允许拖动：自定义排序可网格内排序，任意排序可拖到侧边栏文件夹归类
     bookmarksGrid.querySelectorAll('.bookmark-card').forEach(card => {
-      if (currentSort === 'custom' && !batchMode) {
+      if (!batchMode && supportsPointerDrag()) {
         card.setAttribute('draggable', 'true');
       } else {
         card.removeAttribute('draggable');
@@ -2993,7 +3199,7 @@ function renderBookmarks() {
         // 正常模式
         // 点击卡片打开网站（排除详情按钮）
         card.querySelector('.bookmark-info').addEventListener('click', (e) => {
-          if (e.target.classList.contains('bookmark-detail-btn')) {
+          if (e.target.closest('.bookmark-detail-btn')) {
             return;
           }
           tabsAPI.create({ url: bookmark.url });
@@ -3083,8 +3289,8 @@ function renderBookmarkCard(bookmark) {
       ` : ''}
       ${showMobileReorder ? `
         <div class="bookmark-reorder-mobile">
-          <button class="action-btn move-up-btn" title="上移">⬆️</button>
-          <button class="action-btn move-down-btn" title="下移">⬇️</button>
+          <button class="action-btn move-up-btn" title="上移">${cbIcon('arrowUp')}</button>
+          <button class="action-btn move-down-btn" title="下移">${cbIcon('arrowDown')}</button>
         </div>
       ` : ''}
       <div class="bookmark-header">
@@ -3092,21 +3298,21 @@ function renderBookmarkCard(bookmark) {
         <div class="bookmark-info">
           <div class="bookmark-title">
             <span class="bookmark-title-text">${escapeHtml(bookmark.title || '无标题')}</span>
-            <button class="bookmark-detail-btn" data-id="${bookmark.id}" title="查看详情">ℹ️</button>
+            <button class="bookmark-detail-btn" data-id="${bookmark.id}" title="查看详情">${cbIcon('info')}</button>
           </div>
           ${viewOptions.showUrl ? `<div class="bookmark-url">${escapeHtml(domain || bookmark.url)}</div>` : ''}
         </div>
         <div class="bookmark-header-right">
           <div class="bookmark-actions" style="${batchMode ? 'display: none;' : ''}">
-            <button class="action-btn edit-btn" title="编辑">✏️</button>
-            <button class="action-btn delete-btn" title="删除">🗑️</button>
+            <button class="action-btn edit-btn" title="编辑">${cbIcon('edit')}</button>
+            <button class="action-btn delete-btn" title="删除">${cbIcon('trash')}</button>
           </div>
-          <div class="bookmark-star">${bookmark.starred ? '⭐' : '☆'}</div>
+          <div class="bookmark-star">${bookmark.starred ? cbIcon('starFilled') : cbIcon('star')}</div>
         </div>
       </div>
       ${viewOptions.showDescription && bookmark.description ? `<div class="bookmark-description">${escapeHtml(bookmark.description)}</div>` : ''}
-      ${viewOptions.showNotes && bookmark.notes ? `<div class="bookmark-notes">📝 ${escapeHtml(bookmark.notes)}</div>` : ''}
-      ${viewOptions.showFolder ? `<div class="bookmark-folder">📁 ${bookmark.folder ? escapeHtml(bookmark.folder) : '未分类'}</div>` : ''}
+      ${viewOptions.showNotes && bookmark.notes ? `<div class="bookmark-notes">${cbIcon('note')} ${escapeHtml(bookmark.notes)}</div>` : ''}
+      ${viewOptions.showFolder ? `<div class="bookmark-folder">${cbIcon('folder')} ${bookmark.folder ? escapeHtml(bookmark.folder) : '未分类'}</div>` : ''}
       ${viewOptions.showTags && bookmark.tags && bookmark.tags.length > 0 ? `
         <div class="bookmark-tags">
           ${bookmark.tags.map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
@@ -3409,7 +3615,7 @@ function showCreateFolderDialog(currentSelectedPath) {
     dialog.innerHTML = `
       <div style="margin-bottom: 20px;">
         <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a; display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 24px;">📁</span>
+          <span style="font-size: 24px;">${cbIcon('folder')}</span>
           <span>${title}</span>
         </h3>
       </div>
@@ -3955,10 +4161,10 @@ function applyViewMode() {
   }
 
   if (viewToggle) {
-    const newText = currentView === 'grid' ? '📋' : '⊞';
-    console.log('[视图切换] 设置按钮文本:', newText);
-    viewToggle.textContent = newText;
-    console.log('[视图切换] 实际按钮文本:', viewToggle.textContent);
+    // 当前为网格视图时显示列表图标（点击切到列表），反之显示网格图标
+    const newIcon = currentView === 'grid' ? cbIcon('list') : cbIcon('grid');
+    console.log('[视图切换] 设置按钮图标，当前视图:', currentView);
+    viewToggle.innerHTML = newIcon;
   } else {
     console.error('[视图切换] viewToggle 元素未找到！');
   }
@@ -4118,7 +4324,7 @@ async function handleSync() {
   } finally {
     hideGlobalLoading();
     syncBtn.disabled = false;
-    syncBtn.textContent = '🔄';
+    syncBtn.innerHTML = cbIcon('refresh');
   }
 }
 
@@ -4236,6 +4442,88 @@ function toggleSelectAll() {
 }
 
 /**
+ * 把指定书签移动到目标文件夹（纯数据操作 + 本地保存，不含云端同步与 UI 刷新）
+ * 批量移动与拖拽归类共用，保证两条路径行为一致
+ * @param {string[]} ids 待移动书签 id 列表
+ * @param {string} targetFolder 目标文件夹路径，空串/undefined 表示未分类
+ * @returns {Promise<{movedIds: string[], movedFolderIds: string[]}|null>} 实际移动时返回补丁 id；无变化返回 null
+ */
+async function applyBookmarksFolderMove(ids, targetFolder) {
+  const idSet = new Set(ids);
+  const bookmarksToMove = currentBookmarks.filter(b => idSet.has(b.id));
+  if (bookmarksToMove.length === 0) return null;
+
+  // 更新书签的文件夹（与单个编辑逻辑一致：空字符串转为 undefined）
+  const normalizedTargetFolder = targetFolder && targetFolder.trim() ? normalizeFolderPath(targetFolder) : undefined;
+
+  // 短路：全部书签已在目标文件夹时视为 no-op，不写存储、不触发同步
+  const allSame = bookmarksToMove.every(b =>
+    normalizeFolderPath(b.folder || '') === normalizeFolderPath(normalizedTargetFolder || '')
+  );
+  if (allSame) return null;
+
+  bookmarksToMove.forEach(bookmark => {
+    bookmark.folder = normalizedTargetFolder;
+    bookmark.updatedAt = Date.now();
+  });
+
+  // 纠正 ID 映射
+  ensureBookmarkFolderIdAndOrder();
+
+  // 更新 currentFolders：保留现有顺序，添加新文件夹
+  const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
+  const bookmarkFoldersSet = new Set(bookmarkFolders);
+  // 保留 currentFolders 中存在的文件夹（保持顺序），然后添加新文件夹
+  const existingFolders = currentFolders.filter(f => bookmarkFoldersSet.has(f));
+  const newFolders = bookmarkFolders.filter(f => !currentFolders.includes(f));
+  currentFolders = [...existingFolders, ...newFolders];
+
+  // 如果是自定义排序模式，确保移动后仍按文件夹顺序排列
+  if (currentSort === 'custom') {
+    currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
+    reindexBookmarkOrderByFolder();
+  }
+
+  // 保存到本地存储
+  refreshBookmarkMetaOrderFromCurrent();
+  refreshFolderMetaOrderFromCurrent();
+  await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+
+  const movedIds = bookmarksToMove.map(b => b.id);
+  const movedFolderIds = [...new Set(currentBookmarks.filter(b => movedIds.includes(b.id)).map(b => b.folderId).filter(Boolean))];
+  return { movedIds, movedFolderIds };
+}
+
+/**
+ * 拖拽书签到侧边栏文件夹行完成归类（桌面端指针拖拽，移动端无 HTML5 拖拽入口）
+ */
+async function moveBookmarkToFolderByDrag(bookmarkId, targetFolder) {
+  try {
+    await ensureSceneFreshFromCloudBeforeWrite();
+    const result = await applyBookmarksFolderMove([bookmarkId], targetFolder);
+    if (!result) {
+      showToast('该书签已在目标文件夹', { title: '无需移动', type: 'info', duration: 1500 });
+      return;
+    }
+    await loadFolders();
+    await loadTags();
+    renderBookmarks();
+    await syncToCloud({
+      requireSuccess: true,
+      patch: {
+        bookmarkUpserts: result.movedIds,
+        folderUpserts: result.movedFolderIds,
+        folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : []
+      }
+    });
+    showToast(`已移动到「${targetFolder || '未分类'}」`, { title: '移动完成', type: 'info', duration: 1500 });
+  } catch (error) {
+    console.error('拖拽移动书签到文件夹失败:', error);
+    showToast('移动失败: ' + error.message);
+  }
+}
+
+/**
  * 批量移动书签
  */
 async function batchMoveBookmarks() {
@@ -4247,6 +4535,7 @@ async function batchMoveBookmarks() {
   // 显示文件夹选择对话框
   const targetFolder = await showFolderSelectDialog();
   if (targetFolder === null) return; // 用户取消（null 表示取消，空字符串表示"未分类"）
+  const movingCount = selectedBookmarkIds.size; // toggleBatchMode 会清空选择集，提前留存
 
   // 显示全局加载遮罩
   showGlobalLoading('正在从云端同步最新书签…', 0);
@@ -4255,37 +4544,11 @@ async function batchMoveBookmarks() {
     await ensureSceneFreshFromCloudBeforeWrite();
     updateGlobalLoading('正在批量移动本地书签…', 35);
 
-    const bookmarksToMove = currentBookmarks.filter(b => selectedBookmarkIds.has(b.id));
-
-    // 更新书签的文件夹（与单个编辑逻辑一致：空字符串转为 undefined）
-    const normalizedTargetFolder = targetFolder.trim() ? normalizeFolderPath(targetFolder) : undefined;
-    bookmarksToMove.forEach(bookmark => {
-      bookmark.folder = normalizedTargetFolder;
-      bookmark.updatedAt = Date.now();
-    });
-
-    // 纠正 ID 映射
-    ensureBookmarkFolderIdAndOrder();
-
-    // 更新 currentFolders：保留现有顺序，添加新文件夹
-    const bookmarkFolders = currentBookmarks.map(b => b.folder).filter(Boolean);
-    const bookmarkFoldersSet = new Set(bookmarkFolders);
-    // 保留 currentFolders 中存在的文件夹（保持顺序），然后添加新文件夹
-    const existingFolders = currentFolders.filter(f => bookmarkFoldersSet.has(f));
-    const newFolders = bookmarkFolders.filter(f => !currentFolders.includes(f));
-    currentFolders = [...existingFolders, ...newFolders];
-
-    // 如果是自定义排序模式，确保移动后仍按文件夹顺序排列
-    if (currentSort === 'custom') {
-      currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
-      reindexBookmarkOrderByFolder();
+    const result = await applyBookmarksFolderMove(Array.from(selectedBookmarkIds), targetFolder);
+    if (!result) {
+      showToast('选中的书签已在目标文件夹', { title: '无需移动', type: 'info', duration: 1800 });
+      return;
     }
-
-    // 保存到本地
-    // 1. 保存到本地存储
-    refreshBookmarkMetaOrderFromCurrent();
-    refreshFolderMetaOrderFromCurrent();
-    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
 
     // 2. 立即渲染界面（乐观更新）
     toggleBatchMode();
@@ -4295,21 +4558,19 @@ async function batchMoveBookmarks() {
     renderBookmarks();
 
     // 3. 同步到云端
-    const movedIds = bookmarksToMove.map(b => b.id);
-    const movedFolderIds = [...new Set(currentBookmarks.filter(b => movedIds.includes(b.id)).map(b => b.folderId).filter(Boolean))];
     updateGlobalLoading('正在同步批量移动结果到云端…', 75);
     await syncToCloud({
       requireSuccess: true,
       patch: {
-        bookmarkUpserts: movedIds,
-        folderUpserts: movedFolderIds,
+        bookmarkUpserts: result.movedIds,
+        folderUpserts: result.movedFolderIds,
         folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : []
       }
     });
     updateGlobalLoading('批量移动完成', 100);
     await new Promise(resolve => setTimeout(resolve, 450));
 
-    alert(`已成功移动 ${bookmarksToMove.length} 个书签`);
+    alert(`已成功移动 ${movingCount} 个书签`);
   } catch (error) {
     console.error('批量移动失败:', error);
     alert('批量移动失败: ' + error.message);
@@ -4462,7 +4723,7 @@ function showFolderSelectDialog(options = {}) {
     dialog.innerHTML = `
       <div style="margin-bottom: 20px;">
         <h3 style="margin: 0; font-size: ${isMobile ? '20px' : '18px'}; font-weight: 600; color: #1a1a1a; display: flex; align-items: center; gap: 8px;">
-          <span style="font-size: 24px;">📂</span>
+          <span style="font-size: 24px;">${cbIcon('folderOpen')}</span>
           <span>选择目标文件夹</span>
         </h3>
       </div>
@@ -4726,7 +4987,7 @@ function renderFolderTreeNodes(tree, depth, counts, selectedPath = '') {
 
     let html = `
       <li class="folder-nav-item ${isActive}" data-path="${escapeHtml(folder.path)}" data-depth="${depth}">
-        <span class="folder-nav-icon">📁</span>
+        <span class="folder-nav-icon">${cbIcon('folder')}</span>
         <span class="folder-nav-name">${escapeHtml(folder.name)}</span>
         <span class="folder-nav-count">${count}</span>
       </li>
@@ -5048,7 +5309,7 @@ function updateEditButtonState(fieldElement, isEditing) {
   } else {
     // 退出编辑模式，显示编辑按钮
     editBtn.style.display = 'flex';
-    editBtn.textContent = '✏️';
+    editBtn.innerHTML = cbIcon('edit');
     editBtn.title = '编辑';
     // 恢复复制按钮
     if (copyBtn) {
@@ -5371,8 +5632,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 编辑按钮事件委托
   document.getElementById('bookmarkDetailModal').addEventListener('click', (e) => {
-    if (e.target.classList.contains('detail-edit-btn')) {
-      const field = e.target.dataset.field;
+    const editBtn = e.target.closest('.detail-edit-btn');
+    if (editBtn) {
+      const field = editBtn.dataset.field;
       const fieldElement = document.querySelector(`.detail-edit-btn[data-field="${field}"]`).closest('.detail-content');
       // 只在非编辑模式下进入编辑模式（保存通过 blur 或 Enter 触发）
       if (!fieldElement.classList.contains('editing')) {
@@ -5383,9 +5645,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 详情按钮事件委托（书签列表）
   document.getElementById('bookmarksGrid').addEventListener('click', async (e) => {
-    if (e.target.classList.contains('bookmark-detail-btn')) {
+    const detailBtn = e.target.closest('.bookmark-detail-btn');
+    if (detailBtn) {
       e.stopPropagation();
-      const bookmarkId = e.target.dataset.id;
+      const bookmarkId = detailBtn.dataset.id;
       await showBookmarkDetail(bookmarkId);
     }
   });

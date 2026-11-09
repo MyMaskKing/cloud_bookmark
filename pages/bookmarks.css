@@ -800,6 +800,50 @@ body.cb-add-flow-lock {
   }
 }
 
+/* ==================== 统一线性 SVG 图标 ==================== */
+.cb-icon {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.15em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+/* 填充型图标（如收藏实心星） */
+.cb-icon.cb-icon-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* ==================== 书签拖拽排序视觉反馈 ==================== */
+/* 拖起中的源卡片：半透明 + 轻微缩小 + 阴影强调 */
+.bookmark-card.dragging {
+  opacity: 0.45;
+  transform: scale(0.97);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+}
+
+/* 拖拽手势进行中：网格抓取光标，禁用 hover 上浮避免与 FLIP 位移动画冲突 */
+body.cb-dragging-bookmark .bookmarks-grid {
+  cursor: grabbing;
+}
+
+body.cb-dragging-bookmark .bookmark-card:hover:not(.dragging) {
+  transform: none;
+  box-shadow: none;
+}
+
+/* 侧边栏文件夹行作为书签归类放置目标时的高亮 */
+.folder-row.folder-drop-target {
+  background: #e3f2fd;
+  outline: 2px solid #4a90e2;
+  outline-offset: -2px;
+}
+
 .bookmark-header {
   display: flex;
   align-items: center;
@@ -858,6 +902,11 @@ body.cb-add-flow-lock {
 
 .bookmark-star:hover {
   transform: scale(1.2);
+}
+
+/* 收藏实心星沿用金色体系（替代原 Emoji 自带色） */
+.bookmark-star .cb-icon-fill {
+  color: #f5a623;
 }
 
 .bookmark-description {
