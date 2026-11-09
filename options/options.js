@@ -1520,7 +1520,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
         text-decoration: none;
       ">${escapeHtml(item.bookmark.url)}</a>
       <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-        <span style="font-size: 12px; color: #666;">📁 ${escapeHtml(item.folder)}</span>
+        <span style="font-size: 12px; color: #666;">${cbIcon('folder')} ${escapeHtml(item.folder)}</span>
         <span style="font-size: 12px; color: #dc3545; font-weight: 500;">${escapeHtml(item.error || item.status)}</span>
       </div>
     </div>
@@ -1677,7 +1677,7 @@ function showInvalidUrlsDialog(invalidBookmarks, sceneId) {
           text-decoration: none;
         ">${escapeHtml(item.bookmark.url)}</a>
         <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-          <span style="font-size: 12px; color: #666;">📁 ${escapeHtml(item.folder)}</span>
+          <span style="font-size: 12px; color: #666;">${cbIcon('folder')} ${escapeHtml(item.folder)}</span>
           <span style="font-size: 12px; color: #dc3545; font-weight: 500;">${escapeHtml(item.error || item.status)}</span>
         </div>
       </div>
@@ -2212,7 +2212,7 @@ if (openFavoriteSortBtn) {
         : '';
       return `
         <li class="favorite-sort-item" draggable="true" data-id="${id}" data-index="${idx}">
-          <span class="fs-handle" aria-hidden="true">☰</span>
+          <span class="fs-handle" aria-hidden="true">${cbIcon('menu')}</span>
           <span class="fs-index">${idx + 1}</span>
           <div class="fs-main">
             <div class="fs-title" title="${escapeHtmlSafe(b.title || '')}">${escapeHtmlSafe(b.title || '无标题')}</div>
@@ -3269,7 +3269,7 @@ async function loadDevices() {
         ? `<button type="button" class="btn btn-secondary ui-settings-btn device-adopt" data-id="${dev.id}">选为当前设备</button>`
         : '';
       // 添加编辑设备名按钮，传递customName作为当前值
-      const editBtn = `<button type="button" class="btn-icon device-edit-name" data-id="${dev.id}" data-name="${escapeHtml(customName || '')}" title="编辑设备名">✏️</button>`;
+      const editBtn = `<button type="button" class="btn-icon device-edit-name" data-id="${dev.id}" data-name="${escapeHtml(customName || '')}" title="编辑设备名">${cbIcon('edit')}</button>`;
       // customName 标签显示（如果有）
       const customNameTag = customName ? `<span class="device-custom-tag">${escapeHtml(customName)}</span>${editBtn}` : editBtn;
       return `
@@ -3439,7 +3439,7 @@ async function updateCurrentDeviceRow() {
     const platformName = escapeHtml(dev.name || '未知设备'); // 平台/架构
     const customName = dev.customName; // 自定义名称
     // 添加编辑设备名按钮，传递customName作为当前值
-    const editBtn = `<button type="button" class="btn-icon device-edit-name" data-id="${dev.id}" data-name="${escapeHtml(customName || '')}" title="编辑设备名">✏️</button>`;
+    const editBtn = `<button type="button" class="btn-icon device-edit-name" data-id="${dev.id}" data-name="${escapeHtml(customName || '')}" title="编辑设备名">${cbIcon('edit')}</button>`;
     // customName 标签显示（如果有）
     const customNameTag = customName ? `<span class="device-custom-tag">${escapeHtml(customName)}</span>${editBtn}` : editBtn;
     

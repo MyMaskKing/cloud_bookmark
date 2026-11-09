@@ -104,7 +104,7 @@
     card.className = 'cb-lock-card';
 
     card.innerHTML = `
-      <div class="cb-lock-icon">🔒</div>
+      <div class="cb-lock-icon">${cbIcon('lock')}</div>
       <div class="cb-lock-title"></div>
       <div class="cb-lock-subtitle"></div>
       <input type="password" class="cb-lock-input" autocomplete="current-password" placeholder="请输入本地密码" />

@@ -22,6 +22,24 @@ body {
   line-height: 1.6;
 }
 
+/* 统一线性 SVG 图标（与书签管理页同一份基类，currentColor 继承容器字号/颜色） */
+.cb-icon {
+  width: 1em;
+  height: 1em;
+  vertical-align: -0.15em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+.cb-icon.cb-icon-fill {
+  fill: currentColor;
+  stroke: none;
+}
+
 .popup-container {
   display: flex;
   flex-direction: column;

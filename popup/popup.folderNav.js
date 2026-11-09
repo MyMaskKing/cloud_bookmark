@@ -795,7 +795,7 @@
             ${folderHtml}
           </div>
           <div class="bookmark-item-actions">
-            <button class="bookmark-fav-btn" data-id="${id}" data-starred="true" title="取消收藏">★</button>
+            <button class="bookmark-fav-btn" data-id="${id}" data-starred="true" title="取消收藏">${cbIcon('starFilled')}</button>
           </div>
         </div>
       `;

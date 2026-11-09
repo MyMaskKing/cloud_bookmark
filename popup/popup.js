@@ -1104,16 +1104,16 @@ function renderBookmarks(bookmarks, { searchMode = false, folders = null } = {})
   </span>
 </button>`
         : '';
-      const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
+      const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">${cbIcon('edit')}</button>`;
       const actionBtnHtml = useFavorite
-        ? `<button class="bookmark-fav-btn" data-id="${id}" data-starred="${bookmark.starred ? 'true' : 'false'}" title="${bookmark.starred ? '取消收藏' : '添加到收藏'}">${bookmark.starred ? '★' : '☆'}</button>`
-        : `<button class="bookmark-delete-btn" data-id="${id}" title="删除">🗑️</button>`;
+        ? `<button class="bookmark-fav-btn" data-id="${id}" data-starred="${bookmark.starred ? 'true' : 'false'}" title="${bookmark.starred ? '取消收藏' : '添加到收藏'}">${bookmark.starred ? cbIcon('starFilled') : cbIcon('star')}</button>`
+        : `<button class="bookmark-delete-btn" data-id="${id}" title="删除">${cbIcon('trash')}</button>`;
     return `
     <div class="bookmark-item" data-url="${escapeHtml(bookmark.url)}" data-id="${id}">
       <div class="bookmark-item-content">
         <div class="bookmark-item-title">
           <span class="bookmark-title-text">${escapeHtml(bookmark.title || '无标题')}</span>
-          <button class="bookmark-detail-btn" data-id="${id}" title="查看详情">ℹ️</button>
+          <button class="bookmark-detail-btn" data-id="${id}" title="查看详情">${cbIcon('info')}</button>
         </div>
         <div class="bookmark-item-url">
           ${locateBtn}
@@ -1454,7 +1454,7 @@ function renderFolderTreeHtml(node, indentPath) {
 
   const folderHtml = folderEntries.map(child => {
     const expanded = expandedFolders.has(child.path);
-    const icon = expanded ? '📂' : '📁';
+    const icon = expanded ? cbIcon('folderOpen') : cbIcon('folder');
     const childContent = expanded ? renderFolderTreeHtml(child, child.path) : '';
     // 统计：书签数量 + 子文件夹数量
     const bookmarkCount = (child.items || []).length;
@@ -1465,7 +1465,7 @@ function renderFolderTreeHtml(node, indentPath) {
         <div class="folder-row" data-folder="${escapeHtml(child.path)}">
           <span class="folder-icon">${icon}</span>
           <span class="folder-name">${escapeHtml(child.name)}</span>
-          ${(popupSettings && popupSettings.folderOpenAll !== false) ? `<button class="folder-open-all-btn" data-folder="${escapeHtml(child.path)}" title="在新标签页打开全部（含子文件夹）">🔗</button>` : ''}
+          ${(popupSettings && popupSettings.folderOpenAll !== false) ? `<button class="folder-open-all-btn" data-folder="${escapeHtml(child.path)}" title="在新标签页打开全部（含子文件夹）">${cbIcon('external')}</button>` : ''}
           <span class="folder-count">${totalCount}</span>
         </div>
         ${expanded ? `<div class="folder-children">${childContent}</div>` : ''}
@@ -1518,11 +1518,11 @@ function renderFolderTreeHtml(node, indentPath) {
   </span>
 </button>`
       : '';
-    const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">✏️</button>`;
-    const detailBtnHtml = `<button class="bookmark-detail-btn" data-id="${id}" title="查看详情">ℹ️</button>`;
+    const updateBtnHtml = `<button class="bookmark-update-btn" data-id="${id}" title="更新" style="display: ${(popupSettings && popupSettings.showUpdateButton) ? 'flex' : 'none'};">${cbIcon('edit')}</button>`;
+    const detailBtnHtml = `<button class="bookmark-detail-btn" data-id="${id}" title="查看详情">${cbIcon('info')}</button>`;
     const actionBtnHtml = useFavorite
-      ? `<button class="bookmark-fav-btn" data-id="${id}" data-starred="${b.starred ? 'true' : 'false'}" title="${b.starred ? '取消收藏' : '添加到收藏'}">${b.starred ? '★' : '☆'}</button>`
-      : `<button class="bookmark-delete-btn" data-id="${id}" title="删除">🗑️</button>`;
+      ? `<button class="bookmark-fav-btn" data-id="${id}" data-starred="${b.starred ? 'true' : 'false'}" title="${b.starred ? '取消收藏' : '添加到收藏'}">${b.starred ? cbIcon('starFilled') : cbIcon('star')}</button>`
+      : `<button class="bookmark-delete-btn" data-id="${id}" title="删除">${cbIcon('trash')}</button>`;
     return `
     <div class="bookmark-item" data-url="${escapeHtml(b.url)}" data-id="${id}">
       <div class="bookmark-item-content">
@@ -2585,7 +2585,7 @@ function updateEditButtonState(fieldElement, isEditing) {
   } else {
     // 退出编辑模式，显示编辑按钮
     editBtn.style.display = 'flex';
-    editBtn.textContent = '✏️';
+    editBtn.innerHTML = cbIcon('edit');
     editBtn.title = '编辑';
     // 恢复复制按钮
     if (copyBtn) {
@@ -2850,8 +2850,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // 编辑按钮事件委托
   document.getElementById('bookmarkDetailModal').addEventListener('click', (e) => {
-    if (e.target.classList.contains('detail-edit-btn')) {
-      const field = e.target.dataset.field;
+    const editBtn = e.target.closest('.detail-edit-btn');
+    if (editBtn) {
+      const field = editBtn.dataset.field;
       const fieldElement = document.querySelector(`.detail-edit-btn[data-field="${field}"]`).closest('.detail-content');
       // 只在非编辑模式下进入编辑模式（保存通过 blur 或 Enter 触发）
       if (!fieldElement.classList.contains('editing')) {
@@ -2862,9 +2863,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 详情按钮事件委托（书签列表）
   document.getElementById('bookmarkList').addEventListener('click', async (e) => {
-    if (e.target.classList.contains('bookmark-detail-btn')) {
+    const detailBtn = e.target.closest('.bookmark-detail-btn');
+    if (detailBtn) {
       e.stopPropagation();
-      const bookmarkId = e.target.dataset.id;
+      const bookmarkId = detailBtn.dataset.id;
       await showBookmarkDetail(bookmarkId);
     }
   });

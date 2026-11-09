@@ -9,6 +9,9 @@
   // 兼容的 API 对象
   const runtimeAPI = typeof browser !== 'undefined' ? browser.runtime : chrome.runtime;
 
+  // 警告图标：content script 为隔离环境且不加载共享 CSS，使用自带样式的局部 SVG
+  const ALERT_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="flex-shrink:0;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+
   // 开发者日志开关：默认关闭，仅在设置中开启后才输出 console.log。
   const originalConsoleLog = console.log.bind(console);
   let enableDeveloperConsoleLogging = false;
@@ -303,7 +306,7 @@
 
         toastEl.innerHTML = `
           <div style="display:flex; gap:10px; align-items:flex-start;">
-            <div style="font-size:18px; line-height:1; margin-top:1px;">⚠️</div>
+            <div style="line-height:1; margin-top:1px;">${ALERT_ICON_SVG}</div>
             <div style="flex:1; min-width:0;">
               <div id="${toastId}-title" style="font-weight:700; font-size:13px; margin-bottom:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;"></div>
               <div id="${toastId}-msg" style="font-size:12px; line-height:1.35; opacity:0.95; word-break:break-word;"></div>
