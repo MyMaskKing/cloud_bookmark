@@ -664,7 +664,8 @@ const touchReorder = {
   moved: false,
   rafId: null,
   autoScrollRafId: null,
-  autoScrollDir: 0
+  autoScrollDir: 0,
+  scroller: null       // 本次排序会话实际可滚动的目标 { isWindow, el }
 };
 const TOUCH_REORDER_THRESHOLD = 8; // 触摸位移激活阈值（px）
 const BOOKMARK_DND_MIME = 'application/x-cb-bookmark'; // 书签拖拽自定义数据类型（types 中统一小写）
@@ -727,8 +728,12 @@ const scheduleOrderSync = (() => {
       clearTimeout(syncTimer);
       syncTimer = null;
     }
-    if (!orderSyncPending && !force) return;
+    if (!orderSyncPending && !force) {
+      console.log('[排序同步] flush 跳过：无待发补丁且非强制', { force, orderSyncPending });
+      return;
+    }
     orderSyncPending = false;
+    console.log('[排序同步] flush 立即执行上行', { force });
     await runOrderSync();
   };
   return schedule;
@@ -2993,6 +2998,7 @@ function enterReorderMode() {
   reorderMode = true;
   updateReorderModeUI();
   renderBookmarks();
+  console.log('[触摸排序] 进入排序模式', { isMobile: isMobileView(), currentSort, moved: touchReorder.moved });
 }
 
 /**
@@ -3002,6 +3008,7 @@ function enterReorderMode() {
 async function exitReorderMode(commit) {
   if (!reorderMode) return;
   const hasMoved = touchReorder.moved;
+  console.log('[触摸排序] 退出排序模式', { commit, hasMoved });
   reorderMode = false;
   resetTouchReorder();
   updateReorderModeUI();
@@ -3051,7 +3058,7 @@ function resetTouchReorder() {
     rafId: null,
     autoScrollRafId: null,
     autoScrollDir: 0,
-    container: null
+    scroller: null
   });
 }
 
@@ -3059,11 +3066,15 @@ function resetTouchReorder() {
 function onReorderTouchStart(e) {
   if (!reorderMode) return;
   const handle = e.target.closest('.bookmark-drag-handle');
-  if (!handle) return;
+  if (!handle) {
+    console.log('[触摸排序] touchstart 未命中手柄', { targetClass: e.target && e.target.className });
+    return;
+  }
   const card = handle.closest('.bookmark-card');
   if (!card) return;
   const t = e.touches[0];
   touchReorder.started = true;
+  console.log('[触摸排序] touchstart 命中手柄，待激活', { cardId: card.dataset.id });
   touchReorder.active = false;
   touchReorder.srcCard = card;
   touchReorder.startX = t.clientX;
@@ -3072,7 +3083,7 @@ function onReorderTouchStart(e) {
   touchReorder.lastY = t.clientY;
   touchReorder.lastInsertKey = null;
   // moved 不在此重置：同一会话内多次拖动的改动需累积到「完成」统一提交
-  touchReorder.container = document.querySelector('.bookmarks-container');
+  touchReorder.scroller = resolveReorderScroller();
 }
 
 /** 越过阈值后正式激活：插入占位符，源卡转 fixed 跟手 */
@@ -3092,6 +3103,7 @@ function activateTouchReorder(t) {
   touchReorder.placeholder = placeholder;
   touchReorder.active = true;
   if (navigator.vibrate) navigator.vibrate(10);
+  console.log('[触摸排序] 越过 8px 阈值，激活拖动', { cardId: card.dataset.id });
 }
 
 /** 源卡跟随触点 */
@@ -3145,19 +3157,43 @@ function applyTouchReorderAtPoint(x, y) {
   flipReorderGrid(touchReorder.placeholder, target, before);
 }
 
-/** 触点贴近容器上下边缘时自动滚动 */
+/**
+ * 解析触摸排序期间真正可滚动的目标。
+ * 桌面端 .bookmarks-container 在固定高度 flex 布局内自身滚动；
+ * 移动端 .app-container 高度为 auto，容器被内容撑开而不产生滚动条，实际由 window 滚动。
+ * 返回 { isWindow:boolean, el }，供滚动与判空统一使用。
+ */
+function resolveReorderScroller() {
+  const el = document.querySelector('.bookmarks-container');
+  if (el && el.scrollHeight > el.clientHeight + 1) {
+    return { isWindow: false, el };
+  }
+  return { isWindow: true, el: document.scrollingElement || document.documentElement };
+}
+
+/** 对当前排序滚动目标滚动 delta 像素（负值向上、正值向下） */
+function scrollReorderContainer(delta) {
+  const scroller = touchReorder.scroller;
+  if (!scroller) return;
+  if (scroller.isWindow) {
+    window.scrollBy(0, delta); // 编程式滚动不受 touchmove 的 preventDefault 影响
+  } else {
+    scroller.el.scrollTop += delta;
+  }
+}
+
+/** 触点贴近视口上下边缘时自动滚动（clientY 为视口坐标，移动端按 window 滚动，不能用容器 rect 判定） */
 function handleTouchAutoScroll(t) {
-  const container = touchReorder.container;
-  if (!container) return;
-  const rect = container.getBoundingClientRect();
   const EDGE = 56;
   let dir = 0;
-  if (t.clientY < rect.top + EDGE) dir = -1;
-  else if (t.clientY > rect.bottom - EDGE) dir = 1;
+  if (t.clientY < EDGE) dir = -1;
+  else if (t.clientY > window.innerHeight - EDGE) dir = 1;
   touchReorder.autoScrollDir = dir;
   if (dir !== 0 && touchReorder.autoScrollRafId === null) {
+    console.log('[触摸排序] 自动滚动启动', { 方向: dir === -1 ? '向上' : '向下', window滚动: !!(touchReorder.scroller && touchReorder.scroller.isWindow) });
     startTouchAutoScroll();
   } else if (dir === 0 && touchReorder.autoScrollRafId !== null) {
+    console.log('[触摸排序] 自动滚动停止');
     stopTouchAutoScroll();
   }
 }
@@ -3165,11 +3201,11 @@ function handleTouchAutoScroll(t) {
 function startTouchAutoScroll() {
   const SPEED = 12;
   const step = () => {
-    if (touchReorder.autoScrollDir === 0 || !touchReorder.container) {
+    if (touchReorder.autoScrollDir === 0 || !touchReorder.scroller) {
       touchReorder.autoScrollRafId = null;
       return;
     }
-    touchReorder.container.scrollTop += SPEED * touchReorder.autoScrollDir;
+    scrollReorderContainer(SPEED * touchReorder.autoScrollDir);
     // 滚动中触点不动但卡片位置变了，按最后触点重新检测落位
     applyTouchReorderAtPoint(touchReorder.lastX, touchReorder.lastY);
     touchReorder.autoScrollRafId = requestAnimationFrame(step);
@@ -3188,7 +3224,13 @@ function stopTouchAutoScroll() {
 /** 松手：按占位符相邻关系把顺序写入内存数据（保存与同步留给「完成」统一提交） */
 function onReorderTouchEnd() {
   if (!reorderMode || !touchReorder.started) {
+    console.log('[触摸排序] touchend 提前结束（手势未启动）', { reorderMode, started: touchReorder.started });
+    // 这是未命中手柄的杂散触摸（点到卡片标题/网格空白）：只清理本次未启动手势的临时状态，
+    // 必须保留会话累积的 moved——否则成功拖动后误触非手柄区域会把 moved 冲成 false，
+    // 导致点「完成」时误判无改动而跳过保存与同步
+    const moved = touchReorder.moved;
     resetTouchReorder();
+    touchReorder.moved = moved;
     return;
   }
   if (touchReorder.active) {
@@ -3205,6 +3247,13 @@ function onReorderTouchEnd() {
       movedOk = reorderBookmarksById(srcCard.dataset.id, prevCard.dataset.id, 'after');
     }
     if (movedOk) touchReorder.moved = true;
+    console.log('[触摸排序] touchend 落位', {
+      movedOk,
+      moved: touchReorder.moved,
+      srcId: srcCard.dataset.id,
+      nextId: nextCard && nextCard.dataset.id,
+      prevId: prevCard && prevCard.dataset.id
+    });
     // 源卡插回占位符位置并还原样式
     placeholder.parentNode.insertBefore(srcCard, placeholder);
     placeholder.remove();
@@ -3222,10 +3271,12 @@ function onReorderTouchEnd() {
   const moved = touchReorder.moved;
   resetTouchReorder();
   touchReorder.moved = moved;
+  console.log('[触摸排序] touchend 完成，保留 moved 至会话结束', { moved });
 }
 
-/** 系统中断手势（来电等）：放弃本次拖动，从存储恢复数据与 DOM */
+/** 系统中断手势（来电等）：仅放弃本次被中断的手势并还原 DOM，不影响会话中已落内存的改动 */
 function onReorderTouchCancel() {
+  console.log('[触摸排序] touchcancel 手势被系统/浏览器中断', { active: touchReorder.active, moved: touchReorder.moved });
   if (touchReorder.active && touchReorder.placeholder && touchReorder.srcCard) {
     const { srcCard, placeholder } = touchReorder;
     placeholder.parentNode.insertBefore(srcCard, placeholder);
@@ -3235,13 +3286,12 @@ function onReorderTouchCancel() {
     srcCard.style.top = '';
     srcCard.style.width = '';
   }
-  const hadMoved = touchReorder.moved;
+  // 本次手势在 touchend 才写内存，被 cancel 时尚未改动 currentBookmarks，无需 loadBookmarks 回滚；
+  // 保留会话级 moved（之前成功拖动的成果），重绘让 DOM 与内存一致，用户可继续在排序模式内操作
+  const moved = touchReorder.moved;
   resetTouchReorder();
-  if (hadMoved) {
-    loadBookmarks({ lightLoading: true });
-  } else {
-    renderBookmarks();
-  }
+  touchReorder.moved = moved;
+  renderBookmarks();
 }
 
 function moveBookmarkByDirection(bookmarkId, direction) {
