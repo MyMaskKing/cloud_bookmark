@@ -683,9 +683,11 @@ function isMobileView() {
 }
 const ORDER_SYNC_DELAY = 1000; // 文件夹/排序调整的上行防抖（毫秒），1秒内频繁操作只合并一次上行
 const scheduleOrderSync = (() => {
-  const debounced = debounce(async () => {
+  let syncTimer = null;
+  // 一次排序上行的实际执行体：仅发增量补丁（文件夹顺序 + 变动书签 id 集合）
+  const runOrderSync = async () => {
     try {
-      console.log('[排序同步] 防抖触发，开始同步当前场景排序到云端', {
+      console.log('[排序同步] 开始同步当前场景排序到云端', {
         sceneId: currentSceneId,
         bookmarkCount: currentBookmarks.length,
         folderCount: currentFolders.length
@@ -701,27 +703,32 @@ const scheduleOrderSync = (() => {
     } finally {
       orderSyncPending = false;
     }
-  }, ORDER_SYNC_DELAY);
-  return () => {
-    orderSyncPending = true;
-    debounced();
   };
+  // 防抖调度：1 秒内频繁操作合并为一次上行（桌面拖拽路径）
+  const schedule = () => {
+    orderSyncPending = true;
+    if (syncTimer) clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => {
+      syncTimer = null;
+      runOrderSync();
+    }, ORDER_SYNC_DELAY);
+  };
+  // 立即上行：取消挂起的防抖计时；force=true 时即使无挂起标记也立即执行（移动端排序「完成」路径，
+  // 触摸落位只写内存不经过 schedule，pending 本来就是 false）；默认仅在有待发补丁时执行（页面隐藏兜底）
+  schedule.flush = async (force = false) => {
+    if (syncTimer) {
+      clearTimeout(syncTimer);
+      syncTimer = null;
+    }
+    if (!orderSyncPending && !force) return;
+    orderSyncPending = false;
+    await runOrderSync();
+  };
+  return schedule;
 })();
 
 async function flushPendingOrderSync() {
-  if (!orderSyncPending) return;
-  orderSyncPending = false;
-  try {
-    console.log('[排序同步] 页面即将隐藏/关闭，执行兜底同步');
-    await syncToCloud({
-      patch: {
-        folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : [],
-        bookmarkUpserts: (currentBookmarks || []).map((b) => b && b.id).filter(Boolean)
-      }
-    });
-  } catch (e) {
-    console.error('[排序同步] 兜底同步失败', e);
-  }
+  await scheduleOrderSync.flush();
 }
 
 function buildCurrentFolderItemsForSync() {
@@ -2956,14 +2963,14 @@ async function exitReorderMode(commit) {
   resetTouchReorder();
   updateReorderModeUI();
   if (commit && hasMoved) {
-    // 与桌面拖拽落位同一套数据提交流程，整个排序会话只保存/同步一次
+    // 与桌面拖拽落位同一套数据提交流程，整个排序会话只保存一次
     reindexBookmarkOrderByFolder();
     currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
     reindexBookmarkOrderByFolder();
     refreshBookmarkMetaOrderFromCurrent();
     await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-    scheduleOrderSync();
-    renderBookmarks();
+    renderBookmarks(); // 先恢复普通卡片视图，避免等待云端上行期间界面停留在排序态
+    await scheduleOrderSync.flush(true); // 移动端「完成」立即同步，不走防抖；桌面拖拽仍走 scheduleOrderSync 防抖
   } else if (hasMoved) {
     // 放弃改动：内存顺序已被拖动改写，从本地存储轻量重新加载恢复（不弹全屏遮罩）
     await loadBookmarks({ lightLoading: true });
