@@ -686,22 +686,29 @@ const scheduleOrderSync = (() => {
   let syncTimer = null;
   // 一次排序上行的实际执行体：仅发增量补丁（文件夹顺序 + 变动书签 id 集合）
   const runOrderSync = async () => {
+    showGlobalLoading('正在同步排序到云端…');
     try {
       console.log('[排序同步] 开始同步当前场景排序到云端', {
         sceneId: currentSceneId,
         bookmarkCount: currentBookmarks.length,
         folderCount: currentFolders.length
       });
-      await syncToCloud({
+      const res = await syncToCloud({
         patch: {
           folderOrderIds: (currentFolderMeta && Array.isArray(currentFolderMeta.order)) ? [...currentFolderMeta.order] : [],
           bookmarkUpserts: (currentBookmarks || []).map((b) => b && b.id).filter(Boolean)
         }
       });
+      // 非 requireSuccess 模式下后台失败不抛错，需主动暴露，避免排序“看起来没生效”却无任何提示
+      if (res && res.success === false) {
+        showToast('排序同步失败：' + (res.error || '未知错误'), { title: '同步失败' });
+      }
     } catch (e) {
       console.error('[排序同步] 同步失败', e);
+      showToast('排序同步失败：' + (e && e.message ? e.message : '未知错误'), { title: '同步失败' });
     } finally {
       orderSyncPending = false;
+      hideGlobalLoading();
     }
   };
   // 防抖调度：1 秒内频繁操作合并为一次上行（桌面拖拽路径）
@@ -1298,14 +1305,19 @@ function setupEventListeners() {
       e.dataTransfer.effectAllowed = 'move';
       card.classList.add('dragging');
       document.body.classList.add('cb-dragging-bookmark');
+      console.log('[拖拽排序] dragstart 启动', { id: draggingBookmarkId, currentSort, batchMode });
     });
 
     bookmarksGrid.addEventListener('dragover', (e) => {
-      if (batchMode || !draggingBookmarkId) return;
+      if (batchMode || !draggingBookmarkId) {
+        console.log('[拖拽排序] dragover 被前置条件拦截', { batchMode, hasDraggingId: !!draggingBookmarkId });
+        return;
+      }
       // 非自定义排序：网格内不接受落位，仅给一次引导提示（仍可继续拖向侧边栏文件夹）
       if (currentSort !== 'custom') {
         if (!dragSortHintShown) {
           dragSortHintShown = true;
+          console.log('[拖拽排序] dragover 非自定义排序，网格内不接受落位', { currentSort });
           showToast('切换到「自定义排序（拖拽）」后可在此调整顺序，也可以直接拖到左侧文件夹归类', {
             title: '排序提示',
             type: 'info',
@@ -1314,10 +1326,13 @@ function setupEventListeners() {
         }
         return;
       }
-      const card = e.target.closest('.bookmark-card');
-      if (!card || card === draggingCardEl) return;
+      // 关键：只要在网格区域内就 preventDefault，松手时 drop 事件才会触发。
+      // 否则鼠标落在源卡片/卡片间隙/容器空白处时浏览器判定不可放置，drop 丢失（dragend 表现为 cancelled）。
       e.preventDefault();
       e.dataTransfer.dropEffect = 'move';
+      const card = e.target.closest('.bookmark-card');
+      // 命中源卡片或卡片外区域：允许 drop（具体落位由 drop 按 DOM 相邻关系兜底），但不做 FLIP 让位
+      if (!card || card === draggingCardEl) return;
 
       // rAF 节流：每帧最多重排一次，记录事件坐标与目标供帧回调使用
       if (dragRafId !== null) return;
@@ -1330,10 +1345,27 @@ function setupEventListeners() {
 
     bookmarksGrid.addEventListener('drop', async (e) => {
       if (batchMode || currentSort !== 'custom' || !draggingBookmarkId) return;
+      if (!draggingCardEl) return;
       const card = e.target.closest('.bookmark-card');
-      if (!card || !draggingCardEl) return;
       e.preventDefault();
       gridDropHandled = true;
+      // 命中具体卡片时做跨文件夹前置提示；落在网格空白/间隙处则跳过弹窗，交给下方相邻关系落位（数据层 reorderBookmarksById 另有跨文件夹保护）
+      if (card) {
+        const srcBookmark = currentBookmarks.find(b => b.id === draggingBookmarkId);
+        const tgtBookmark = currentBookmarks.find(b => b.id === card.dataset.id);
+        // 跨文件夹排序拦截：自定义排序仅支持同文件夹内调整，跨文件夹移动请走归类/批量移动
+        if (srcBookmark && tgtBookmark && getBookmarkFolderKey(srcBookmark) !== getBookmarkFolderKey(tgtBookmark)) {
+          const srcFolder = getBookmarkFolderKey(srcBookmark) || '未分类';
+          const tgtFolder = getBookmarkFolderKey(tgtBookmark) || '未分类';
+          console.log('[拖拽排序] drop 跨文件夹被拦截', { sourceId: draggingBookmarkId, targetId: card.dataset.id, srcFolder, tgtFolder });
+          showWarningDialog({
+            title: '无法跨文件夹排序',
+            message: `自定义排序仅支持在同一文件夹内调整顺序（当前书签在「${srcFolder}」，目标位置属于「${tgtFolder}」）。若要把书签移动到其他文件夹，请把卡片拖到左侧文件夹，或使用批量操作中的「批量移动」。`
+          });
+          return;
+        }
+      }
+      console.log('[拖拽排序] drop 落位', { sourceId: draggingBookmarkId, targetId: card ? card.dataset.id : '网格空白' });
       // 以实时 FLIP 后的 DOM 相邻关系推导落位，保证数据顺序与视觉一致
       const siblings = Array.from(bookmarksGrid.querySelectorAll('.bookmark-card'));
       const domIdx = siblings.indexOf(draggingCardEl);
@@ -1345,7 +1377,10 @@ function setupEventListeners() {
       } else if (prev) {
         movedOk = reorderBookmarksById(draggingBookmarkId, prev.dataset.id, 'after');
       }
-      if (!movedOk) return;
+      if (!movedOk) {
+        console.log('[拖拽排序] drop 落位未生效（reorderBookmarksById 返回 false）', { sourceId: draggingBookmarkId, targetId: card ? card.dataset.id : '网格空白' });
+        return;
+      }
       // 仅在本地完成“同文件夹内排序”，不在拖拽时拉云端，避免侧边栏文件夹顺序被重绘影响观感
       reindexBookmarkOrderByFolder();
       currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
@@ -1362,6 +1397,7 @@ function setupEventListeners() {
         dragRafId = null;
       }
       const cancelled = !gridDropHandled && !folderDropHandled;
+      console.log('[拖拽排序] dragend 结束', { gridDropHandled, folderDropHandled, cancelled });
       clearFolderDropTargets();
       document.body.classList.remove('cb-dragging-bookmark');
       if (draggingCardEl) {
@@ -2894,7 +2930,14 @@ function applyDragOverReorder(point) {
   const tgtBookmark = currentBookmarks.find(b => b.id === target.dataset.id);
   if (!srcBookmark || !tgtBookmark) return;
   // 仅同文件夹内允许实时让位，跨文件夹不响应
-  if (getBookmarkFolderKey(srcBookmark) !== getBookmarkFolderKey(tgtBookmark)) return;
+  if (getBookmarkFolderKey(srcBookmark) !== getBookmarkFolderKey(tgtBookmark)) {
+    console.log('[拖拽排序] dragover 跨文件夹不触发让位', {
+      sourceId: draggingBookmarkId,
+      源文件夹: getBookmarkFolderKey(srcBookmark) || '未分类',
+      目标文件夹: getBookmarkFolderKey(tgtBookmark) || '未分类'
+    });
+    return;
+  }
 
   const rect = target.getBoundingClientRect();
   const before = point.y < rect.top + rect.height / 2;
@@ -2964,13 +3007,19 @@ async function exitReorderMode(commit) {
   updateReorderModeUI();
   if (commit && hasMoved) {
     // 与桌面拖拽落位同一套数据提交流程，整个排序会话只保存一次
-    reindexBookmarkOrderByFolder();
-    currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
-    reindexBookmarkOrderByFolder();
-    refreshBookmarkMetaOrderFromCurrent();
-    await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
-    renderBookmarks(); // 先恢复普通卡片视图，避免等待云端上行期间界面停留在排序态
-    await scheduleOrderSync.flush(true); // 移动端「完成」立即同步，不走防抖；桌面拖拽仍走 scheduleOrderSync 防抖
+    showGlobalLoading('正在保存排序…', 30);
+    try {
+      reindexBookmarkOrderByFolder();
+      currentBookmarks = sortBookmarksForCustomDisplay(currentBookmarks);
+      reindexBookmarkOrderByFolder();
+      refreshBookmarkMetaOrderFromCurrent();
+      await storage.saveBookmarks(currentBookmarks, currentFolders, currentSceneId);
+      renderBookmarks(); // 先恢复普通卡片视图，避免等待云端上行期间界面停留在排序态
+      updateGlobalLoading('正在同步到云端…', 75);
+      await scheduleOrderSync.flush(true); // 移动端「完成」立即同步，不走防抖；桌面拖拽仍走 scheduleOrderSync 防抖
+    } finally {
+      hideGlobalLoading();
+    }
   } else if (hasMoved) {
     // 放弃改动：内存顺序已被拖动改写，从本地存储轻量重新加载恢复（不弹全屏遮罩）
     await loadBookmarks({ lightLoading: true });
@@ -3442,12 +3491,21 @@ function renderBookmarks() {
     bookmarksGrid.innerHTML = filtered.map(bookmark => renderBookmarkCard(bookmark)).join('');
 
     // 非批量模式且设备支持指针拖拽时允许拖动：自定义排序可网格内排序，任意排序可拖到侧边栏文件夹归类
+    const pointerDragEnabled = !batchMode && supportsPointerDrag();
     bookmarksGrid.querySelectorAll('.bookmark-card').forEach(card => {
-      if (!batchMode && supportsPointerDrag()) {
+      if (pointerDragEnabled) {
         card.setAttribute('draggable', 'true');
       } else {
         card.removeAttribute('draggable');
       }
+    });
+    console.log('[拖拽排序] 卡片 draggable 初始化', {
+      卡片数: bookmarksGrid.querySelectorAll('.bookmark-card').length,
+      可拖: pointerDragEnabled,
+      支持指针拖拽: supportsPointerDrag(),
+      batchMode,
+      currentSort,
+      窗口宽度: window.innerWidth
     });
 
 
@@ -4803,8 +4861,10 @@ async function applyBookmarksFolderMove(ids, targetFolder) {
  * 拖拽书签到侧边栏文件夹行完成归类（桌面端指针拖拽，移动端无 HTML5 拖拽入口）
  */
 async function moveBookmarkToFolderByDrag(bookmarkId, targetFolder) {
+  showGlobalLoading('正在从云端同步最新书签…', 15);
   try {
     await ensureSceneFreshFromCloudBeforeWrite();
+    updateGlobalLoading('正在移动书签…', 45);
     const result = await applyBookmarksFolderMove([bookmarkId], targetFolder);
     if (!result) {
       showToast('该书签已在目标文件夹', { title: '无需移动', type: 'info', duration: 1500 });
@@ -4813,6 +4873,7 @@ async function moveBookmarkToFolderByDrag(bookmarkId, targetFolder) {
     await loadFolders();
     await loadTags();
     renderBookmarks();
+    updateGlobalLoading('正在同步到云端…', 80);
     await syncToCloud({
       requireSuccess: true,
       patch: {
@@ -4825,6 +4886,8 @@ async function moveBookmarkToFolderByDrag(bookmarkId, targetFolder) {
   } catch (error) {
     console.error('拖拽移动书签到文件夹失败:', error);
     showToast('移动失败: ' + error.message);
+  } finally {
+    hideGlobalLoading();
   }
 }
 
@@ -4951,6 +5014,75 @@ async function batchDeleteBookmarks() {
     // 隐藏全局加载遮罩
     hideGlobalLoading();
   }
+}
+
+/**
+ * 通用警告弹窗（自定义 dialog-overlay，替代原生 alert）
+ * @param {Object} options
+ * @param {string} options.title 标题
+ * @param {string} options.message 说明文案
+ * @returns {Promise<void>} 弹窗关闭（按钮/ESC/点遮罩）时 resolve
+ */
+function showWarningDialog({ title = '提示', message = '' } = {}) {
+  return new Promise((resolve) => {
+    const isMobile = window.innerWidth <= 768;
+    const overlay = document.createElement('div');
+    overlay.className = 'dialog-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 2000;
+      animation: fadeIn 0.2s ease-out;
+    `;
+
+    const dialog = document.createElement('div');
+    dialog.className = 'dialog-container';
+    dialog.style.cssText = `
+      background: #ffffff;
+      border-radius: 12px;
+      padding: ${isMobile ? '20px' : '24px'};
+      width: ${isMobile ? '90%' : '420px'};
+      max-width: 90%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(0, 0, 0, 0.05);
+      font-size: ${isMobile ? '16px' : '14px'};
+      animation: slideUp 0.3s ease-out;
+      position: relative;
+    `;
+    dialog.innerHTML = `
+      <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px;">
+        <span style="color:#f59e0b; font-size:24px; display:inline-flex;">${cbIcon('alertTriangle')}</span>
+        <h3 style="margin:0; font-size:${isMobile ? '20px' : '18px'}; font-weight:600; color:#1a1a1a;">${escapeHtml(title)}</h3>
+      </div>
+      <p style="margin:0 0 22px; color:#555; line-height:1.6;">${escapeHtml(message)}</p>
+      <div style="display:flex; justify-content:flex-end;">
+        <button type="button" id="warningDialogOkBtn" class="btn btn-primary" style="min-width:${isMobile ? '90px' : '80px'}; min-height:${isMobile ? '44px' : '38px'}; border-radius:8px; font-weight:500;">我知道了</button>
+      </div>
+    `;
+
+    overlay.appendChild(dialog);
+    document.body.appendChild(overlay);
+
+    const cleanup = () => {
+      overlay.style.animation = 'fadeIn 0.2s ease-out reverse';
+      setTimeout(() => overlay.remove(), 200);
+      document.removeEventListener('keydown', onKeyDown);
+      resolve();
+    };
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') cleanup();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    dialog.querySelector('#warningDialogOkBtn').addEventListener('click', cleanup);
+    // 点击遮罩空白处关闭（点弹窗内部不关闭）
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) cleanup();
+    });
+  });
 }
 
 /**
